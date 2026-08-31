@@ -1,6 +1,6 @@
 {
   "name": "@huau/db",
-  "version": "0.1.0-phase0",
+  "version": "0.2.0-phase1",
   "private": true,
   "type": "module",
   "exports": {
@@ -19,7 +19,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260827.1",
     "drizzle-kit": "0.31.10",
-    "typescript": "7.0.2",
+    "typescript": "6.0.3",
     "vitest": "4.1.11"
   }
 }

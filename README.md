@@ -1,27 +1,22 @@
 # HUAU Sports
 
-Cloud foundation for HUAU Sports: Club + Tournament + Ref.
+Cloud-first foundation for the HUAU Sports ecosystem: Club + Tournament + Ref.
 
-## Status
+## Current status
 
-Phase 0 bootstrap is **READY FOR PROVISIONING**. See `docs/phase-0/PHASE_0_STATUS.md`.
+- Phase 0 Foundation: **DONE**.
+- Phase 1 Identity, Organizations & Platform Shell: **implemented, pending staging validation**.
 
-## Local setup
+See `docs/phase-1/PHASE_1_STATUS.md` and `docs/phase-1/STAGING_DEPLOY.md`.
 
-```bash
-corepack enable
-corepack prepare pnpm@11.24.0 --activate
-pnpm install
-pnpm db:migrate:local
-pnpm dev
-```
+## Local environment
 
-Open the local URL printed by Vite. `/api/health` should report the Worker environment; `/api/db-health` reports D1 migration status.
+Pinned runtime:
+- Node 22.16.x
+- pnpm 11.24.x
+
+The current development Mac may not execute modern esbuild/workerd binaries because of its macOS version. Canonical builds and deploys therefore run in GitHub/Cloudflare Linux environments.
 
 ## Source of truth
 
-The frozen product/architecture baseline lives under `docs/foundation`. Changes to product behavior, persistence, architecture or UX must follow the hierarchy in `docs/foundation/00_README_SOURCE_OF_TRUTH.md`.
-
-## Cloudflare
-
-See `docs/phase-0/CLOUDFLARE_PROVISIONING.md` for D1/R2/staging provisioning.
+Product, architecture, UX and migration baselines live under `docs/foundation`.

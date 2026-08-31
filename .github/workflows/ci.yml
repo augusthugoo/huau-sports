@@ -21,6 +21,8 @@ jobs:
         run: pnpm install --no-frozen-lockfile
       - name: Format check
         run: pnpm format:check
+      - name: Translation parity
+        run: pnpm i18n:check
       - name: Lint
         run: pnpm lint
       - name: Typecheck

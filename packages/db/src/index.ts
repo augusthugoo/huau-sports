@@ -1,7 +1,8 @@
 import { drizzle } from "drizzle-orm/d1";
+import * as schema from "./schema";
 
-export { appMeta } from "./schema";
+export * from "./schema";
 
 export function createDb(database: D1Database) {
-  return drizzle(database);
+  return drizzle(database, { schema });
 }
