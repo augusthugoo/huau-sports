@@ -1,0 +1,36 @@
+{
+  "name": "huau-sports",
+  "version": "0.1.0-phase0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.24.0",
+  "engines": {
+    "node": "22.16.x",
+    "pnpm": "11.24.x"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @huau/web dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "cf:types": "pnpm --filter @huau/web cf:types",
+    "db:generate": "pnpm --filter @huau/db generate",
+    "db:migrate:local": "pnpm --filter @huau/web db:migrate:local",
+    "db:migrate:staging": "pnpm --filter @huau/web db:migrate:staging",
+    "deploy:staging": "pnpm --filter @huau/web deploy:staging"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/node": "26.4.0",
+    "eslint": "10.9.1",
+    "prettier": "3.9.6",
+    "typescript": "7.0.2",
+    "typescript-eslint": "8.68.0",
+    "vitest": "4.1.11"
+  }
+}

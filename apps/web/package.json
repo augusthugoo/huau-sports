@@ -1,0 +1,36 @@
+{
+  "name": "@huau/web",
+  "version": "0.1.0-phase0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deploy": "vite build && wrangler deploy",
+    "deploy:staging": "vite build && wrangler deploy --env staging",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run --passWithNoTests",
+    "cf:types": "wrangler types",
+    "db:migrate:local": "wrangler d1 migrations apply HUAU_DB --local",
+    "db:migrate:staging": "wrangler d1 migrations apply HUAU_DB --env staging --remote"
+  },
+  "dependencies": {
+    "@huau/core": "workspace:*",
+    "@huau/db": "workspace:*",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "1.54.1",
+    "@cloudflare/workers-types": "5.20260827.1",
+    "@types/node": "26.4.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "@vitejs/plugin-react": "6.1.1",
+    "typescript": "7.0.2",
+    "vite": "8.2.2",
+    "vitest": "4.1.11",
+    "wrangler": "4.127.1"
+  }
+}
