@@ -36,4 +36,5 @@ These cannot be truthfully completed without network access and the HUAU Cloudfl
 8. Connect a GitHub repository and verify CI runs on a clean clone.
 
 ## Exit-gate rule
+
 Do not label Phase 0 fully **DONE** until all eight external items above are verified. Local scaffold status is **READY FOR PROVISIONING**.

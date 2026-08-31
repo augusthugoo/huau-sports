@@ -2,7 +2,7 @@
 
 **Estado:** Baseline visual y de interacción  
 **Fecha:** 2026-08-29  
-**Depende de:** PRD + App Flows  
+**Depende de:** PRD + App Flows
 
 ---
 
@@ -1009,14 +1009,14 @@ Suggested base:
 :root {
   --huau-bg: #050505;
   --huau-surface-1: #111111;
-  --huau-surface-2: #1B1B1B;
-  --huau-text: #FFFFFF;
-  --huau-text-muted: #BDBDBD;
+  --huau-surface-2: #1b1b1b;
+  --huau-text: #ffffff;
+  --huau-text-muted: #bdbdbd;
   --huau-text-subtle: #686868;
-  --huau-offwhite: #F4F4F2;
-  --huau-brand-detail: #A79F8B;
+  --huau-offwhite: #f4f4f2;
+  --huau-brand-detail: #a79f8b;
 
-  --org-accent-primary: #A79F8B;
+  --org-accent-primary: #a79f8b;
   --org-accent-secondary: #686868;
 
   --radius-sm: 8px;
@@ -1068,4 +1068,3 @@ For each major module create:
 8. accessibility check.
 
 Tournament P0 screens get priority over Club P2 surfaces.
-

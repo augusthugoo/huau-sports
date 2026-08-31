@@ -11,6 +11,7 @@
 No todo lo que permanece abierto bloquea desarrollo.
 
 Cada item tiene:
+
 - **Prioridad:** P0 / P1 / P2.
 - **Estado:** OPEN / PROPOSED / ACCEPTED / SUPERSEDED.
 - **Deadline:** momento en que debe resolverse, no necesariamente una fecha exacta.
@@ -18,6 +19,7 @@ Cada item tiene:
 - **Impacto:** documentos/código afectados.
 
 Reglas:
+
 1. Un P0 debe resolverse antes del gate que lo necesita.
 2. Una decisión aceptada que cambie arquitectura se convierte en ADR numerado.
 3. No cambiar PRD/TRD por chat o código sin actualizar el ADR/documento canónico.
@@ -36,7 +38,9 @@ Reglas:
 **Owner:** Product / organizador del clasificatorio
 
 ### Ya definido
+
 Orden base comunicado:
+
 1. Men’s Doubles.
 2. Women’s Doubles.
 3. Men’s Singles.
@@ -44,6 +48,7 @@ Orden base comunicado:
 5. Mixed Doubles.
 
 ### Falta confirmar
+
 - ¿el Mixed Doubles se juega siempre o sólo si la serie llega 2-2?;
 - regla exacta de victoria de encounter;
 - roster exacto permitido (4/6 u otra regla para ese evento);
@@ -56,6 +61,7 @@ Orden base comunicado:
 - tratamiento de retiro/WO/incomparecencia.
 
 ### Decisión de arquitectura ya cerrada
+
 Ninguna de estas reglas se hardcodea. Se expresan en configuración de Team Format.
 
 ---
@@ -69,6 +75,7 @@ Ninguna de estas reglas se hardcodea. Se expresan en configuración de Team Form
 **Owner:** Engineering
 
 Evaluar:
+
 - esquema generado por Better Auth;
 - migraciones auth junto al app schema;
 - compatibilidad con Workers/D1;
@@ -86,6 +93,7 @@ Criterio: menor lock-in y schema reproducible en CI/staging.
 **Owner:** Product
 
 Candidatos mencionados:
+
 - `huau.uy`;
 - `huau.com.uy`;
 - otro dominio internacional si se adquiere.
@@ -102,9 +110,11 @@ La arquitectura no debe depender del dominio final.
 **Owner:** Engineering + Product
 
 ### Requisito funcional fijo
+
 El dinero va directamente al receptor configurado del torneo, nunca a la cuenta HUAU en V1.
 
 ### Propuesta
+
 - HUAU registra una aplicación de plataforma/marketplace;
 - receptor conecta Mercado Pago por OAuth;
 - HUAU guarda credenciales/tokens server-side;
@@ -113,6 +123,7 @@ El dinero va directamente al receptor configurado del torneo, nunca a la cuenta 
 - webhook confirmado actualiza pago.
 
 ### Falta cerrar
+
 - onboarding exacto disponible para Uruguay;
 - permisos/scopes requeridos;
 - token refresh/rotation;
@@ -128,12 +139,14 @@ El dinero va directamente al receptor configurado del torneo, nunca a la cuenta 
 **Owner:** Product
 
 Opciones futuras:
+
 - por inscripción;
 - fee por evento;
 - mensualidad;
 - híbrido.
 
 Baseline V1:
+
 - no retención automática;
 - HUAU puede medir inscripciones facturables;
 - cobro a organización ocurre por fuera.
@@ -149,6 +162,7 @@ Referencia de discovery: competidor reportado ~USD 3/inscripto. No constituye pr
 **Owner:** Product
 
 Principio ya aceptado:
+
 - email sólo para eventos importantes;
 - evitar ruido;
 - in-app para actividad ordinaria;
@@ -157,6 +171,7 @@ Principio ya aceptado:
 Antes de habilitar email, aprobar matriz evento -> canal -> destinatario.
 
 Candidatos críticos:
+
 - verificación/recuperación;
 - inscripción confirmada;
 - pago confirmado/fallido relevante;
@@ -172,6 +187,7 @@ Candidatos críticos:
 **Owner:** Product + legal/local counsel cuando corresponda
 
 Preguntas:
+
 - cuenta propia vs perfil dependiente;
 - edad mínima;
 - guardian account;
@@ -191,6 +207,7 @@ P0 Tournament puede seguir usando participantes manuales para menores sin activa
 **Owner:** club piloto + Product
 
 Ya conocido:
+
 - Pickleball;
 - Pádel;
 - Tenis;
@@ -198,6 +215,7 @@ Ya conocido:
 - acceso a reservas sin pagar cada cancha.
 
 Preguntar antes de Club pilot:
+
 - vigencia/renovación;
 - límites por día/semana;
 - anticipación;
@@ -217,6 +235,7 @@ No inventar reglas en código; usar booking/membership policies.
 **Estado:** OPEN
 
 Confirmar con club:
+
 - slot base;
 - duración mínima/máxima;
 - extensiones de 30 min;
@@ -236,6 +255,7 @@ Confirmar con club:
 **Estado:** OPEN
 
 Definir como policy configurable:
+
 - X horas antes de la reserva;
 - mínimo de participantes para mantener;
 - quién puede cancelar;
@@ -252,6 +272,7 @@ No usar “3-4 horas” como hardcode.
 **Estado:** OPEN
 
 Opciones:
+
 1. admin crea toda actividad;
 2. coach crea draft y admin aprueba;
 3. coach autorizado publica directamente.
@@ -266,6 +287,7 @@ Data model debe permitir las tres; UI inicial puede implementar sólo 1.
 **Estado:** PROPOSED
 
 Propuesta genérica para formats que no declaren otra cosa:
+
 1. encounter win percentage;
 2. rubber differential por encounter o total normalizado según format;
 3. point differential normalizado;
@@ -284,6 +306,7 @@ El engine debe aceptar ordered tie-break criteria como config.
 **Estado:** OPEN
 
 Necesitamos policy:
+
 - editable hasta X momento;
 - lock al comenzar encounter;
 - sustituciones después de lock;
@@ -300,6 +323,7 @@ Diseño recomendado: `draft -> submitted -> locked`, con override administrativo
 **Estado:** PROPOSED
 
 Default recomendado:
+
 - nombre deportivo/entry: visible cuando tournament publica participantes;
 - email, teléfono, DOB, pago: jamás públicos;
 - rating sólo si tournament config lo publica;
@@ -315,6 +339,7 @@ Organization Admin puede ocultar participant list hasta draw.
 **Estado:** PROPOSED
 
 Propuesta V1:
+
 - Organization Admin/delegate autorizado puede corregir;
 - corrección crea audit event y recalcula derivados;
 - si afecta fase posterior ya iniciada, bloquear y exigir resolution flow;
@@ -330,6 +355,7 @@ Propuesta V1:
 El usuario simplificó jerarquía a Platform Admin / Organization Admin / User. Sin embargo, eventos grandes pueden necesitar personas que sólo carguen resultados.
 
 Propuesta:
+
 - no crear nueva jerarquía global;
 - añadir capability contextual `tournament_operator` asignada por evento;
 - UI reducida: próximos matches + resultado;
@@ -347,6 +373,7 @@ No necesaria para primer pilot si una sola persona opera.
 No construir colaboración estilo Google Docs.
 
 Propuesta:
+
 - revision en entidades estructurales;
 - optimistic concurrency;
 - si revision cambió, servidor rechaza con conflict;
@@ -362,6 +389,7 @@ Resultados usan mutation IDs e idempotencia.
 **Estado:** PROPOSED
 
 P0 usa R2 sólo cuando haya archivo real:
+
 - logos;
 - imágenes/assets subidos.
 
@@ -377,6 +405,7 @@ No almacenar comprobantes de transferencia en V1; usar WhatsApp/manual validatio
 V1 = PWA.
 
 Cuando exista evidencia de necesidad iOS/Android:
+
 - evaluar Capacitor vs React Native/Expo vs wrappers;
 - engines/domain deben ser reutilizables independientemente de decisión.
 
@@ -390,6 +419,7 @@ No condicionar P0 al stack nativo.
 **Estado:** OPEN
 
 V1 release quality:
+
 - Spanish;
 - English.
 
@@ -405,9 +435,11 @@ Arquitectura permite locales adicionales. Antes de añadir un idioma, traduccion
 **Fecha:** 2026-08-29
 
 ### Decisión
+
 Una cuenta HUAU global; módulos Club/Tournament; Ref como capability de Tournament.
 
 ### Consecuencia
+
 No duplicar usuarios entre productos. Roles/capabilities son contextuales a organización/evento.
 
 ---
@@ -417,12 +449,15 @@ No duplicar usuarios entre productos. Roles/capabilities son contextuales a orga
 **Estado:** ACCEPTED
 
 ### Decisión
+
 La entidad raíz es `organization`, no `club`.
 
 ### Razón
+
 HUAU debe servir club, complejo, academia, comunidad, organizador, liga o federación.
 
 ### Consecuencia
+
 `venue`, tournament organizer y payment receiver pueden ser entidades distintas.
 
 ---
@@ -432,6 +467,7 @@ HUAU debe servir club, complejo, academia, comunidad, organizador, liga o federa
 **Estado:** ACCEPTED BASELINE, revisable sólo con evidencia
 
 ### Decisión
+
 - Workers + Static Assets;
 - D1;
 - R2;
@@ -441,9 +477,11 @@ HUAU debe servir club, complejo, academia, comunidad, organizador, liga o federa
 - Mercado Pago.
 
 ### Razón
+
 Coste inicial bajo, stack suficiente y despliegue integrado.
 
 ### Guardrail
+
 No acoplar domain engines a Cloudflare APIs.
 
 ---
@@ -453,9 +491,11 @@ No acoplar domain engines a Cloudflare APIs.
 **Estado:** ACCEPTED
 
 ### Decisión
+
 Operación crítica de resultados debe guardar localmente y continuar ante pérdida de Internet.
 
 ### Consecuencia
+
 IndexedDB + mutation outbox + revisions + reconciliation forman parte de P0, no “mejora futura”.
 
 ---
@@ -465,9 +505,11 @@ IndexedDB + mutation outbox + revisions + reconciliation forman parte de P0, no 
 **Estado:** ACCEPTED
 
 ### Decisión
+
 Todo acceso tenant-scoped se valida server-side en Worker/service layer. No existe RLS implícita como defensa.
 
 ### Consecuencia
+
 Tests de aislamiento multi-tenant son blocker de release.
 
 ---
@@ -477,12 +519,15 @@ Tests de aislamiento multi-tenant son blocker de release.
 **Estado:** ACCEPTED
 
 ### Decisión
+
 El torneo trabaja con `competition_encounter` de alto nivel y `match` atómico.
 
 ### Razón
+
 Un encounter individual/pareja suele tener 1 match; un team encounter puede tener N rubbers.
 
 ### Consecuencia
+
 Teams reutiliza grupos/league/playoff en vez de crear un segundo motor.
 
 ---
@@ -492,6 +537,7 @@ Teams reutiliza grupos/league/playoff en vez de crear un segundo motor.
 **Estado:** ACCEPTED
 
 ### Decisión
+
 No hardcodear MLP ni clasificatorio septiembre.
 
 Formato define roster, composición, rubbers, orden, condiciones y series winner rule.
@@ -503,9 +549,11 @@ Formato define roster, composición, rubbers, orden, condiciones y series winner
 **Estado:** ACCEPTED
 
 ### Decisión
+
 Las explicaciones oficiales se generan desde reglas/configuración mediante bloques i18n revisados, no mediante texto AI runtime.
 
 ### Consecuencia
+
 El texto matemático oficial no es editable; organizer puede agregar nota separada.
 
 ---
@@ -515,9 +563,11 @@ El texto matemático oficial no es editable; organizer puede agregar nota separa
 **Estado:** ACCEPTED
 
 ### Decisión
+
 HUAU V1 no cobra primero para redistribuir. Tournament referencia `payment_account` del receptor.
 
 ### Consecuencia
+
 Mercado Pago se conecta por receptor; HUAU fee se factura fuera inicialmente.
 
 ---
@@ -527,6 +577,7 @@ Mercado Pago se conecta por receptor; HUAU fee se factura fuera inicialmente.
 **Estado:** ACCEPTED
 
 ### Decisión
+
 Redirect del browser no confirma pago. Estado `paid` automático requiere webhook/API verificado.
 
 Manual transfer/cash se marca por admin.
@@ -538,9 +589,11 @@ Manual transfer/cash se marca por admin.
 **Estado:** ACCEPTED
 
 ### Decisión
+
 TV y móvil consumen los mismos datos públicos con layouts responsive.
 
 ### Consecuencia
+
 No mantener un estado TV separado del public state.
 
 ---
@@ -550,9 +603,11 @@ No mantener un estado TV separado del public state.
 **Estado:** ACCEPTED
 
 ### Decisión
+
 Cambios estructurales requieren scope/impact, snapshot y confirmación; cosmetics no invalidan competencia.
 
 ### Consecuencia
+
 La regresión legacy de “editar nombre borra categorías” es un blocker automático.
 
 ---
@@ -562,9 +617,11 @@ La regresión legacy de “editar nombre borra categorías” es un blocker auto
 **Estado:** ACCEPTED
 
 ### Decisión
+
 Registrar mutaciones críticas para soporte y recovery, sin convertir el producto en un panel de auditoría empresarial.
 
 Mínimo:
+
 - actor;
 - organization/tournament;
 - action;
@@ -580,7 +637,9 @@ Mínimo:
 **Estado:** ACCEPTED
 
 ### Decisión
+
 HUAU Platform Admin puede abrir contexto de una organización para soporte, pero:
+
 - acceso requiere acción explícita;
 - writes se auditan;
 - UI distingue support mode;
@@ -593,9 +652,11 @@ HUAU Platform Admin puede abrir contexto de una organización para soporte, pero
 **Estado:** ACCEPTED
 
 ### Decisión
+
 V1 es web/PWA instalable. Apps nativas se evalúan luego.
 
 ### Consecuencia
+
 Responsive/offline/installability deben ser de calidad de producto, no demo.
 
 ---
@@ -605,9 +666,11 @@ Responsive/offline/installability deben ser de calidad de producto, no demo.
 **Estado:** ACCEPTED
 
 ### Decisión
+
 Montserrat para interfaz/product UI. El wordmark/logo oficial HUAU se usa como asset y no se recrea tipográficamente.
 
 ### Consecuencia
+
 La nueva UI se distancia del aspecto genérico/AI manteniendo identidad deportiva.
 
 ---
@@ -617,9 +680,11 @@ La nueva UI se distancia del aspecto genérico/AI manteniendo identidad deportiv
 **Estado:** ACCEPTED
 
 ### Decisión
+
 No existen posts genéricos “busco jugadores” sin reserva/solicitud de cancha asociada.
 
 ### Consecuencia
+
 Community y booking comparten un único objeto operativo.
 
 ---
@@ -629,6 +694,7 @@ Community y booking comparten un único objeto operativo.
 **Estado:** ACCEPTED
 
 ### Decisión
+
 Open Play V1 gestiona actividad, canchas, cupos, nivel y waitlist. No genera rotaciones, asistencia ni sanciones.
 
 ---
@@ -638,6 +704,7 @@ Open Play V1 gestiona actividad, canchas, cupos, nivel y waitlist. No genera rot
 **Estado:** ACCEPTED
 
 ### Decisión
+
 HUAU almacena estado/entitlement de membresía; el club cobra por sus canales actuales.
 
 ---
@@ -647,6 +714,7 @@ HUAU almacena estado/entitlement de membresía; el club cobra por sus canales ac
 **Estado:** ACCEPTED
 
 ### Decisión
+
 Pickleball, pádel y tenis. No optimizar dominio ahora para fútbol/básquet/etc.
 
 ---
@@ -656,9 +724,11 @@ Pickleball, pádel y tenis. No optimizar dominio ahora para fútbol/básquet/etc
 **Estado:** ACCEPTED
 
 ### Decisión
+
 La jerarquía visible V1 sigue siendo Platform Admin / Organization Admin / User. Capacidades adicionales como coach u operador pueden recibir permisos simples configurables por organización, sin introducir roles administrativos escalonados.
 
 ### Consecuencia
+
 El backend modela capability policies, pero la UI V1 sólo expone toggles que tengan una necesidad real.
 
 ---
@@ -668,6 +738,7 @@ El backend modela capability policies, pero la UI V1 sólo expone toggles que te
 ## 2. Cuándo crear un ADR nuevo
 
 Crear ADR cuando se cambie cualquiera de estos:
+
 - tenant model;
 - auth provider;
 - database/storage;
@@ -682,6 +753,7 @@ Crear ADR cuando se cambie cualquiera de estos:
 - scope P0 que comprometa el evento real.
 
 No hace falta ADR para:
+
 - copy;
 - spacing;
 - iconos;
@@ -699,21 +771,26 @@ No hace falta ADR para:
 **Fecha:** YYYY-MM-DD
 
 ### Contexto
+
 ...
 
 ### Decisión
+
 ...
 
 ### Alternativas consideradas
+
 1. ...
 2. ...
 
 ### Consecuencias
+
 - positivas;
 - negativas;
 - migración.
 
 ### Documentos afectados
+
 - PRD;
 - TRD;
 - Data Model;
@@ -729,6 +806,7 @@ A partir de v1.0:
 > Una idea nueva no entra automáticamente porque “sería lindo tenerla”.
 
 Debe clasificarse:
+
 - required for current acceptance criteria;
 - P1/P2 roadmap;
 - explicit scope change.
@@ -744,6 +822,7 @@ Cualquier scope change antes del clasificatorio de septiembre debe demostrar que
 El scaffolding, auth, tenancy, Tournament Engine extraction, scheduler fix y Team Engine schema pueden comenzar con la baseline actual.
 
 Los items P0 deben resolverse antes de sus gates específicos:
+
 - OD-001 antes del fixture final de septiembre;
 - OD-002 antes de auth production schema;
 - OD-004 antes de payment production;
@@ -755,6 +834,7 @@ Los items P0 deben resolverse antes de sus gates específicos:
 ## 6. Definition of Done del discovery
 
 Discovery v1.0 puede considerarse terminado porque:
+
 - propuesta de producto y módulos están definidos;
 - actores y permisos principales están definidos;
 - Club MVP está acotado;

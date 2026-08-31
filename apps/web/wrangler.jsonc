@@ -6,25 +6,25 @@
   "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
+    "run_worker_first": ["/api/*"],
   },
   "d1_databases": [
     {
       "binding": "HUAU_DB",
       "database_name": "huau-dev",
       "database_id": "bb7df5b2-9247-464e-912c-f1685659bbfb",
-      "migrations_dir": "../../packages/db/drizzle"
-    }
+      "migrations_dir": "../../packages/db/drizzle",
+    },
   ],
   "r2_buckets": [
     {
       "binding": "HUAU_ASSETS",
-      "bucket_name": "huau-dev-assets"
-    }
+      "bucket_name": "huau-dev-assets",
+    },
   ],
   "vars": {
     "APP_ENV": "development",
-    "APP_VERSION": "0.1.0-phase0"
+    "APP_VERSION": "0.1.0-phase0",
   },
   "env": {
     "staging": {
@@ -34,19 +34,19 @@
           "binding": "HUAU_DB",
           "database_name": "huau-staging",
           "database_id": "65bc79ba-3044-4402-b086-8373e9517ed0",
-          "migrations_dir": "../../packages/db/drizzle"
-        }
+          "migrations_dir": "../../packages/db/drizzle",
+        },
       ],
       "r2_buckets": [
         {
           "binding": "HUAU_ASSETS",
-          "bucket_name": "huau-staging-assets"
-        }
+          "bucket_name": "huau-staging-assets",
+        },
       ],
       "vars": {
         "APP_ENV": "staging",
-        "APP_VERSION": "0.1.0-phase0"
-      }
-    }
-  }
+        "APP_VERSION": "0.1.0-phase0",
+      },
+    },
+  },
 }

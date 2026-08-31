@@ -4,7 +4,7 @@
 **Fecha:** 2026-08-29  
 **Owner de producto:** HUAU Sports  
 **Prioridad de entrega inmediata:** Tournament + equipos + inscripciones/pagos + robustez  
-**Siguiente frente:** HUAU Club MVP  
+**Siguiente frente:** HUAU Club MVP
 
 ---
 
@@ -696,9 +696,11 @@ El motor recibe reglas estructuradas y compone bloques semánticos localizados.
 ### 18.2 Salidas
 
 **Resumen de formato**
+
 - 1-3 párrafos simples.
 
 **Criterios detallados**
+
 - clasificación interna;
 - comparación entre grupos;
 - wildcards;

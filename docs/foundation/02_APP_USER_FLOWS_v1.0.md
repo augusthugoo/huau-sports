@@ -440,16 +440,19 @@ Checklist examples:
 Configuration sections use progressive disclosure:
 
 **Entries & groups**
+
 - group sizes/number;
 - 1 or 2 rounds;
 - qualifiers per group;
 - wildcard spots.
 
 **Cross-group**
+
 - normalized;
 - equalized.
 
 **Post-group**
+
 - standard bracket;
 - Top 2 final;
 - Top 4 semis;
@@ -458,12 +461,14 @@ Configuration sections use progressive disclosure:
 - consolation.
 
 **Medals**
+
 - bronze;
 - sequential/simultaneous;
 - BO1/BO3;
 - point targets.
 
 **Seeding**
+
 - serpentine rating;
 - manual;
 - random;
@@ -972,4 +977,3 @@ Every primary flow must define:
 - stale state.
 
 Critical tournament screens must not collapse to generic “Something went wrong”; they must preserve the last safe local state where possible.
-

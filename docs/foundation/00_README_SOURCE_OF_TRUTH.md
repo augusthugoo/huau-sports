@@ -3,7 +3,7 @@
 **Estado:** Baseline de producto y arquitectura listo para iniciar desarrollo  
 **Fecha de congelamiento inicial:** 2026-08-29  
 **Idioma documental:** Español  
-**Producto:** HUAU Sports  
+**Producto:** HUAU Sports
 
 ## 1. Propósito de este paquete
 

@@ -592,9 +592,9 @@ type CompetitionFormat = StandardFormat | TeamFormat;
 interface RubberDefinition {
   key: string;
   order: number;
-  mode: 'singles' | 'doubles';
-  gender: 'male' | 'female' | 'mixed' | 'open';
-  playCondition: 'always' | 'if_tied' | 'if_needed';
+  mode: "singles" | "doubles";
+  gender: "male" | "female" | "mixed" | "open";
+  playCondition: "always" | "if_tied" | "if_needed";
   isTiebreaker: boolean;
   bestOf: 1 | 3 | 5;
   pointTarget?: number;
@@ -1134,4 +1134,3 @@ These assumptions were checked against current official documentation and should
 6. ADR-006: Mercado Pago OAuth token encryption/rotation.
 7. ADR-007: Team standings rule for September event.
 8. ADR-008: Native path (deferred, not required for P0).
-

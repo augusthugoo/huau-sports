@@ -941,4 +941,3 @@ The first cycle is successful when HUAU can demonstrate two things simultaneousl
 
 1. **Tournament:** operate a real configurable team tournament with online registration/payment and reliable live/offline execution.
 2. **Club:** show a credible, functioning path from membership -> court reservation -> open match/community, proving that HUAU can become the club’s recurring operating layer rather than only an event tool.
-

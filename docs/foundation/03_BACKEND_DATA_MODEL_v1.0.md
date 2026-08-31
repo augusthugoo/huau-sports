@@ -46,8 +46,9 @@
    - Nunca usar secuenciales públicos como control de seguridad.
 
 10. **Soft state, no “papelera” de UX.**
-   - Para datos críticos se preserva historial/snapshot.
-   - Entidades operativas pueden usar `archived_at` cuando borrar físicamente rompería referencias.
+
+- Para datos críticos se preserva historial/snapshot.
+- Entidades operativas pueden usar `archived_at` cuando borrar físicamente rompería referencias.
 
 ---
 
@@ -214,6 +215,7 @@ UNIQUE(organization_id, capability, permission_key)
 ```
 
 Ejemplos cuando la capability exista:
+
 - `coach -> class.create_draft`;
 - `coach -> class.publish`;
 - `tournament_operator -> result.submit`.
@@ -774,7 +776,7 @@ UNIQUE(category_id, version_number)
 ```json
 {
   "groupRounds": 1,
-  "groupSizes": [4,4,3],
+  "groupSizes": [4, 4, 3],
   "qualifiersPerGroup": 2,
   "wildcardQualifiers": 0,
   "crossGroupMethod": "normalized",
@@ -783,8 +785,8 @@ UNIQUE(category_id, version_number)
   "avoidGroupRematches": true,
   "bronzeMatch": true,
   "medalSchedule": "sequential",
-  "preliminary": {"bestOf": 1, "pointTarget": 15},
-  "medal": {"bestOf": 3, "pointTarget": 11},
+  "preliminary": { "bestOf": 1, "pointTarget": 15 },
+  "medal": { "bestOf": 3, "pointTarget": 11 },
   "seedingMethod": "serpentine_rating",
   "preferredRestSlots": 1
 }
@@ -798,17 +800,23 @@ UNIQUE(category_id, version_number)
     "min": 4,
     "max": 6,
     "composition": "mixed",
-    "rules": {"maleMin": 2, "femaleMin": 2}
+    "rules": { "maleMin": 2, "femaleMin": 2 }
   },
   "encounter": {
     "winnerRule": "majority",
     "playRemainingAfterClinched": true,
     "rubbers": [
-      {"key":"md","order":1,"mode":"doubles","gender":"male","play":"always"},
-      {"key":"wd","order":2,"mode":"doubles","gender":"female","play":"always"},
-      {"key":"ms","order":3,"mode":"singles","gender":"male","play":"always"},
-      {"key":"ws","order":4,"mode":"singles","gender":"female","play":"always"},
-      {"key":"xd","order":5,"mode":"doubles","gender":"mixed","play":"if_needed_or_always"}
+      { "key": "md", "order": 1, "mode": "doubles", "gender": "male", "play": "always" },
+      { "key": "wd", "order": 2, "mode": "doubles", "gender": "female", "play": "always" },
+      { "key": "ms", "order": 3, "mode": "singles", "gender": "male", "play": "always" },
+      { "key": "ws", "order": 4, "mode": "singles", "gender": "female", "play": "always" },
+      {
+        "key": "xd",
+        "order": 5,
+        "mode": "doubles",
+        "gender": "mixed",
+        "play": "if_needed_or_always"
+      }
     ]
   },
   "competition": {
@@ -1507,4 +1515,3 @@ No es requisito mantener el schema JSON legacy internamente después de importar
 - Cifrado/rotación de OAuth tokens.
 - Team standings custom rules para el clasificatorio de septiembre.
 - Whether `public_revisions` se almacena en D1 o R2 si el payload crece significativamente.
-

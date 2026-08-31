@@ -43,6 +43,7 @@ Regla principal:
 ### 3.1 Estado monolítico JSON
 
 **Legacy**
+
 - `defaultState()`
 - `loadState()`
 - `normalizeState()`
@@ -54,18 +55,21 @@ Regla principal:
 **Acción:** REEMPLAZAR + conservar import/export.
 
 **Nueva ubicación:**
+
 - D1 como fuente cloud persistente.
 - IndexedDB como working state offline del operador.
 - snapshots explícitos para recuperación.
 - importador/exportador JSON de compatibilidad.
 
 **Debe preservarse**
+
 - posibilidad de exportar un respaldo portable;
 - posibilidad de operar con participantes manuales;
 - normalización/migración de datos legacy al importar;
 - ausencia de dependencia obligatoria de una cuenta de jugador para competir.
 
 **No portar**
+
 - un único objeto global como fuente de verdad de toda la aplicación;
 - writes directos de UI a `localStorage`;
 - invalidación global de `state.schedule` por cambios no relacionados.
@@ -75,6 +79,7 @@ Regla principal:
 ### 3.2 Local Server / polling
 
 **Legacy**
+
 - `huau_server.py`
 - `/api/state`
 - `sendStateToServer()`
@@ -85,6 +90,7 @@ Regla principal:
 **Acción:** REEMPLAZAR.
 
 **Nueva ubicación:**
+
 - API Worker + D1 para persistencia;
 - Durable Object/WebSocket para invalidaciones live;
 - IndexedDB + outbox para offline;
@@ -97,6 +103,7 @@ Regla principal:
 ### 3.3 Netlify bundled state
 
 **Legacy**
+
 - `bundledStateFromPayload()`
 - `tryBundledTournamentPaths()`
 - `loadBundledTournamentIfEmpty()`
@@ -112,6 +119,7 @@ Fue una solución útil para abrir una copia estática de un torneo, pero no res
 ### 4.1 Persona única y edición
 
 **Legacy**
+
 - `findPlayer()`
 - `upsertPlayer()`
 - `removePlayer()`
@@ -121,6 +129,7 @@ Fue una solución útil para abrir una copia estática de un torneo, pero no res
 **Acción:** PORTAR CON REDISEÑO DE DATOS.
 
 **Nueva ubicación:**
+
 - `profiles` para usuarios HUAU;
 - `organization_people` para identidad operativa/manual;
 - `competition_entries` para entradas individuales/parejas/equipos;
@@ -135,6 +144,7 @@ Fue una solución útil para abrir una copia estática de un torneo, pero no res
 ### 4.2 Edición segura
 
 **Legacy relevante**
+
 - `playerStructureChanged()`
 - `refreshCompetitionReferences()`
 - `invalidateCompetitionsForPlayerChange()`
@@ -146,6 +156,7 @@ V2.4 corrigió el problema por el cual editar un nombre podía destruir categor�
 **Nueva regla:**
 
 Cambios **cosméticos/no estructurales** no regeneran competencia:
+
 - nombre;
 - contacto;
 - club;
@@ -153,6 +164,7 @@ Cambios **cosméticos/no estructurales** no regeneran competencia:
 - rating si no se solicita re-seeding explícito.
 
 Cambios **estructurales** requieren cálculo de impacto:
+
 - entrada/salida de categoría;
 - composición de pareja/equipo;
 - estado que afecta elegibilidad;
@@ -160,6 +172,7 @@ Cambios **estructurales** requieren cálculo de impacto:
 - roster/alineación cuando el match ya existe.
 
 Antes de aplicar una mutación destructiva:
+
 1. mostrar impacto;
 2. crear snapshot;
 3. exigir confirmación explícita;
@@ -171,6 +184,7 @@ Antes de aplicar una mutación destructiva:
 ## 5. Categorías y entries
 
 **Legacy**
+
 - `isSinglesCategory()`
 - `isDoublesCategory()`
 - `getCategoryEntries()`
@@ -181,6 +195,7 @@ Antes de aplicar una mutación destructiva:
 La nueva abstracción no debe depender de strings como “Singles Masculino B”.
 
 Nueva categoría/competition config debe separar:
+
 - sport;
 - entry type: `individual | pair | team`;
 - gender/composition rule;
@@ -197,6 +212,7 @@ Nueva categoría/competition config debe separar:
 ### 6.1 Simulador
 
 **Legacy**
+
 - `buildFormatOptions()`
 - `recalculateFormatTiming()`
 - `balancedGroupSizes()`
@@ -208,6 +224,7 @@ Nueva categoría/competition config debe separar:
 **Acción:** PORTAR AL `tournament-engine`.
 
 **Debe conservarse**
+
 - cálculo de tamaños equilibrados;
 - 1 o 2 vueltas;
 - clasificados fijos por grupo;
@@ -225,6 +242,7 @@ Nueva categoría/competition config debe separar:
 ### 6.2 Modos post-grupo
 
 **Legacy soportado**
+
 - bracket estándar;
 - Top 2 -> final;
 - Top 4 -> semifinales;
@@ -243,6 +261,7 @@ No agregar nuevos modos P0 salvo necesidad del torneo real o formato por equipos
 ### 7.1 Sorteo automático/manual/live
 
 **Legacy**
+
 - `createDrawTargetSequence()`
 - `createDrawSession()`
 - `advanceDraw()`
@@ -254,6 +273,7 @@ No agregar nuevos modos P0 salvo necesidad del torneo real o formato por equipos
 **Acción:** PORTAR REGLAS + REDISEÑAR UI.
 
 **Debe preservarse**
+
 - sorteo aleatorio;
 - experiencia live paso a paso;
 - pausa/reinicio antes de confirmar;
@@ -267,6 +287,7 @@ No agregar nuevos modos P0 salvo necesidad del torneo real o formato por equipos
 ## 8. Matches y fase de grupos
 
 **Legacy**
+
 - `createMatch()`
 - `groupMatchesByRound()`
 - `allGroupMatchesFinished()`
@@ -274,6 +295,7 @@ No agregar nuevos modos P0 salvo necesidad del torneo real o formato por equipos
 **Acción:** PORTAR + NORMALIZAR.
 
 En el nuevo modelo:
+
 - `competition_encounter` representa el enfrentamiento de alto nivel;
 - `match` representa el partido/rubber atómico.
 
@@ -287,6 +309,7 @@ Esto evita crear un segundo sistema de Tournament para equipos.
 ## 9. Standings internos de grupo
 
 **Legacy**
+
 - `calculateGroupStandings()`
 - `headToHead()`
 - `addMiniTableValues()`
@@ -294,6 +317,7 @@ Esto evita crear un segundo sistema de Tournament para equipos.
 **Acción:** PORTAR AL MOTOR + CONGELAR TESTS.
 
 Comportamiento legacy a preservar inicialmente:
+
 1. victorias;
 2. head-to-head en empate exacto de dos;
 3. mini-tabla para empates múltiples;
@@ -311,6 +335,7 @@ El Format Explanation Engine debe explicar los criterios realmente activos.
 ## 10. Comparación entre grupos desiguales
 
 **Legacy**
+
 - `smallestCompetitionGroupSize()`
 - `crossGroupStatsForEntry()`
 - `compareCrossGroupPerformanceDesc()`
@@ -321,12 +346,14 @@ El Format Explanation Engine debe explicar los criterios realmente activos.
 ### 10.1 Método normalizado
 
 Preservar:
+
 1. porcentaje de victorias;
 2. diferencia de puntos por partido;
 3. puntos anotados por partido;
 4. rating/fallback definido por el formato.
 
 Ejemplo conceptual:
+
 - 2-0 = 100%; +12 total / 2 = +6 por partido.
 - 3-0 = 100%; +15 total / 3 = +5 por partido.
 - la primera entrada queda por encima por diferencia promedio, aunque tenga menos partidos.
@@ -334,6 +361,7 @@ Ejemplo conceptual:
 ### 10.2 Método equiparado
 
 Preservar:
+
 - detectar tamaño del grupo más pequeño;
 - para comparación cruzada, los grupos grandes ignoran los enfrentamientos contra sus rivales extra peor ubicados hasta igualar cantidad de rivales;
 - la tabla interna del grupo sigue usando todos los partidos.
@@ -345,6 +373,7 @@ Preservar:
 ## 11. Clasificación, seeding, byes y bracket
 
 **Legacy**
+
 - `mainQualifiedEntriesForMode()`
 - `qualifiedEntries()`
 - `buildBracketSlots()`
@@ -357,6 +386,7 @@ Preservar:
 **Acción:** PORTAR + TESTS DE PARIDAD.
 
 **Preservar**
+
 - byes automáticos;
 - seed order;
 - política de evitar rematch de grupo cuando sea posible;
@@ -372,6 +402,7 @@ Preservar:
 ## 12. Match rules / BO3
 
 **Legacy**
+
 - `applyKnockoutMatchRules()`
 - `saveBestOfThreeScoreFromForm()`
 - `finalizeMatchResult()`
@@ -379,6 +410,7 @@ Preservar:
 **Acción:** PORTAR REGLAS; UI nueva.
 
 Preservar soporte de:
+
 - target preliminar;
 - reglas diferentes para medal matches;
 - BO3 en final/bronce;
@@ -394,6 +426,7 @@ En el nuevo engine, las reglas de scoring deben vivir en `match_rule_set`, no en
 ### 13.1 Base legacy
 
 **Funciones**
+
 - `generateSchedule()`
 - `scheduleCategoryGroupMatches()`
 - `reserveCategoryFinalPhase()`
@@ -425,6 +458,7 @@ Legacy `interleaveGroupMatches()` no fuerza frontera entre vueltas. En grupo ún
 > Ningún match de Vuelta 2 puede ser programado antes de que todos los matches de Vuelta 1 del mismo grupo hayan sido programados.
 
 Después de respetar la frontera de vuelta, el scheduler debe maximizar:
+
 - distribución de cancha;
 - descanso;
 - evitar consecutivos cuando sea matemáticamente posible.
@@ -436,6 +470,7 @@ Después de respetar la frontera de vuelta, el scheduler debe maximizar:
 ## 14. Cronograma y binding de fase final
 
 **Legacy**
+
 - `bindAllGeneratedFinalsToSchedule()`
 - `bindFinalsToReservedSchedule()`
 - `resolveScheduleMatch()`
@@ -443,6 +478,7 @@ Después de respetar la frontera de vuelta, el scheduler debe maximizar:
 **Acción:** REDISEÑAR.
 
 La nueva plataforma debe separar:
+
 - `schedule_slot` planificado;
 - `match` asignado;
 - estado real (`scheduled`, `called`, `in_progress`, `finished`, `delayed`, etc.).
@@ -454,6 +490,7 @@ No depender de reemplazar placeholders de arrays por IDs de match como mecanismo
 ## 15. Resultados
 
 **Legacy**
+
 - `saveMatchScore()`
 - `saveBestOfThreeScoreFromForm()`
 - `finalizeMatchResult()`
@@ -462,6 +499,7 @@ No depender de reemplazar placeholders de arrays por IDs de match como mecanismo
 **Acción:** PORTAR REGLA + REDISEÑAR MUTACIÓN.
 
 Nueva mutación de resultado debe:
+
 1. validarse en domain engine;
 2. guardarse primero localmente si operador offline;
 3. llevar mutation UUID/idempotency key;
@@ -478,6 +516,7 @@ Correcciones posteriores deben conservar historial mínimo del valor previo.
 ## 16. TV/public live
 
 **Legacy**
+
 - `renderTV()`
 - `renderTVStandings()`
 - `renderTVBracket()`
@@ -487,6 +526,7 @@ Correcciones posteriores deben conservar historial mínimo del valor previo.
 **Acción:** REDISEÑAR COMO PUBLIC LIVE.
 
 Nueva experiencia:
+
 - misma fuente pública para teléfono, desktop y TV;
 - responsive layouts según viewport;
 - sin login para información marcada pública;
@@ -501,6 +541,7 @@ La TV deja de ser un producto de datos separado; es una presentación de la mism
 ## 17. Exportaciones visuales
 
 **Legacy**
+
 - group image generator;
 - schedule image generator;
 - tournament promo generator.
@@ -508,6 +549,7 @@ La TV deja de ser un producto de datos separado; es una presentación de la mism
 **Acción:** DIFERIR PARCIALMENTE.
 
 Prioridad:
+
 1. página pública/share link;
 2. exportación de grupos y cronograma si es necesaria para mantener flujo WhatsApp;
 3. promo generator después del P0 si retrasa equipos/pagos/offline.
@@ -519,11 +561,13 @@ El diseño aprobado de grupos V2.4.1 puede usarse como referencia visual, no com
 ## 18. Backup y recovery
 
 **Legacy**
+
 - JSON export/import.
 
 **Acción:** AMPLIAR.
 
 Nueva solución:
+
 - export/import manual JSON;
 - snapshots automáticos server-side/locales antes de cambios críticos;
 - restore dirigido;
@@ -559,6 +603,7 @@ La competición por equipos no debe implementarse como un parche sobre parejas.
 ### 19.2 Caso septiembre fixture inicial
 
 Configuración de referencia para tests, no hardcode:
+
 1. Men’s Doubles.
 2. Women’s Doubles.
 3. Men’s Singles.
@@ -568,6 +613,7 @@ Configuración de referencia para tests, no hardcode:
 ### 19.3 Generalización
 
 El builder debe permitir:
+
 - roster 4, 6 u otro dentro de límites razonables;
 - composición de roster configurable;
 - 3, 5 u otro número de rubbers;
@@ -586,6 +632,7 @@ El builder debe permitir:
 **Acción:** PORTAR COMO PAQUETE PURO `ref-engine`.
 
 Funciones/reglas existentes a preservar:
+
 - `createMatch()`;
 - `awardRally()`;
 - `getServeInfo()`;
@@ -598,6 +645,7 @@ Funciones/reglas existentes a preservar:
 - `undo()` / `redo()`.
 
 Capacidades verificadas:
+
 - singles/doubles;
 - traditional/rally;
 - BO1/BO3/BO5;
@@ -617,6 +665,7 @@ Capacidades verificadas:
 ## 21. Tests Ref existentes
 
 El archivo legacy `tests/engine.test.js` ya verifica al menos:
+
 - servidor inicial de dobles tradicional;
 - scoring/rotación;
 - secuencia de side-out;
@@ -641,12 +690,14 @@ No considerar Ref migrado hasta que los tests legacy y nuevos tests de edge case
 **Acción:** REDISEÑAR.
 
 V1 comercial:
+
 - Ref pertenece a Tournament;
 - puede operar standalone/offline en tablet;
 - no requiere auto-asignación de árbitro P0;
 - resultado puede comunicarse a delegado para carga manual.
 
 Futuro profesional:
+
 - referee capability en cuenta HUAU;
 - asignación de match;
 - “Próximo partido”;
@@ -728,38 +779,38 @@ Una feature legacy puede marcarse `MIGRATED` sólo cuando:
 
 ## 26. Matriz resumida de migración
 
-| Capacidad | Legacy | Acción | Destino | Prioridad |
-|---|---|---|---|---|
-| Personas únicas | Sí | Portar/rediseñar | domain + D1 | P0 |
-| Parejas | Sí | Portar | Tournament Engine | P0 |
-| Teams | No | Nuevo | Team Engine | P0 |
-| Simulador formatos | Sí | Portar | Tournament Engine | P0 |
-| 1/2 vueltas | Sí | Portar + fix scheduler | Tournament Engine | P0 |
-| Normalizado | Sí | Portar | standings engine | P0 |
-| Equiparado | Sí | Portar | standings engine | P0 |
-| Wildcards | Sí | Portar | qualification engine | P0 |
-| Bracket/byes | Sí | Portar | bracket engine | P0 |
-| Bronze | Sí | Portar | bracket/match rules | P0 |
-| BO3 medallas | Sí | Portar | match rules | P0 |
-| Draw live/manual | Sí | Portar/rediseñar UI | draw engine | P0/P1 |
-| Schedule | Sí | Portar + corregir | scheduler | P0 |
-| Día/categoría | Sí | Portar | scheduler | P0 |
-| Resultados | Sí | Portar + nueva sync | result service | P0 |
-| TV | Sí | Rediseñar | Public Live | P0 |
-| Imagen grupos | Sí | Diferir/portar visual | share/export | P1 |
-| Imagen cronograma | Sí | Diferir/portar visual | share/export | P1 |
-| Promo image | Sí | Diferir | marketing export | P2 |
-| JSON backup | Sí | Ampliar | backup/recovery | P0 |
-| Cosmetic safe edit | Sí | Portar regla | mutation policy | P0 |
-| Snapshots/restore | Parcial/no | Nuevo | recovery | P0 |
-| Format explanation | Parcial | Nuevo | explanation engine | P0 |
-| Auth global | No | Nuevo | Better Auth | P0 |
-| Online registration | No | Nuevo | registration | P0 |
-| Mercado Pago | No | Nuevo | payments | P0 |
-| Public live cloud | No | Nuevo | projection/live | P0 |
-| Offline outbox | No | Nuevo | PWA sync | P0 |
-| Ref scoring engine | Sí | Portar | ref-engine | P2 integración |
-| Ref tablet UX | Sí | Rediseñar/preservar | Ref app | P2 integración |
+| Capacidad           | Legacy     | Acción                 | Destino              | Prioridad      |
+| ------------------- | ---------- | ---------------------- | -------------------- | -------------- |
+| Personas únicas     | Sí         | Portar/rediseñar       | domain + D1          | P0             |
+| Parejas             | Sí         | Portar                 | Tournament Engine    | P0             |
+| Teams               | No         | Nuevo                  | Team Engine          | P0             |
+| Simulador formatos  | Sí         | Portar                 | Tournament Engine    | P0             |
+| 1/2 vueltas         | Sí         | Portar + fix scheduler | Tournament Engine    | P0             |
+| Normalizado         | Sí         | Portar                 | standings engine     | P0             |
+| Equiparado          | Sí         | Portar                 | standings engine     | P0             |
+| Wildcards           | Sí         | Portar                 | qualification engine | P0             |
+| Bracket/byes        | Sí         | Portar                 | bracket engine       | P0             |
+| Bronze              | Sí         | Portar                 | bracket/match rules  | P0             |
+| BO3 medallas        | Sí         | Portar                 | match rules          | P0             |
+| Draw live/manual    | Sí         | Portar/rediseñar UI    | draw engine          | P0/P1          |
+| Schedule            | Sí         | Portar + corregir      | scheduler            | P0             |
+| Día/categoría       | Sí         | Portar                 | scheduler            | P0             |
+| Resultados          | Sí         | Portar + nueva sync    | result service       | P0             |
+| TV                  | Sí         | Rediseñar              | Public Live          | P0             |
+| Imagen grupos       | Sí         | Diferir/portar visual  | share/export         | P1             |
+| Imagen cronograma   | Sí         | Diferir/portar visual  | share/export         | P1             |
+| Promo image         | Sí         | Diferir                | marketing export     | P2             |
+| JSON backup         | Sí         | Ampliar                | backup/recovery      | P0             |
+| Cosmetic safe edit  | Sí         | Portar regla           | mutation policy      | P0             |
+| Snapshots/restore   | Parcial/no | Nuevo                  | recovery             | P0             |
+| Format explanation  | Parcial    | Nuevo                  | explanation engine   | P0             |
+| Auth global         | No         | Nuevo                  | Better Auth          | P0             |
+| Online registration | No         | Nuevo                  | registration         | P0             |
+| Mercado Pago        | No         | Nuevo                  | payments             | P0             |
+| Public live cloud   | No         | Nuevo                  | projection/live      | P0             |
+| Offline outbox      | No         | Nuevo                  | PWA sync             | P0             |
+| Ref scoring engine  | Sí         | Portar                 | ref-engine           | P2 integración |
+| Ref tablet UX       | Sí         | Rediseñar/preservar    | Ref app              | P2 integración |
 
 ---
 
