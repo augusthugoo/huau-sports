@@ -12,7 +12,7 @@
     {
       "binding": "HUAU_DB",
       "database_name": "huau-dev",
-      "database_id": "REPLACE_WITH_DEV_D1_ID",
+      "database_id": "bb7df5b2-9247-464e-912c-f1685659bbfb",
       "migrations_dir": "../../packages/db/drizzle"
     }
   ],
@@ -33,7 +33,7 @@
         {
           "binding": "HUAU_DB",
           "database_name": "huau-staging",
-          "database_id": "REPLACE_WITH_STAGING_D1_ID",
+          "database_id": "65bc79ba-3044-4402-b086-8373e9517ed0",
           "migrations_dir": "../../packages/db/drizzle"
         }
       ],
