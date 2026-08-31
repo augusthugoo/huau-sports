@@ -28,7 +28,12 @@ export function createAuth(env: Env) {
       useSecureCookies: env.APP_ENV !== "development",
       database: { generateId: "uuid" },
     },
-    trustedOrigins: [env.BETTER_AUTH_URL],
+    trustedOrigins: [
+      env.BETTER_AUTH_URL,
+      ...(env.APP_ENV === "staging"
+        ? ["https://*-huau-sports-staging.augusthugoo.workers.dev"]
+        : []),
+    ],
   });
 }
 
