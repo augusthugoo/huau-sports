@@ -30,9 +30,7 @@ export function createAuth(env: Env) {
     },
     trustedOrigins: [
       env.BETTER_AUTH_URL,
-      ...(env.APP_ENV === "staging"
-        ? ["https://*-huau-sports-staging.augusthugoo.workers.dev"]
-        : []),
+      "https://*-huau-sports-staging.augusthugoo.workers.dev",
     ],
   });
 }
