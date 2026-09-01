@@ -1,6 +1,6 @@
 {
   "name": "@huau/web",
-  "version": "0.1.0-phase0",
+  "version": "0.2.0-phase1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -19,7 +19,10 @@
     "@huau/core": "workspace:*",
     "@huau/db": "workspace:*",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "better-auth": "1.7.2",
+    "@better-auth/drizzle-adapter": "1.7.2",
+    "drizzle-orm": "0.45.2"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.54.1",
@@ -28,7 +31,7 @@
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.5",
     "@vitejs/plugin-react": "6.1.1",
-    "typescript": "7.0.2",
+    "typescript": "6.0.3",
     "vite": "8.2.2",
     "vitest": "4.1.11",
     "wrangler": "4.127.1"

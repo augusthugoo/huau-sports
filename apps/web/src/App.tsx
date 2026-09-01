@@ -1,69 +1,190 @@
-import { useEffect, useState } from "react";
-import { HUAU_FOUNDATION_VERSION } from "@huau/core";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { FormEvent } from "react";
+import { authClient } from "./lib/auth-client";
+import { detectLocale, t } from "./i18n";
+import type { Locale } from "./i18n";
 
-type Health = {
-  ok: boolean;
-  env?: string;
-  version?: string;
+type Membership = {
+  id: string;
+  status: string;
+  organizationId: string;
+  organizationName: string;
+  organizationSlug: string;
+  organizationType: string;
 };
+type Capability = { organizationId: string; capability: string; status: string };
+type Me = {
+  user: { id: string; name: string; email: string };
+  profile: { firstName: string; lastName: string; preferredLocale: string } | null;
+  memberships: Membership[];
+  capabilities: Capability[];
+  membershipRequests: { id: string; organizationId: string; status: string }[];
+  platformAdmin: boolean;
+};
+type Organization = { id: string; name: string; slug: string; type: string; status: string; description?: string | null };
+type JoinRequest = { id: string; userId: string; name: string; email: string; firstName?: string; lastName?: string; note?: string | null };
+
+async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(path, {
+    ...init,
+    headers: { "content-type": "application/json", ...init?.headers },
+  });
+  const payload = (await response.json()) as T & { code?: string };
+  if (!response.ok) throw new Error(payload.code || `HTTP_${response.status}`);
+  return payload;
+}
+
+function usePath() {
+  const [path, setPath] = useState(window.location.pathname);
+  useEffect(() => {
+    const onPop = () => setPath(window.location.pathname);
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  const go = useCallback((next: string) => {
+    window.history.pushState({}, "", next);
+    setPath(next);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+  return { path, go };
+}
 
 export function App() {
-  const [health, setHealth] = useState<Health | null>(null);
+  const { data: session, isPending } = authClient.useSession();
+  const { path, go } = usePath();
+  const [locale, setLocale] = useState<Locale>(detectLocale);
+  const [me, setMe] = useState<Me | null>(null);
+  const [meLoading, setMeLoading] = useState(false);
+
+  const changeLocale = (next: Locale) => {
+    setLocale(next);
+    localStorage.setItem("huau.locale", next);
+  };
+
+  const refreshMe = useCallback(async () => {
+    if (!session?.user) {
+      setMe(null);
+      return;
+    }
+    setMeLoading(true);
+    try {
+      const result = await api<{ ok: true } & Me>("/api/me");
+      setMe(result);
+    } finally {
+      setMeLoading(false);
+    }
+  }, [session?.user]);
 
   useEffect(() => {
-    let active = true;
-    fetch("/api/health")
-      .then(async (response) => (await response.json()) as Health)
-      .then((data) => {
-        if (active) setHealth(data);
-      })
-      .catch(() => {
-        if (active) setHealth({ ok: false });
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
+    void refreshMe();
+  }, [refreshMe]);
 
+  if (isPending) return <LoadingScreen />;
+
+  if (path === "/" && !session?.user) return <Landing locale={locale} setLocale={changeLocale} go={go} />;
+  if (path === "/login" && !session?.user) return <AuthScreen mode="login" locale={locale} go={go} onDone={refreshMe} />;
+  if (path === "/signup" && !session?.user) return <AuthScreen mode="signup" locale={locale} go={go} onDone={refreshMe} />;
+  if (path === "/recover" && !session?.user) return <RecoveryScreen locale={locale} go={go} />;
+
+  if (path.startsWith("/organizations/")) {
+    return <PublicOrganization slug={decodeURIComponent(path.split("/")[2] || "")} locale={locale} go={go} me={me} refreshMe={refreshMe} authenticated={Boolean(session?.user)} />;
+  }
+
+  if (!session?.user) {
+    go("/login");
+    return <LoadingScreen />;
+  }
+
+  if (path.startsWith("/admin/organizations/")) {
+    const orgId = decodeURIComponent(path.split("/")[3] || "");
+    return <OrganizationAdmin organizationId={orgId} locale={locale} go={go} me={me} refreshMe={refreshMe} />;
+  }
+
+  if (path === "/platform" && me?.platformAdmin) {
+    return <PlatformAdmin locale={locale} go={go} refreshMe={refreshMe} />;
+  }
+
+  return <MyHuau locale={locale} setLocale={changeLocale} go={go} me={me} loading={meLoading} />;
+}
+
+function Shell({ children, locale, go, me }: { children: React.ReactNode; locale: Locale; go: (path: string) => void; me?: Me | null }) {
   return (
-    <main className="shell">
-      <section className="hero">
-        <div className="eyebrow">Foundation / Phase 0</div>
-        <h1>HUAU Sports</h1>
-        <p>
-          Base técnica del ecosistema HUAU: Club, Tournament y Ref sobre una identidad y una
-          arquitectura Cloudflare-first.
-        </p>
-        <div className="status-row">
-          <span className="status-dot" data-online={health?.ok === true} />
-          <span data-testid="api-health">
-            {health === null ? "API checking" : health.ok ? "API online" : "API unavailable"}
-          </span>
-        </div>
-      </section>
-
-      <section className="grid" aria-label="Foundation modules">
-        <article>
-          <span>01</span>
-          <h2>Club</h2>
-          <p>Membership, courts, reservations, community and open matches.</p>
-        </article>
-        <article>
-          <span>02</span>
-          <h2>Tournament</h2>
-          <p>Configurable competition engine, teams, registrations and live operations.</p>
-        </article>
-        <article>
-          <span>03</span>
-          <h2>Ref</h2>
-          <p>Dedicated, resilient court-side scoring experience inside Tournament.</p>
-        </article>
-      </section>
-
-      <footer>
-        <span>{HUAU_FOUNDATION_VERSION}</span>
-        <span>{health?.env ?? "local"}</span>
-      </footer>
-    </main>
+    <div className="app-shell">
+      <header className="topbar">
+        <button className="brand-button" onClick={() => go("/app")}><strong>HUAU</strong><span>SPORTS</span></button>
+        <nav>
+          <button onClick={() => go("/app")}>{t(locale, "myHuau")}</button>
+          {me?.platformAdmin && <button onClick={() => go("/platform")}>{t(locale, "platform")}</button>}
+        </nav>
+        <button className="ghost compact" onClick={() => void authClient.signOut().then(() => go("/"))}>{t(locale, "signOut")}</button>
+      </header>
+      {children}
+    </div>
   );
 }
+
+function Landing({ locale, setLocale, go }: { locale: Locale; setLocale: (l: Locale) => void; go: (p: string) => void }) {
+  return <main className="landing">
+    <header className="landing-nav"><div className="brand"><strong>HUAU</strong><span>SPORTS</span></div><div className="landing-actions"><LocaleToggle locale={locale} setLocale={setLocale}/><button className="ghost" onClick={() => go("/login")}>{t(locale,"enter")}</button><button className="light" onClick={() => go("/signup")}>{t(locale,"createAccount")}</button></div></header>
+    <section className="landing-hero"><div className="eyebrow">{t(locale,"landingEyebrow")}</div><h1>{t(locale,"landingTitle")}</h1><p>{t(locale,"landingBody")}</p><div className="hero-actions"><button className="light" onClick={() => go("/signup")}>{t(locale,"createAccount")}</button><button className="ghost" onClick={() => go("/login")}>{t(locale,"enter")}</button></div><div className="module-strip"><span>CLUB</span><span>TOURNAMENT</span><span>REF</span></div></section>
+    <footer className="landing-footer"><span>HUAU Sports</span><span>{t(locale,"brandTagline")}</span></footer>
+  </main>;
+}
+
+function AuthScreen({ mode, locale, go, onDone }: { mode: "login"|"signup"; locale: Locale; go:(p:string)=>void; onDone:()=>Promise<void> }) {
+  const [error,setError]=useState(""); const [busy,setBusy]=useState(false);
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); setBusy(true); setError("");
+    const form=new FormData(event.currentTarget); const email=String(form.get("email")||"").trim(); const password=String(form.get("password")||"");
+    try {
+      if(mode==="signup"){
+        const firstName=String(form.get("firstName")||"").trim(); const lastName=String(form.get("lastName")||"").trim();
+        const result=await authClient.signUp.email({email,password,name:`${firstName} ${lastName}`.trim()});
+        if(result.error) throw new Error(result.error.message || "SIGNUP_FAILED");
+        await api("/api/me/profile",{method:"PUT",body:JSON.stringify({firstName,lastName,preferredLocale:locale==="es"?"es-UY":"en"})});
+      } else {
+        const result=await authClient.signIn.email({email,password}); if(result.error) throw new Error(result.error.message || "SIGNIN_FAILED");
+      }
+      await onDone(); go("/app");
+    } catch (e) { setError(e instanceof Error?e.message:"AUTH_FAILED"); } finally { setBusy(false); }
+  };
+  return <main className="auth-page"><button className="back-link" onClick={()=>go("/")}>← {t(locale,"back")}</button><section className="auth-card"><div className="brand center"><strong>HUAU</strong><span>SPORTS</span></div><h1>{mode==="login"?t(locale,"signIn"):t(locale,"createAccount")}</h1><form onSubmit={submit}>{mode==="signup"&&<div className="two"><Field name="firstName" label={t(locale,"firstName")}/><Field name="lastName" label={t(locale,"lastName")}/></div>}<Field name="email" label={t(locale,"email")} type="email"/><Field name="password" label={t(locale,"password")} type="password"/><button className="light full" disabled={busy}>{busy?"…":mode==="login"?t(locale,"signIn"):t(locale,"signUp")}</button>{error&&<p className="error">{error}</p>}</form>{mode==="login"&&<button className="text-button" onClick={()=>go("/recover")}>{t(locale,"recover")}</button>}</section></main>;
+}
+
+function RecoveryScreen({locale,go}:{locale:Locale;go:(p:string)=>void}) { return <main className="auth-page"><button className="back-link" onClick={()=>go("/login")}>← {t(locale,"back")}</button><section className="auth-card"><div className="brand center"><strong>HUAU</strong><span>SPORTS</span></div><h1>{t(locale,"recover")}</h1><p className="muted">{t(locale,"recoverySoon")}</p></section></main>; }
+
+function MyHuau({locale,setLocale,go,me,loading}:{locale:Locale;setLocale:(l:Locale)=>void;go:(p:string)=>void;me:Me|null;loading:boolean}) {
+  const [organizations,setOrganizations]=useState<Organization[]>([]);
+  useEffect(()=>{ void api<{organizations:Organization[]}>("/api/organizations").then(r=>setOrganizations(r.organizations)); },[]);
+  const adminOrgIds=useMemo(()=>new Set(me?.capabilities.filter(c=>c.capability==="org_admin"&&c.status==="active").map(c=>c.organizationId)??[]),[me]);
+  return <Shell locale={locale} go={go} me={me}><main className="dashboard"><section className="dashboard-head"><div><div className="eyebrow">{t(locale,"myHuau")}</div><h1>{me?.profile?.firstName ? `${me.profile.firstName}, tu deporte empieza acá.` : "Tu deporte empieza acá."}</h1></div><LocaleToggle locale={locale} setLocale={setLocale}/></section><section className="dashboard-grid"><div className="panel wide"><div className="panel-title"><h2>{t(locale,"organizations")}</h2><span>{me?.memberships.length??0}</span></div>{loading?<p className="muted">Loading…</p>:me?.memberships.length? <div className="card-list">{me.memberships.map(m=><article className="org-card" key={m.id}><div><span className="pill">{m.organizationType}</span><h3>{m.organizationName}</h3><p>{m.status}</p></div><div className="card-actions"><button className="ghost" onClick={()=>go(`/organizations/${m.organizationSlug}`)}>{t(locale,"openOrganization")}</button>{adminOrgIds.has(m.organizationId)&&<button className="light small" onClick={()=>go(`/admin/organizations/${m.organizationId}`)}>{t(locale,"admin")}</button>}</div></article>)}</div>:<p className="muted">{t(locale,"noOrganizations")}</p>}</div><div className="panel"><h2>{t(locale,"discover")}</h2><div className="mini-list">{organizations.slice(0,6).map(org=><button key={org.id} onClick={()=>go(`/organizations/${org.slug}`)}><span>{org.name}</span><small>{org.type}</small></button>)}</div></div></section></main></Shell>;
+}
+
+function PublicOrganization({slug,locale,go,me,refreshMe,authenticated}:{slug:string;locale:Locale;go:(p:string)=>void;me:Me|null;refreshMe:()=>Promise<void>;authenticated:boolean}) {
+  const [org,setOrg]=useState<Organization|null>(null); const [state,setState]=useState("");
+  useEffect(()=>{ void api<{organization:Organization}>(`/api/organizations/${encodeURIComponent(slug)}`).then(r=>setOrg(r.organization)); },[slug]);
+  const membership=me?.memberships.find(m=>m.organizationId===org?.id);
+  const pendingRequest=me?.membershipRequests?.find(r=>r.organizationId===org?.id&&r.status==="pending");
+  const request=async()=>{ if(!org)return; try{await api(`/api/organizations/${org.id}/membership-requests`,{method:"POST",body:"{}"});setState("sent");await refreshMe();}catch(e){setState(e instanceof Error?e.message:"error");}};
+  const content=<main className="public-org">{org?<><div className="eyebrow">{org.type}</div><h1>{org.name}</h1><p>{org.description||"HUAU Sports Organization"}</p><div className="public-org-actions">{membership?<span className="pill strong">{membership.status}</span>:pendingRequest?<span className="pill strong">{t(locale,"pending")}</span>:authenticated?<button className="light" onClick={()=>void request()} disabled={state==="sent"}>{state==="sent"?t(locale,"requestSent"):t(locale,"requestJoin")}</button>:<button className="light" onClick={()=>go("/login")}>{t(locale,"enter")}</button>}</div></>:<p>Loading…</p>}</main>;
+  if(authenticated) return <Shell locale={locale} go={go} me={me}>{content}</Shell>;
+  return <div className="app-shell"><header className="topbar"><button className="brand-button" onClick={()=>go("/")}><strong>HUAU</strong><span>SPORTS</span></button><button className="light small" onClick={()=>go("/login")}>{t(locale,"enter")}</button></header>{content}</div>;
+}
+
+function OrganizationAdmin({organizationId,locale,go,me,refreshMe}:{organizationId:string;locale:Locale;go:(p:string)=>void;me:Me|null;refreshMe:()=>Promise<void>}) {
+  const [requests,setRequests]=useState<JoinRequest[]>([]); const [error,setError]=useState("");
+  const load=useCallback(async()=>{try{const r=await api<{requests:JoinRequest[]}>(`/api/admin/organizations/${organizationId}/membership-requests`);setRequests(r.requests);}catch(e){setError(e instanceof Error?e.message:"error")}},[organizationId]);
+  useEffect(()=>{void load()},[load]);
+  const review=async(id:string,decision:"approve"|"reject")=>{await api(`/api/admin/membership-requests/${id}/review`,{method:"POST",body:JSON.stringify({decision})});await load();await refreshMe();};
+  return <Shell locale={locale} go={go} me={me}><main className="dashboard"><section className="dashboard-head"><div><div className="eyebrow">{t(locale,"admin")}</div><h1>{t(locale,"membershipRequests")}</h1></div></section><section className="panel wide">{error&&<p className="error">{error}</p>}{requests.length?<div className="request-list">{requests.map(r=><article key={r.id}><div><strong>{r.firstName&&r.lastName?`${r.firstName} ${r.lastName}`:r.name}</strong><span>{r.email}</span></div><div className="card-actions"><button className="ghost" onClick={()=>void review(r.id,"reject")}>{t(locale,"reject")}</button><button className="light small" onClick={()=>void review(r.id,"approve")}>{t(locale,"approve")}</button></div></article>)}</div>:<p className="muted">{t(locale,"noRequests")}</p>}</section></main></Shell>;
+}
+
+function PlatformAdmin({locale,go,refreshMe}:{locale:Locale;go:(p:string)=>void;refreshMe:()=>Promise<void>}) {
+  const [message,setMessage]=useState("");
+  const submit=async(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();const f=new FormData(e.currentTarget);try{const r=await api<{organization:{slug:string}}>("/api/platform/organizations",{method:"POST",body:JSON.stringify({name:f.get("name"),slug:f.get("slug"),type:f.get("type"),description:f.get("description")})});setMessage("OK");await refreshMe();go(`/organizations/${r.organization.slug}`);}catch(err){setMessage(err instanceof Error?err.message:"error")}};
+  return <Shell locale={locale} go={go}><main className="dashboard"><section className="dashboard-head"><div><div className="eyebrow">HUAU</div><h1>{t(locale,"platform")}</h1></div></section><section className="panel form-panel"><h2>{t(locale,"createOrganization")}</h2><form onSubmit={submit}><Field name="name" label={t(locale,"organizationName")}/><Field name="slug" label={t(locale,"organizationSlug")} required={false}/><label><span>{t(locale,"organizationType")}</span><select name="type" defaultValue="club"><option value="club">Club</option><option value="sports_complex">Sports complex</option><option value="community">Community</option><option value="academy">Academy</option><option value="organizer">Organizer</option><option value="league">League</option><option value="federation">Federation</option></select></label><label><span>{t(locale,"description")}</span><textarea name="description" rows={4}/></label><button className="light">{t(locale,"create")}</button>{message&&<p>{message}</p>}</form></section></main></Shell>;
+}
+
+function Field({name,label,type="text",required=true}:{name:string;label:string;type?:string;required?:boolean}) { return <label><span>{label}</span><input name={name} type={type} required={required} minLength={type==="password"?8:undefined}/></label>; }
+function LocaleToggle({locale,setLocale}:{locale:Locale;setLocale:(l:Locale)=>void}) { return <div className="locale-toggle"><button className={locale==="es"?"active":""} onClick={()=>setLocale("es")}>ES</button><button className={locale==="en"?"active":""} onClick={()=>setLocale("en")}>EN</button></div>; }
+function LoadingScreen(){ return <main className="loading-screen"><div className="brand center"><strong>HUAU</strong><span>SPORTS</span></div></main>; }

@@ -1,6 +1,6 @@
 {
   "name": "huau-sports",
-  "version": "0.1.0-phase0",
+  "version": "0.2.0-phase1",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.24.0",
@@ -22,7 +22,8 @@
     "db:generate": "pnpm --filter @huau/db generate",
     "db:migrate:local": "pnpm --filter @huau/web db:migrate:local",
     "db:migrate:staging": "pnpm --filter @huau/web db:migrate:staging",
-    "deploy:staging": "pnpm --filter @huau/web deploy:staging"
+    "deploy:staging": "pnpm --filter @huau/web deploy:staging",
+    "i18n:check": "node scripts/check-translations.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",
