@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { DEFAULT_STANDARD_FORMAT, recommendedGroupCount } from "@huau/core";
+import type { StandardCompetitionFormat } from "@huau/core";
 import { authClient } from "./lib/auth-client";
 import { detectLocale, t } from "./i18n";
 import type { Locale } from "./i18n";
@@ -54,6 +55,7 @@ type TournamentCategory = {
   groupMatchCount: number;
   finishedGroupMatchCount: number;
   finalMatchCount: number;
+  configJson: string | null;
 };
 type TournamentEntryRow = {
   id: string;
@@ -336,9 +338,9 @@ function TournamentWorkspace({organizationId,tournamentId,locale,go,me}:{organiz
   if(!detail)return <Shell locale={locale} go={go} me={me}><main className="dashboard"><button className="section-back" onClick={()=>go(`/admin/organizations/${organizationId}/tournaments`)}>← Tournament</button>{error?<p className="error">{error}</p>:<p className="muted">Loading…</p>}</main></Shell>;
   const tournament=detail.tournament;
   const act=async(action:()=>Promise<unknown>)=>{setBusy(true);setError("");try{await action();await load();}catch(e){setError(e instanceof Error?e.message:"error")}finally{setBusy(false)}};
-  if(operatorMode)return <Shell locale={locale} go={go} me={me}><main className="dashboard operator-workspace"><div className="operator-head"><div><div className="eyebrow">{tournament.name}</div><h1>{copy(locale,"Modo operador","Operator mode")}</h1></div><button className="ghost" onClick={()=>setOperatorMode(false)}>{copy(locale,"Volver al workspace","Back to workspace")}</button></div><SchedulePanel detail={detail} locale={locale}/><ResultsPanel detail={detail} locale={locale} busy={busy} onResult={(match)=>void act(()=>saveResult(match,locale))}/></main></Shell>;
+  if(operatorMode)return <Shell locale={locale} go={go} me={me}><main className="dashboard operator-workspace"><div className="operator-head"><div><div className="eyebrow">{tournament.name}</div><h1>{copy(locale,"Modo operador","Operator mode")}</h1></div><button className="ghost" onClick={()=>setOperatorMode(false)}>{copy(locale,"Volver al workspace","Back to workspace")}</button></div><SchedulePanel detail={detail} locale={locale}/><ResultsPanel detail={detail} locale={locale} busy={busy} onSave={(match,payload)=>act(()=>saveResult(match,payload))}/></main></Shell>;
   const tabs:Array<{key:WorkspaceTab;label:string}>=[{key:"overview",label:copy(locale,"Resumen","Overview")},{key:"categories",label:copy(locale,"Participantes","Participants")},{key:"draw",label:copy(locale,"Formato y sorteo","Format & draw")},{key:"schedule",label:copy(locale,"Cronograma","Schedule")},{key:"results",label:copy(locale,"Resultados","Results")},{key:"finals",label:copy(locale,"Fase final","Final phase")},{key:"publish",label:copy(locale,"Publicar","Publish")},{key:"recovery",label:copy(locale,"Recuperación","Recovery")}];
-  return <Shell locale={locale} go={go} me={me}><main className="dashboard tournament-workspace"><button className="section-back" onClick={()=>go(`/admin/organizations/${organizationId}/tournaments`)}>← HUAU Tournament</button><section className="workspace-hero"><div><div className="eyebrow">{tournament.sport} · {tournament.status.replaceAll("_"," ")}</div><h1>{tournament.name}</h1><p>{displayDate(tournament.startAt)} · {tournament.courtCount} {copy(locale,"canchas","courts")} · rev. {tournament.workingRevision}</p></div><div className="workspace-actions"><span className={`lock-chip ${tournament.structureLocked?"is-locked":""}`}>{tournament.structureLocked?copy(locale,"Estructura bloqueada","Structure locked"):copy(locale,"En preparación","In setup")}</span><button className="light small" onClick={()=>setOperatorMode(true)}>{copy(locale,"Modo operador","Operator mode")}</button></div></section><nav className="workspace-tabs">{tabs.map(item=><button className={tab===item.key?"active":""} key={item.key} onClick={()=>setTab(item.key)}>{item.label}</button>)}</nav>{error&&<p className="workspace-alert error">{error}</p>}{tab==="overview"&&<OverviewPanel detail={detail} locale={locale} onGo={setTab}/>} {tab==="categories"&&<CategoriesPanel detail={detail} locale={locale} busy={busy} onAction={act}/>} {tab==="draw"&&<DrawPanel detail={detail} locale={locale} busy={busy} onAction={act}/>} {tab==="schedule"&&<SchedulePanel detail={detail} locale={locale}/>} {tab==="results"&&<ResultsPanel detail={detail} locale={locale} busy={busy} onResult={(match)=>void act(()=>saveResult(match,locale))}/>} {tab==="finals"&&<FinalsPanel detail={detail} locale={locale} busy={busy} onAction={act}/>} {tab==="publish"&&<PublishPanel detail={detail} locale={locale} busy={busy} onAction={act}/>} {tab==="recovery"&&<RecoveryPanel detail={detail} locale={locale} busy={busy} onAction={act}/>}</main></Shell>;
+  return <Shell locale={locale} go={go} me={me}><main className="dashboard tournament-workspace"><button className="section-back" onClick={()=>go(`/admin/organizations/${organizationId}/tournaments`)}>← HUAU Tournament</button><section className="workspace-hero"><div><div className="eyebrow">{tournament.sport} · {tournament.status.replaceAll("_"," ")}</div><h1>{tournament.name}</h1><p>{displayDate(tournament.startAt)} · {tournament.courtCount} {copy(locale,"canchas","courts")} · rev. {tournament.workingRevision}</p></div><div className="workspace-actions"><span className={`lock-chip ${tournament.structureLocked?"is-locked":""}`}>{tournament.structureLocked?copy(locale,"Estructura bloqueada","Structure locked"):copy(locale,"En preparación","In setup")}</span><button className="light small" onClick={()=>setOperatorMode(true)}>{copy(locale,"Modo operador","Operator mode")}</button></div></section><nav className="workspace-tabs">{tabs.map(item=><button className={tab===item.key?"active":""} key={item.key} onClick={()=>setTab(item.key)}>{item.label}</button>)}</nav>{error&&<p className="workspace-alert error">{error}</p>}{tab==="overview"&&<OverviewPanel detail={detail} locale={locale} onGo={setTab}/>} {tab==="categories"&&<CategoriesPanel detail={detail} locale={locale} busy={busy} onAction={act}/>} {tab==="draw"&&<DrawPanel detail={detail} locale={locale} busy={busy} onAction={act}/>} {tab==="schedule"&&<SchedulePanel detail={detail} locale={locale}/>} {tab==="results"&&<ResultsPanel detail={detail} locale={locale} busy={busy} onSave={(match,payload)=>act(()=>saveResult(match,payload))}/>} {tab==="finals"&&<FinalsPanel detail={detail} locale={locale} busy={busy} onAction={act}/>} {tab==="publish"&&<PublishPanel detail={detail} locale={locale} busy={busy} onAction={act}/>} {tab==="recovery"&&<RecoveryPanel detail={detail} locale={locale} busy={busy} onAction={act}/>}</main></Shell>;
 }
 
 function OverviewPanel({detail,locale,onGo}:{detail:TournamentDetail;locale:Locale;onGo:(tab:WorkspaceTab)=>void}) {
@@ -361,30 +363,144 @@ function CategoryParticipantsCard({detail,category,locale,busy,onSubmit}:{detail
   return <article className="category-admin-card"><header><div><span className="pill">{category.entryType}</span><h2>{category.name}</h2><p>{entries.length} {copy(locale,"entradas","entries")} · {category.structureLocked?copy(locale,"estructura bloqueada","structure locked"):copy(locale,"editable","editable")}</p></div></header><div className="entry-grid">{entries.map(entry=><div className="entry-row" key={entry.id}><div><strong>{entry.displayName}</strong><span>{entry.members||copy(locale,"Sin miembros vinculados","No linked members")}</span></div><span className="rating-chip">{Number(entry.seedRating||0).toFixed(2)}</span></div>)}</div>{category.entryType!=="team"?<form className="entry-form" onSubmit={submit}><div className="two"><Field name="displayName" label={copy(locale,"Nombre visible (opcional)","Display name (optional)")} required={false}/><Field name="seedRating" label={copy(locale,"Rating / siembra","Rating / seed")} type="number" required={false}/></div><label><span>{category.entryType==="individual"?copy(locale,"Jugador","Player"):copy(locale,"Jugadores — uno por línea","Players — one per line")}</span><textarea name="members" rows={category.entryType==="pair"?2:1} required placeholder={category.entryType==="pair"?"Augusto Hugo\nDavid Pérez":"Augusto Hugo"}/></label><button className="ghost" disabled={busy}>{copy(locale,"Agregar manualmente","Add manually")}</button></form>:<div className="phase-note">{copy(locale,"La administración de roster de equipos se habilita en Phase 5.","Team roster administration is enabled in Phase 5.")}</div>}</article>;
 }
 
+type StoredFormatConfig = Partial<StandardCompetitionFormat> & {
+  matchMinutes?: number;
+  dailyStart?: string;
+  groupCount?: number;
+};
+
+function storedFormat(category: TournamentCategory): StoredFormatConfig {
+  if (!category.configJson) return {};
+  try {
+    return JSON.parse(category.configJson) as StoredFormatConfig;
+  } catch {
+    return {};
+  }
+}
+
 function DrawPanel({detail,locale,busy,onAction}:{detail:TournamentDetail;locale:Locale;busy:boolean;onAction:(fn:()=>Promise<unknown>)=>Promise<void>}) {
-  return <section className="workspace-stack">{detail.categories.length===0?<div className="empty-state">{copy(locale,"Primero creá una categoría.","Create a category first.")}</div>:detail.categories.map(category=><FormatCard key={category.id} detail={detail} category={category} locale={locale} busy={busy} onAction={onAction}/>)}</section>;
+  const moveCategory=(category:TournamentCategory,direction:"up"|"down")=>
+    onAction(()=>api(`/api/admin/categories/${category.id}/order`,{method:"POST",body:JSON.stringify({direction})}));
+  return <section className="workspace-stack">
+    {detail.categories.length>1&&<div className="panel category-order-panel">
+      <div className="panel-title"><div><h2>{copy(locale,"Jornadas y orden","Days & order")}</h2><p className="muted">{copy(locale,"Las categorías del mismo día se juegan en este orden. HUAU recalcula el cronograma sin tocar grupos ni resultados.","Categories on the same day play in this order. HUAU recalculates the schedule without changing groups or results.")}</p></div></div>
+      <div className="category-order-list">
+        {detail.categories.map((category,index)=><div className="category-order-row" key={category.id}>
+          <b>{index+1}</b><div><strong>{category.name}</strong><span>{category.scheduledDate||copy(locale,"Sin fecha","No date")}</span></div>
+          <div className="order-buttons"><button className="ghost small" disabled={busy||index===0} onClick={()=>void moveCategory(category,"up")}>↑</button><button className="ghost small" disabled={busy||index===detail.categories.length-1} onClick={()=>void moveCategory(category,"down")}>↓</button></div>
+        </div>)}
+      </div>
+    </div>}
+    {detail.categories.length===0?<div className="empty-state">{copy(locale,"Primero creá una categoría.","Create a category first.")}</div>:detail.categories.map(category=><FormatCard key={category.id} detail={detail} category={category} locale={locale} busy={busy} onAction={onAction}/>)}
+  </section>;
 }
 
 function FormatCard({detail,category,locale,busy,onAction}:{detail:TournamentDetail;category:TournamentCategory;locale:Locale;busy:boolean;onAction:(fn:()=>Promise<unknown>)=>Promise<void>}) {
-  const entries=detail.entries.filter(entry=>entry.categoryId===category.id); const groups=detail.groups.filter(group=>group.categoryId===category.id); const grouped=useMemo(()=>{const map=new Map<string,{name:string;entries:string[]}>();groups.forEach(row=>{const item=map.get(row.id)??{name:row.name,entries:[]};if(row.entryName)item.entries.push(row.entryName);map.set(row.id,item)});return [...map.values()]},[groups]);
-  const submit=async(event:FormEvent<HTMLFormElement>)=>{event.preventDefault();const form=new FormData(event.currentTarget);const payload={groupCount:Number(form.get("groupCount")),scheduledDate:form.get("scheduledDate"),dailyStart:form.get("dailyStart"),matchMinutes:Number(form.get("matchMinutes")),format:{groupRounds:Number(form.get("groupRounds"))===2?2:1,qualifiersPerGroup:Number(form.get("qualifiersPerGroup")),wildcardQualifiers:Number(form.get("wildcardQualifiers")),crossGroupMethod:form.get("crossGroupMethod"),playoffMode:form.get("playoffMode"),consolationMode:"none",avoidGroupRematches:true,bronzeMatch:form.get("bronzeMatch")==="yes",medalSchedule:form.get("medalSchedule"),finalDrawMethod:"performance",preliminary:{bestOf:1,pointTarget:Number(form.get("preliminaryTarget"))},medal:{bestOf:Number(form.get("medalBestOf"))===3?3:1,pointTarget:Number(form.get("medalTarget"))},preferredRestSlots:1},confirmImpact:false};const run=(confirmImpact:boolean)=>api(`/api/admin/categories/${category.id}/generate`,{method:"POST",body:JSON.stringify({...payload,confirmImpact})});if(category.structureLocked){const accepted=window.confirm(copy(locale,"Esto reemplazará el sorteo y cronograma de esta categoría. HUAU creará un snapshot automático antes de regenerar. ¿Continuar?","This will replace this category draw and schedule. HUAU will create an automatic snapshot before regenerating. Continue?"));if(!accepted)return;payload.confirmImpact=true;}await onAction(()=>run(payload.confirmImpact));};
-  return <article className="format-card"><header><div><span className="eyebrow">{copy(locale,"Formato estándar","Standard format")}</span><h2>{category.name}</h2><p>{entries.length} {copy(locale,"entradas","entries")} · {grouped.length?`${grouped.length} ${copy(locale,"grupos generados","generated groups")}`:copy(locale,"sin sorteo","no draw")}</p></div>{category.structureLocked&&<span className="lock-chip is-locked">{copy(locale,"Bloqueado","Locked")}</span>}</header><form className="format-builder" onSubmit={submit}><div className="format-simple"><div className="two"><Field name="groupCount" label={copy(locale,"Cantidad de grupos","Number of groups")} type="number" defaultValue={String(recommendedGroupCount(entries.length)||1)}/><Field name="scheduledDate" label={copy(locale,"Fecha de categoría","Category date")} type="date" defaultValue={category.scheduledDate||isoDate(detail.tournament.startAt)}/></div><div className="three"><label><span>{copy(locale,"Vueltas","Legs")}</span><select name="groupRounds" defaultValue={String(DEFAULT_STANDARD_FORMAT.groupRounds)}><option value="1">1</option><option value="2">2</option></select></label><Field name="qualifiersPerGroup" label={copy(locale,"Clasificados/grupo","Qualifiers/group")} type="number" defaultValue="2"/><Field name="wildcardQualifiers" label="Wildcards" type="number" defaultValue="0"/></div><div className="three"><Field name="matchMinutes" label={copy(locale,"Min/partido","Min/match")} type="number" defaultValue="15"/><Field name="dailyStart" label={copy(locale,"Hora de inicio","Start time")} type="time" defaultValue="09:00"/><Field name="preliminaryTarget" label={copy(locale,"Puntos fase grupos","Group target")} type="number" defaultValue="15"/></div></div><details className="advanced-format"><summary>{copy(locale,"Opciones avanzadas","Advanced options")}</summary><div className="advanced-grid"><label><span>{copy(locale,"Comparación entre grupos","Cross-group comparison")}</span><select name="crossGroupMethod" defaultValue="normalized"><option value="normalized">Normalized</option><option value="equalized">Equalized</option></select></label><label><span>{copy(locale,"Playoff","Playoff")}</span><select name="playoffMode" defaultValue="standard"><option value="standard">Standard bracket</option><option value="top2_final">Top 2 → Final</option><option value="top3_step">Top 3 step</option><option value="top4_semis">Top 4 → Semis</option><option value="league_only">League only</option></select></label><label><span>{copy(locale,"Partido por bronce","Bronze match")}</span><select name="bronzeMatch" defaultValue="yes"><option value="yes">{copy(locale,"Sí","Yes")}</option><option value="no">No</option></select></label><label><span>{copy(locale,"Medallas","Medal scheduling")}</span><select name="medalSchedule" defaultValue="sequential"><option value="sequential">{copy(locale,"Secuencial","Sequential")}</option><option value="simultaneous">{copy(locale,"Simultáneo","Simultaneous")}</option></select></label><label><span>BO final</span><select name="medalBestOf" defaultValue="3"><option value="1">BO1</option><option value="3">BO3</option></select></label><Field name="medalTarget" label={copy(locale,"Puntos medallas","Medal target")} type="number" defaultValue="11"/></div></details><button className="light" disabled={busy||entries.length<2}>{category.structureLocked?copy(locale,"Regenerar con snapshot","Regenerate with snapshot"):copy(locale,"Generar grupos y cronograma","Generate groups & schedule")}</button></form>{grouped.length>0&&<div className="group-preview">{grouped.map(group=><div key={group.name}><strong>{copy(locale,"Grupo","Group")} {group.name}</strong>{group.entries.map(entry=><span key={entry}>{entry}</span>)}</div>)}</div>}</article>;
+  const entries=detail.entries.filter(entry=>entry.categoryId===category.id);
+  const groups=detail.groups.filter(group=>group.categoryId===category.id);
+  const grouped=useMemo(()=>{const map=new Map<string,{name:string;entries:string[]}>();groups.forEach(row=>{const item=map.get(row.id)??{name:row.name,entries:[]};if(row.entryName)item.entries.push(row.entryName);map.set(row.id,item)});return [...map.values()]},[groups]);
+  const saved=storedFormat(category);
+  const prelim=saved.preliminary??DEFAULT_STANDARD_FORMAT.preliminary;
+  const medal=saved.medal??DEFAULT_STANDARD_FORMAT.medal;
+  const submit=async(event:FormEvent<HTMLFormElement>)=>{
+    event.preventDefault();
+    const form=new FormData(event.currentTarget);
+    const payload={
+      groupCount:Number(form.get("groupCount")),
+      scheduledDate:form.get("scheduledDate"),
+      dailyStart:form.get("dailyStart"),
+      matchMinutes:Number(form.get("matchMinutes")),
+      format:{
+        groupRounds:Number(form.get("groupRounds"))===2?2:1,
+        qualifiersPerGroup:Number(form.get("qualifiersPerGroup")),
+        wildcardQualifiers:Number(form.get("wildcardQualifiers")),
+        crossGroupMethod:form.get("crossGroupMethod"),
+        playoffMode:form.get("playoffMode"),
+        consolationMode:form.get("consolationMode"),
+        avoidGroupRematches:form.get("avoidGroupRematches")==="yes",
+        bronzeMatch:form.get("bronzeMatch")==="yes",
+        medalSchedule:form.get("medalSchedule"),
+        finalDrawMethod:form.get("finalDrawMethod"),
+        preliminary:{bestOf:1,pointTarget:Number(form.get("preliminaryTarget"))},
+        medal:{bestOf:Number(form.get("medalBestOf"))===3?3:1,pointTarget:Number(form.get("medalTarget"))},
+        preferredRestSlots:Number(form.get("preferredRestSlots")),
+      },
+      confirmImpact:false,
+    };
+    const run=(confirmImpact:boolean)=>api(`/api/admin/categories/${category.id}/generate`,{method:"POST",body:JSON.stringify({...payload,confirmImpact})});
+    if(category.structureLocked){
+      const accepted=window.confirm(copy(locale,"Esto reemplazará el sorteo y cronograma de esta categoría. HUAU creará un snapshot automático antes de regenerar. ¿Continuar?","This will replace this category draw and schedule. HUAU will create an automatic snapshot before regenerating. Continue?"));
+      if(!accepted)return;
+      payload.confirmImpact=true;
+    }
+    await onAction(()=>run(payload.confirmImpact));
+  };
+  return <article className="format-card">
+    <header><div><span className="eyebrow">{copy(locale,"Formato estándar","Standard format")}</span><h2>{category.name}</h2><p>{entries.length} {copy(locale,"entradas","entries")} · {grouped.length?`${grouped.length} ${copy(locale,"grupos generados","generated groups")}`:copy(locale,"sin sorteo","no draw")}</p></div>{category.structureLocked&&<span className="lock-chip is-locked">{copy(locale,"Bloqueado","Locked")}</span>}</header>
+    <form className="format-builder" onSubmit={submit}>
+      <div className="format-simple">
+        <div className="two"><Field name="groupCount" label={copy(locale,"Cantidad de grupos","Number of groups")} type="number" defaultValue={String(saved.groupCount ?? (recommendedGroupCount(entries.length) || 1))}/><Field name="scheduledDate" label={copy(locale,"Fecha de categoría","Category date")} type="date" defaultValue={category.scheduledDate||isoDate(detail.tournament.startAt)}/></div>
+        <div className="three"><label><span>{copy(locale,"Vueltas","Legs")}</span><select name="groupRounds" defaultValue={String(saved.groupRounds??DEFAULT_STANDARD_FORMAT.groupRounds)}><option value="1">1</option><option value="2">2</option></select></label><Field name="qualifiersPerGroup" label={copy(locale,"Clasificados/grupo","Qualifiers/group")} type="number" defaultValue={String(saved.qualifiersPerGroup??2)}/><Field name="wildcardQualifiers" label="Wildcards" type="number" defaultValue={String(saved.wildcardQualifiers??0)}/></div>
+        <div className="three"><Field name="matchMinutes" label={copy(locale,"Min/partido","Min/match")} type="number" defaultValue={String(saved.matchMinutes??15)}/><Field name="dailyStart" label={copy(locale,"Hora de inicio","Start time")} type="time" defaultValue={saved.dailyStart??"09:00"}/><Field name="preliminaryTarget" label={copy(locale,"Puntos fase grupos","Group target")} type="number" defaultValue={String(prelim.pointTarget??15)}/></div>
+      </div>
+      <details className="advanced-format" open={Boolean(category.formatVersionId)}>
+        <summary>{copy(locale,"Opciones avanzadas","Advanced options")}</summary>
+        <div className="advanced-grid">
+          <label><span>{copy(locale,"Comparación entre grupos","Cross-group comparison")}</span><select name="crossGroupMethod" defaultValue={saved.crossGroupMethod??"normalized"}><option value="normalized">{copy(locale,"Normalizada","Normalized")}</option><option value="equalized">{copy(locale,"Equiparada","Equalized")}</option></select></label>
+          <label><span>{copy(locale,"Fase posterior","Post-group phase")}</span><select name="playoffMode" defaultValue={saved.playoffMode??"standard"}><option value="standard">{copy(locale,"Cuadro estándar","Standard bracket")}</option><option value="top2_final">Top 2 → Final</option><option value="top3_step">Top 3 step</option><option value="top4_semis">Top 4 → Semis</option><option value="league_only">{copy(locale,"Campeón por tabla","League only")}</option></select></label>
+          <label><span>{copy(locale,"Cuadro consuelo","Consolation")}</span><select name="consolationMode" defaultValue={saved.consolationMode??"none"}><option value="none">{copy(locale,"Sin consuelo","None")}</option><option value="knockout">{copy(locale,"Eliminación directa","Knockout")}</option></select></label>
+          <label><span>{copy(locale,"Cruce de fase final","Final draw")}</span><select name="finalDrawMethod" defaultValue={saved.finalDrawMethod??"performance"}><option value="performance">{copy(locale,"Por rendimiento","Performance")}</option><option value="pots">{copy(locale,"Sorteo por bombos","Pots")}</option></select></label>
+          <label><span>{copy(locale,"Revancha inmediata","Immediate rematch")}</span><select name="avoidGroupRematches" defaultValue={(saved.avoidGroupRematches??true)?"yes":"no"}><option value="yes">{copy(locale,"Evitar cuando sea posible","Avoid when possible")}</option><option value="no">{copy(locale,"Permitir","Allow")}</option></select></label>
+          <label><span>{copy(locale,"Descanso preferido","Preferred rest")}</span><select name="preferredRestSlots" defaultValue={String(saved.preferredRestSlots??1)}><option value="0">0</option><option value="1">1 {copy(locale,"bloque","slot")}</option><option value="2">2 {copy(locale,"bloques","slots")}</option></select></label>
+          <label><span>{copy(locale,"Partido por bronce","Bronze match")}</span><select name="bronzeMatch" defaultValue={(saved.bronzeMatch??true)?"yes":"no"}><option value="yes">{copy(locale,"Sí","Yes")}</option><option value="no">No</option></select></label>
+          <label><span>{copy(locale,"Orden de medallas","Medal scheduling")}</span><select name="medalSchedule" defaultValue={saved.medalSchedule??"sequential"}><option value="sequential">{copy(locale,"Bronce y luego final","Bronze then final")}</option><option value="simultaneous">{copy(locale,"Simultáneos","Simultaneous")}</option></select></label>
+          <label><span>BO final / bronce</span><select name="medalBestOf" defaultValue={String(medal.bestOf??3)}><option value="1">BO1</option><option value="3">BO3</option></select></label>
+          <Field name="medalTarget" label={copy(locale,"Puntos medallas","Medal target")} type="number" defaultValue={String(medal.pointTarget??11)}/>
+        </div>
+      </details>
+      <button className="light" disabled={busy||entries.length<2}>{category.structureLocked?copy(locale,"Regenerar con snapshot","Regenerate with snapshot"):copy(locale,"Generar grupos y cronograma","Generate groups & schedule")}</button>
+    </form>
+    {grouped.length>0&&<div className="group-preview">{grouped.map(group=><div key={group.name}><strong>{copy(locale,"Grupo","Group")} {group.name}</strong>{group.entries.map(entry=><span key={entry}>{entry}</span>)}</div>)}</div>}
+  </article>;
 }
 
 function SchedulePanel({detail,locale}:{detail:TournamentDetail;locale:Locale}) {
   return <section className="panel schedule-panel"><div className="panel-title"><h2>{copy(locale,"Cronograma","Schedule")}</h2><span>{detail.schedule.length}</span></div>{detail.schedule.length?<div className="schedule-table">{detail.schedule.map(item=><div className={item.status==="reserved"?"reserved":""} key={item.id}><time>{displayDateTime(item.startAt)}</time><strong>{item.courtLabel}</strong><span>{item.categoryName}</span><span>{item.roundLabel||item.stage}</span><em>{item.status==="reserved"?copy(locale,"Reserva de fase","Phase slot"):copy(locale,"Partido","Match")}</em></div>)}</div>:<div className="empty-state">{copy(locale,"El cronograma aparece después de generar al menos una categoría.","The schedule appears after generating at least one category.")}</div>}</section>;
 }
 
-async function saveResult(match:TournamentMatchRow,locale:Locale) {
+type MatchResultPayload = { scoreA: number; scoreB: number } | { sets: Array<{ scoreA: number; scoreB: number }> };
+
+async function saveResult(match:TournamentMatchRow,payload:MatchResultPayload) {
   if(!match.matchId)throw new Error("MATCH_NOT_BOUND");
   if(!match.sideA||!match.sideB)throw new Error("ENCOUNTER_NOT_READY");
-  if(match.bestOf===3){const raw=window.prompt(copy(locale,`Sets de ${match.sideA} vs ${match.sideB}. Ejemplo: 11-7, 11-9`,`Sets for ${match.sideA} vs ${match.sideB}. Example: 11-7, 11-9`));if(!raw)return;const sets=raw.split(",").map(part=>{const [a,b]=part.trim().split("-").map(Number);return{scoreA:a??0,scoreB:b??0}});return api(`/api/admin/matches/${match.matchId}/result`,{method:"POST",body:JSON.stringify({sets})});}
-  const raw=window.prompt(copy(locale,`Resultado ${match.sideA} - ${match.sideB}. Ejemplo: 15-11`,`Score ${match.sideA} - ${match.sideB}. Example: 15-11`),match.scoreA!==null&&match.scoreB!==null?`${match.scoreA}-${match.scoreB}`:"");if(!raw)return;const [scoreA,scoreB]=raw.split("-").map(Number);if(!Number.isFinite(scoreA)||!Number.isFinite(scoreB))throw new Error("INVALID_RESULT");return api(`/api/admin/matches/${match.matchId}/result`,{method:"POST",body:JSON.stringify({scoreA,scoreB})});
+  return api(`/api/admin/matches/${match.matchId}/result`,{method:"POST",body:JSON.stringify(payload)});
 }
 
-function ResultsPanel({detail,locale,busy,onResult}:{detail:TournamentDetail;locale:Locale;busy:boolean;onResult:(match:TournamentMatchRow)=>void}) {
+function ResultEntry({match,locale,busy,onSave}:{match:TournamentMatchRow;locale:Locale;busy:boolean;onSave:(match:TournamentMatchRow,payload:MatchResultPayload)=>Promise<void>}) {
+  const [scoreA,setScoreA]=useState(match.scoreA===null?"":String(match.scoreA));
+  const [scoreB,setScoreB]=useState(match.scoreB===null?"":String(match.scoreB));
+  const [showSets,setShowSets]=useState(false);
+  const [sets,setSets]=useState<Array<{a:string;b:string}>>([{a:"",b:""},{a:"",b:""},{a:"",b:""}]);
+  const [localError,setLocalError]=useState("");
+  const submit=async(event:FormEvent<HTMLFormElement>)=>{
+    event.preventDefault();setLocalError("");
+    if(match.bestOf===3){
+      const completed=sets.filter(set=>set.a!==""||set.b!=="");
+      if(completed.length<2||completed.some(set=>set.a===""||set.b==="")){setLocalError(copy(locale,"Ingresá al menos dos sets completos.","Enter at least two complete sets."));return;}
+      const payload={sets:completed.map(set=>({scoreA:Number(set.a),scoreB:Number(set.b)}))};
+      if(payload.sets.some(set=>!Number.isFinite(set.scoreA)||!Number.isFinite(set.scoreB))){setLocalError(copy(locale,"Revisá los puntajes.","Check the scores."));return;}
+      await onSave(match,payload);setShowSets(false);return;
+    }
+    const a=Number(scoreA),b=Number(scoreB);
+    if(scoreA===""||scoreB===""||!Number.isFinite(a)||!Number.isFinite(b)){setLocalError(copy(locale,"Ingresá ambos puntajes.","Enter both scores."));return;}
+    await onSave(match,{scoreA:a,scoreB:b});
+  };
+  return <form className={`result-row ${match.status==="finished"?"is-finished":""}`} onSubmit={submit}><div className="result-context"><span>{match.categoryName}</span><small>{match.groupName?`${copy(locale,"Grupo","Group")} ${match.groupName}`:match.roundLabel||match.stage}{match.legNumber>1?` · V${match.legNumber}`:""}</small></div><div className="result-inline"><strong>{match.sideA}</strong>{match.bestOf===3?<button className="score-summary" type="button" onClick={()=>setShowSets(value=>!value)}>{match.scoreA!==null&&match.scoreB!==null?`${match.scoreA} — ${match.scoreB}`:copy(locale,"Cargar sets","Enter sets")}</button>:<div className="score-inputs"><input aria-label={`${match.sideA} score`} inputMode="numeric" min="0" type="number" value={scoreA} onChange={event=>setScoreA(event.target.value)}/><span>—</span><input aria-label={`${match.sideB} score`} inputMode="numeric" min="0" type="number" value={scoreB} onChange={event=>setScoreB(event.target.value)}/></div>}<strong>{match.sideB}</strong></div><button className={match.status==="finished"?"ghost small":"light small"} disabled={busy} type="submit">{busy?"…":match.status==="finished"?copy(locale,"Guardar corrección","Save correction"):copy(locale,"Guardar","Save")}</button>{match.bestOf===3&&showSets?<div className="set-editor"><div className="set-editor-head"><span>{match.sideA}</span><b>{copy(locale,"Sets","Sets")}</b><span>{match.sideB}</span></div>{sets.map((set,index)=><div className="set-score-row" key={index}><strong>{index+1}</strong><input aria-label={`Set ${index+1} ${match.sideA}`} inputMode="numeric" min="0" type="number" value={set.a} onChange={event=>setSets(current=>current.map((item,i)=>i===index?{...item,a:event.target.value}:item))}/><span>—</span><input aria-label={`Set ${index+1} ${match.sideB}`} inputMode="numeric" min="0" type="number" value={set.b} onChange={event=>setSets(current=>current.map((item,i)=>i===index?{...item,b:event.target.value}:item))}/></div>)}</div>:null}{localError?<p className="result-error">{localError}</p>:null}</form>;
+}
+
+function ResultsPanel({detail,locale,busy,onSave}:{detail:TournamentDetail;locale:Locale;busy:boolean;onSave:(match:TournamentMatchRow,payload:MatchResultPayload)=>Promise<void>}) {
   const playable=detail.matches.filter(match=>match.matchId&&match.sideA&&match.sideB&&match.status!=="bye");
-  return <section className="panel results-panel"><div className="panel-title"><h2>{copy(locale,"Resultados","Results")}</h2><span>{playable.filter(m=>m.status==="finished").length}/{playable.length}</span></div>{playable.length?<div className="results-list">{playable.map(match=><article key={match.encounterId}><div className="result-context"><span>{match.categoryName}</span><small>{match.groupName?`${copy(locale,"Grupo","Group")} ${match.groupName}`:match.roundLabel||match.stage}{match.legNumber>1?` · V${match.legNumber}`:""}</small></div><div className="result-sides"><strong>{match.sideA}</strong><b>{match.scoreA!==null&&match.scoreB!==null?`${match.scoreA} — ${match.scoreB}`:"—"}</b><strong>{match.sideB}</strong></div><button className={match.status==="finished"?"ghost small":"light small"} disabled={busy} onClick={()=>onResult(match)}>{match.status==="finished"?copy(locale,"Corregir","Correct"):copy(locale,"Cargar","Enter")}</button></article>)}</div>:<div className="empty-state">{copy(locale,"Todavía no hay partidos generados.","No generated matches yet.")}</div>}</section>;
+  return <section className="panel results-panel"><div className="panel-title"><h2>{copy(locale,"Resultados","Results")}</h2><span>{playable.filter(m=>m.status==="finished").length}/{playable.length}</span></div>{playable.length?<div className="results-list">{playable.map(match=><ResultEntry key={match.encounterId} match={match} locale={locale} busy={busy} onSave={onSave}/>)}</div>:<div className="empty-state">{copy(locale,"Todavía no hay partidos generados.","No generated matches yet.")}</div>}</section>;
 }
 
 function FinalsPanel({detail,locale,busy,onAction}:{detail:TournamentDetail;locale:Locale;busy:boolean;onAction:(fn:()=>Promise<unknown>)=>Promise<void>}) {

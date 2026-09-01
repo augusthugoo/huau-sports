@@ -352,14 +352,17 @@ async function regenerateTournamentSchedule(env: Env, tournament: TournamentRow,
     .bind(tournament.id)
     .all<{ id: string; scheduledDate: string; sortOrder: number; configJson: string }>();
   const categories: ScheduleCategory[] = [];
+  let preferredRestSlots = 0;
   for (const row of categoryRows.results) {
     const competition = await loadCompetition(env, row.id);
     if (!competition) continue;
+    const config = JSON.parse(row.configJson) as { matchMinutes?: number; preferredRestSlots?: number; dailyStart?: string };
+    preferredRestSlots = Math.max(preferredRestSlots, Math.max(0, Math.trunc(Number(config.preferredRestSlots ?? competition.format.preferredRestSlots ?? 1))));
     categories.push({
       categoryId: row.id,
       scheduledDate: row.scheduledDate,
       order: row.sortOrder,
-      matchMinutes: Math.max(5, Number((JSON.parse(row.configJson) as { matchMinutes?: number }).matchMinutes ?? 15)),
+      matchMinutes: Math.max(5, Number(config.matchMinutes ?? 15)),
       competition,
     });
   }
@@ -368,7 +371,7 @@ async function regenerateTournamentSchedule(env: Env, tournament: TournamentRow,
       startDate: dateFromUnix(tournament.startAt),
       dailyStart,
       courtCount: tournament.courtCount,
-      preferredRestSlots: 1,
+      preferredRestSlots,
     },
     categories,
   });
@@ -410,6 +413,24 @@ async function regenerateTournamentSchedule(env: Env, tournament: TournamentRow,
   await runBatches(env.HUAU_DB, statements);
 }
 
+async function tournamentDailyStart(env: Env, tournamentId: string): Promise<string> {
+  const rows = await env.HUAU_DB.prepare(
+    `SELECT f.config_json as configJson
+       FROM tournament_categories tc
+       JOIN competitions c ON c.category_id=tc.id
+       JOIN competition_format_versions f ON f.id=c.format_version_id
+      WHERE tc.tournament_id=? ORDER BY tc.sort_order LIMIT 1`,
+  ).bind(tournamentId).all<{ configJson: string }>();
+  const first = rows.results[0];
+  if (!first) return "09:00";
+  try {
+    const config = JSON.parse(first.configJson) as { dailyStart?: string };
+    return /^\d{2}:\d{2}$/.test(config.dailyStart ?? "") ? config.dailyStart! : "09:00";
+  } catch {
+    return "09:00";
+  }
+}
+
 async function tournamentDetail(env: Env, tournamentId: string) {
   const tournament = await env.HUAU_DB.prepare(
     `SELECT id,organizer_organization_id as organizerOrganizationId,name,slug,sport,status,visibility,start_at as startAt,end_at as endAt,
@@ -421,12 +442,15 @@ async function tournamentDetail(env: Env, tournamentId: string) {
   const categories = await env.HUAU_DB.prepare(
     `SELECT tc.id,tc.name,tc.entry_type as entryType,tc.competition_gender as competitionGender,tc.scheduled_date as scheduledDate,
             tc.sort_order as sortOrder,tc.structure_locked as structureLocked,tc.format_version_id as formatVersionId,
+            f.config_json as configJson,
             (SELECT COUNT(*) FROM tournament_entries e WHERE e.category_id=tc.id AND e.status NOT IN ('withdrawn','rejected')) as entryCount,
             c.status as competitionStatus,
             (SELECT COUNT(*) FROM competition_encounters ce WHERE ce.competition_id=c.id AND ce.stage='group') as groupMatchCount,
             (SELECT COUNT(*) FROM competition_encounters ce WHERE ce.competition_id=c.id AND ce.stage='group' AND ce.status='finished') as finishedGroupMatchCount,
             (SELECT COUNT(*) FROM competition_encounters ce WHERE ce.competition_id=c.id AND ce.stage!='group') as finalMatchCount
-       FROM tournament_categories tc LEFT JOIN competitions c ON c.category_id=tc.id
+       FROM tournament_categories tc
+       LEFT JOIN competitions c ON c.category_id=tc.id
+       LEFT JOIN competition_format_versions f ON f.id=c.format_version_id
       WHERE tc.tournament_id=? ORDER BY tc.sort_order,tc.name`,
   ).bind(tournamentId).all();
   const entries = await env.HUAU_DB.prepare(
@@ -660,6 +684,36 @@ export async function handleTournamentAdminApi(
     statements.push(env.HUAU_DB.prepare(`UPDATE tournaments SET working_revision=working_revision+1,structure_locked=0,updated_at=? WHERE id=?`).bind(stamp,accessResult.tournament.id));
     await runBatches(env.HUAU_DB,statements);
     return json({ok:true,entry:{id:entryId,displayName}},{status:201});
+  }
+
+  const reorderCategory = url.pathname.match(/^\/api\/admin\/categories\/([^/]+)\/order$/);
+  if (reorderCategory && request.method === "POST") {
+    const categoryId = decodeURIComponent(reorderCategory[1]!);
+    const accessResult = await categoryForAccess(categoryId, request, env, access);
+    if (accessResult instanceof Response) return accessResult;
+    const body = await readJson<{ direction?: "up" | "down" }>(request);
+    if (body.direction !== "up" && body.direction !== "down") return json({ ok:false, code:"INVALID_DIRECTION" }, { status:400 });
+    const rows = await env.HUAU_DB.prepare(
+      `SELECT id,sort_order as sortOrder FROM tournament_categories WHERE tournament_id=? ORDER BY sort_order,name`,
+    ).bind(accessResult.tournament.id).all<{ id:string; sortOrder:number }>();
+    const index = rows.results.findIndex((row) => row.id === categoryId);
+    const targetIndex = body.direction === "up" ? index - 1 : index + 1;
+    if (index < 0 || targetIndex < 0 || targetIndex >= rows.results.length) return json({ ok:true });
+    const current = rows.results[index]!;
+    const target = rows.results[targetIndex]!;
+    const targetCategory = await env.HUAU_DB.prepare(
+      `SELECT id,tournament_id as tournamentId,name,entry_type as entryType,competition_gender as competitionGender,scheduled_date as scheduledDate,sort_order as sortOrder,structure_locked as structureLocked,format_version_id as formatVersionId FROM tournament_categories WHERE id=?`,
+    ).bind(target.id).first<CategoryRow>();
+    if (accessResult.category.formatVersionId) await snapshotCategory(env, accessResult.tournament, accessResult.category, accessResult.user.id, "Before category order change");
+    if (targetCategory?.formatVersionId) await snapshotCategory(env, accessResult.tournament, targetCategory, accessResult.user.id, "Before category order change");
+    await env.HUAU_DB.batch([
+      env.HUAU_DB.prepare(`UPDATE tournament_categories SET sort_order=?,updated_at=? WHERE id=?`).bind(target.sortOrder, unixNow(), current.id),
+      env.HUAU_DB.prepare(`UPDATE tournament_categories SET sort_order=?,updated_at=? WHERE id=?`).bind(current.sortOrder, unixNow(), target.id),
+    ]);
+    const dailyStart = await tournamentDailyStart(env, accessResult.tournament.id);
+    await regenerateTournamentSchedule(env, accessResult.tournament, accessResult.user.id, dailyStart);
+    await audit(env, accessResult.tournament, accessResult.user.id, "category.order", "Changed category schedule order", "category", categoryId, { direction: body.direction });
+    return json({ ok:true });
   }
 
   const generate = url.pathname.match(/^\/api\/admin\/categories\/([^/]+)\/generate$/);

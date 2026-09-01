@@ -1,17 +1,11 @@
-# SHA-256 manifest — HUAU Sports Phase 4 overlay
-# Generated 2026-09-01
-a2d8e04f0b5ac86fc0b6b3d4b84dda476eb837966816d71e9261fe96849a66af  ./README.md
-66c19a526b2975af2b13d136d26c1974779f174b8b72ff7f9ed63ec29c3a406b  ./apps/web/package.json
-d02ca3cede278f4d2a43993007f6e028514a4ad34a985e46edef8b74b3d9656a  ./apps/web/src/App.tsx
-12c9e0a051851879c818173a80f466749edbe2b6d33ad08b1a9f43301cd1d9fe  ./apps/web/src/styles.css
-80267c6e5fd47d15807be8dd6b1bbe68bf813754ebb35bf17927fc360382a411  ./apps/web/src/worker/index.ts
-89c1012eef3002e87eb65c2f5ff8866a45ee58f05444ee85f3e4707d5285afd6  ./apps/web/src/worker/tournament-admin.ts
-d6773124a3423c68fd16a352a22ecaae178e917d4d8946dacc02b2ffd8a37f72  ./docs/phase-4/PHASE_4_STATUS.md
-e757ffb1f0d1cd0ef6518860d17fd8c1e9f8867b01ce214978ce7c2ed52c2695  ./package.json
-bcea1a2a373320648340c41bbc82a5be963dc60351cbb05bc44339c13e774f6c  ./packages/core/package.json
-7d982b55b7919882c4a70be1082e87fbdd83bb1f6df01e98e2df2186db284ee5  ./packages/core/src/index.test.ts
-c26b3c7fd79a504d49988cb1f7fc1708c6b88d0199cef3733edc34850995331e  ./packages/core/src/index.ts
-ad2779b89addc98b1e3c23855623ff39a125f3c1f226c2ecb78e092a38bf71eb  ./packages/core/src/tournament/admin.test.ts
-a3d6ee415b6fbca2dd3364df135f27576137b64a95ebf4a7b3ecb47596644de7  ./packages/core/src/tournament/admin.ts
-29166e62215da1a308b98de09ba5702397769971e538c384b82eeae3f8772a07  ./packages/core/src/tournament/index.ts
-74d260738d0f49266f30b9598f67b03ef6156a6725367efd0fb0f6a7fbe72e4b  ./packages/db/package.json
+9991e6e06dd0c746e8bec1fb49f9023660bdb2e393f576349c1d3b2680a6cb46  ./apps/web/package.json
+c0220c015eb92879780099daaf6dc4cd90660855f7f6c398ffbe0f080ea2f746  ./apps/web/src/App.tsx
+3c0279a0e4c534259c94fa7abc8f4755bb47cf1d12a3c21ff4cf99684651d7b8  ./apps/web/src/styles.css
+b04d252896af08230d08fc1aef9872746daa53264be5cbc9596439e9dde4924e  ./apps/web/src/worker/tournament-admin.ts
+2ae2fd9d9bdb7601964c0dda4f2725dbf61255e3194282f5ea85d5b603b96f65  ./docs/phase-4.1/PARITY_MATRIX.md
+b6db9ab1d5f215d40bc4945bfd9c3804cf25c4c715942d4861cb5e401d4fbc6b  ./docs/phase-4.1/PHASE_4_1A_STATUS.md
+478ee47d0c6b1d8006208a9adeadb906a12e626f289bd3acfb99273939e67136  ./package.json
+8d32be13a12ee581ea3331e0d1fe3d10f3869cd9e22b039d0081642ecec9932c  ./packages/core/package.json
+28a3c4b32b57087d88a1b304c81cb38ecc2b7f2620341db891562d798c220f47  ./packages/core/src/index.test.ts
+f56d086ff27bdf88544b195cf7195c385372e1b81c237aa6e276a277c4881b75  ./packages/core/src/index.ts
+30abe2a0c2d3c552f61b05fc18e133bcf0978a56c6f90dc5541178445102592a  ./packages/db/package.json

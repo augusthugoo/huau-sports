@@ -1,6 +1,6 @@
 {
   "name": "@huau/db",
-  "version": "0.5.0-phase4",
+  "version": "0.5.1-phase4.1a",
   "private": true,
   "type": "module",
   "exports": {
