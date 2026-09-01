@@ -5,9 +5,10 @@ Cloud-first foundation for the HUAU Sports ecosystem: Club + Tournament + Ref.
 ## Current status
 
 - Phase 0 Foundation: **DONE**.
-- Phase 1 Identity, Organizations & Platform Shell: **implemented, pending staging validation**.
+- Phase 1 Identity, Organizations & Platform Shell: **DONE and validated on staging**.
+- Phase 2 Tournament Engine: **implemented; pending branch CI / preview validation**.
 
-See `docs/phase-1/PHASE_1_STATUS.md` and `docs/phase-1/STAGING_DEPLOY.md`.
+See `docs/phase-2/PHASE_2_STATUS.md`.
 
 ## Local environment
 
