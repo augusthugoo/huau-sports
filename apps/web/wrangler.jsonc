@@ -24,7 +24,7 @@
   ],
   "vars": {
     "APP_ENV": "development",
-    "APP_VERSION": "0.2.0-phase1",
+    "APP_VERSION": "0.4.0-phase3",
     "BETTER_AUTH_URL": "http://localhost:5173",
     "PLATFORM_ADMIN_EMAILS": ""
   },
@@ -47,9 +47,9 @@
       ],
       "vars": {
         "APP_ENV": "staging",
-        "APP_VERSION": "0.2.0-phase1",
+        "APP_VERSION": "0.4.0-phase3",
         "BETTER_AUTH_URL": "https://huau-sports-staging.augusthugoo.workers.dev",
-        "PLATFORM_ADMIN_EMAILS": "augusthugoo@gmail.com"
+        "PLATFORM_ADMIN_EMAILS": ""
       }
     }
   }
