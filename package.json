@@ -1,6 +1,6 @@
 {
   "name": "huau-sports",
-  "version": "0.5.1-phase4.1a",
+  "version": "0.5.2-phase4.1-parity",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.24.0",

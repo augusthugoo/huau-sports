@@ -1,145 +1,189 @@
-# HUAU Tournament — Matriz de paridad Legacy → HUAU Sports
+# HUAU Tournament — Full Legacy Parity Matrix (Phase 4.1)
 
-**Referencia funcional legacy:** HUAU Tournament V2.4.2 Local + Netlify Autocarga  
-**Objetivo:** el Tournament nuevo no se considera funcionalmente equivalente hasta que cada capacidad legacy esté portada, validada o reemplazada explícitamente por una versión mejor.
+**Functional baseline:** HUAU Tournament V2.4.2 Local + Netlify Autocarga  
+**Pack:** `0.5.2-phase4.1-parity`  
+**Rule:** a legacy capability counts as ported only when the organizer can use it from the new workspace and the data model/engine can preserve it.
 
-## Estados
+Legend:
+- ✅ Ported in this pack.
+- 🔁 Replaced deliberately by the new cloud architecture.
+- ⏭ Kept as a later architectural phase; not a Tournament-admin parity omission.
 
-- ✅ **Portado**: existe en engine/persistencia/UI y puede probarse.
-- 🟡 **Parcial**: existe parte de la lógica, pero falta UI, persistencia, flujo o paridad operacional.
-- ❌ **Falta**: no está disponible en el Tournament nuevo actual.
-- ➡️ **Fase arquitectónica posterior**: la función debe preservarse, pero su superficie final pertenece a una fase posterior ya prevista (Live/PWA, etc.). No se elimina de la paridad.
+## Players, categories and manual registration
 
-## 1. Personas, categorías e inscripciones manuales
+| Legacy capability | Status | New HUAU implementation |
+|---|---|---|
+| One player record reused across categories | ✅ | `tournament_player_profiles` + assignments |
+| Name, club, contact and notes | ✅ | Player editor |
+| DUPR Singles and DUPR Doubles separately | ✅ | Profile fields and category-specific seed derivation |
+| Paid / pending | ✅ | Player payment status |
+| Confirmed / pending | ✅ | Player competitive status |
+| Multiple categories per player | ✅ | Player↔category assignments |
+| Different partner per category | ✅ | Reciprocal partner assignment |
+| Detect incomplete/non-reciprocal pairs | ✅ | Category/player warnings; invalid pair excluded from derived entries |
+| Cosmetic typo edit without destroying competition | ✅ | Cosmetic change refreshes derived labels/ratings; structural changes require impact confirmation |
+| Existing Phase 4 manual entries survive migration | ✅ | Migration 0003 backfills profiles, category assignments and pair links |
+| Category presets | ✅ | Legacy preset selector |
+| Custom category | ✅ | Custom create |
+| Edit / delete category safely | ✅ | Snapshot + impact flow for structural changes |
+| Order categories | ✅ | Up/down order controls |
+| Assign category to a day/jornada | ✅ | `scheduled_date` exposed |
 
-| Capacidad V2.4.2 | Engine nuevo | D1 | UI Phase 4 | Estado / acción |
-|---|---:|---:|---:|---|
-| Registro único de personas | n/a | ✅ organization_people | 🟡 alta manual | 🟡 Falta gestión/edición/reutilización de personas |
-| Singles y dobles | ✅ | ✅ | ✅ | ✅ |
-| DUPR/rating por modalidad | 🟡 rating genérico | 🟡 seed_rating | 🟡 un campo | 🟡 Recuperar distinción singles/doubles vía perfil deportivo |
-| Parejas vinculadas sin duplicar jugador | 🟡 participantIds | ✅ entry_members | ❌ UI crea personas nuevas cada vez | 🟡 Reutilizar persona existente y evitar duplicados |
-| Editar typo sin destruir estructura | ✅ regla/test cosmético | ✅ modelo permite | ❌ no hay edición | 🟡 Crear editor cosmético seguro |
+## Format simulator and competition formats
 
-## 2. Simulador y formatos
+| Legacy capability | Status | New HUAU implementation |
+|---|---|---|
+| Free simulator before/independent of category | ✅ | Tournament format simulator |
+| Simulator per category | ✅ | Category format simulator |
+| Minimum / preferred / maximum group size | ✅ | Tournament settings + simulator |
+| Available time, courts and match duration | ✅ | Simulator inputs |
+| Recommended / Fastest / More matches options | ✅ | `buildLegacyFormatOptions` |
+| Exact proposed group sizes | ✅ | Candidate cards |
+| Fits / overruns available window | ✅ | Candidate calculation/UI |
+| 1 or 2 round robins | ✅ | Format config + scheduler |
+| Qualifiers Auto / 1 / 2 per group | ✅ | Simulator/config |
+| Wildcards | ✅ | Format config and qualification |
+| Unequal group sizes | ✅ | Engine + simulator |
+| Normalized cross-group comparison | ✅ | Engine + admin standings |
+| Equalized cross-group comparison | ✅ | Engine + admin standings |
+| Standard bracket | ✅ | Engine |
+| Top 2 → Final | ✅ | Engine/UI |
+| Top 4 → Semifinals | ✅ | Engine/UI |
+| Top 3 step ladder | ✅ | Engine/UI |
+| Champion by table / league only | ✅ | Engine/UI |
+| Consolation | ✅ | Engine/UI |
+| Bronze match | ✅ | Engine/UI |
+| BO1 / BO3 medals | ✅ | Engine + inline set editor |
+| Group and medal point targets | ✅ | Format config |
+| Bronze/final sequential or simultaneous | ✅ | Scheduler |
+| Performance draw | ✅ | Engine/config |
+| Pots draw | ✅ | Engine/config |
+| Avoid/allow immediate group rematch | ✅ | Engine/config |
+| Minimum guaranteed matches objective | ✅ | Simulator/config |
 
-| Capacidad V2.4.2 | Engine nuevo | D1 | UI Phase 4 | Estado / acción |
-|---|---:|---:|---:|---|
-| Grupos configurables | ✅ | ✅ | ✅ | ✅ |
-| Tamaños desiguales | ✅ | ✅ | ✅ | ✅ |
-| 1 o 2 vueltas | ✅ | ✅ config_json | ✅ | ✅ |
-| Clasificados fijos por grupo | ✅ | ✅ | ✅ | ✅ |
-| Wildcards/cupos extra | ✅ | ✅ | ✅ | ✅ |
-| Comparación normalizada | ✅ | ✅ | ✅ | ✅ |
-| Comparación equiparada | ✅ | ✅ | ✅ | ✅ |
-| Top 2 → Final | ✅ | ✅ | ✅ | ✅ |
-| Top 4 → Semis | ✅ | ✅ | ✅ | ✅ |
-| Top 3 escalonado | ✅ | ✅ | ✅ | ✅ |
-| Campeón por tabla | ✅ | ✅ | ✅ | ✅ |
-| Cuadro consuelo | ✅ | ✅ | ❌ hardcode `none` | 🟡 Exponer opción |
-| Bronce opcional | ✅ | ✅ | ✅ | ✅ |
-| Final/bronce BO1 o BO3 | ✅ | ✅ | ✅ config | 🟡 Editor de resultados BO3 debe quedar integrado |
-| Puntos objetivo configurables | ✅ | ✅ | ✅ | ✅ |
-| Bronce/final secuencial o simultáneo | ✅ | ✅ | ✅ | ✅ |
-| Evitar revancha inmediata | ✅ | ✅ | ❌ hardcode `true` | 🟡 Exponer permitir/evitar |
-| Fase final por rendimiento | ✅ | ✅ | ❌ hardcode `performance` | 🟡 Exponer |
-| Fase final por bombos | ✅ | ✅ | ❌ | 🟡 Exponer |
-| Objetivo mínimo de partidos | ❌ no está en tipo | ❌ | ❌ | ❌ Portar simulador/recomendación |
-| Explicación detallada del formato | 🟡 lógica dispersa | ✅ config | ❌ | ➡️ Phase 8 Explanation Engine, manteniendo paridad |
+## Seeding, groups and live draw
 
-## 3. Siembra, sorteo y grupos
+| Legacy capability | Status | New HUAU implementation |
+|---|---|---|
+| DUPR snake seeding | ✅ | Explicit `snake` method |
+| Random draw | ✅ | Explicit `random` method |
+| Manual order / manual groups | ✅ | Exact-capacity editor |
+| Automatic suggestion inside manual groups | ✅ | Snake-based suggestion |
+| Validate exact group capacities / duplicate assignments | ✅ | Core validation |
+| Batch generation for ready categories | ✅ | Workspace action |
+| Progressive live draw | ✅ | Persistent `tournament_draw_sessions` |
+| One participant at a time | ✅ | `draw/next` |
+| Rotating A/B/C… respecting unequal capacities | ✅ | Core live-draw target sequence |
+| Automatic draw / pause | ✅ | UI timer/pause |
+| Reshuffle / reset | ✅ | Resets only draw-session state |
+| Competition remains untouched until Confirm | ✅ | Start/reset are non-structural; confirmation is the destructive boundary |
+| Confirm completed draw | ✅ | Snapshot on locked category, then groups/schedule replacement |
 
-| Capacidad V2.4.2 | Engine nuevo | D1 | UI Phase 4 | Estado / acción |
-|---|---:|---:|---:|---|
-| Serpentina por rating | ✅ distribución actual | ✅ | implícita | 🟡 Debe ser opción visible |
-| Orden manual | ❌ | ❌ | ❌ | ❌ Portar |
-| Sorteo aleatorio | ❌ como modo | ❌ | ❌ | ❌ Portar |
-| Armado manual de grupos | ❌ | ✅ tablas sirven | ❌ | ❌ Portar modal/editor |
-| Sugerencia automática dentro de grupos manuales | 🟡 serpentina reutilizable | ✅ | ❌ | ❌ Portar UI |
-| Sorteo en vivo progresivo | ❌ | ❌ sesión | ❌ | ❌ Portar sesión de sorteo |
-| Sacar siguiente / auto-pausa / mezclar / reiniciar | ❌ | ❌ | ❌ | ❌ Portar |
-| Confirmar grupos sin tocar competencia antes | arquitectura posible | ❌ sesión | ❌ | ❌ Portar con persistencia de sesión |
+## Schedule
 
-## 4. Cronograma
+| Legacy capability | Status | New HUAU implementation |
+|---|---|---|
+| Multiple courts | ✅ | Scheduler |
+| Match duration per category | ✅ | Format config |
+| Preferred rest | ✅ | Global tournament setting |
+| Never schedule one person simultaneously | ✅ | Scheduler invariant |
+| Maximize rotation/rest where possible | ✅ | Scheduler heuristic |
+| Degrade ideal rest when required | ✅ | Scheduler |
+| Finish Round 1 before any Round 2 match | ✅ | Regression-tested engine rule |
+| Avoid consecutive repeat when alternative exists | ✅ | Scheduler heuristic |
+| Category by day | ✅ | `scheduled_date` |
+| Category order within day | ✅ | Sort order |
+| Complete category before moving to next | ✅ | Scheduler |
+| Independent daily start | ✅ | Tournament/day scheduling |
+| End time is planning target, not hard cap | ✅ | Simulator/window display |
+| Reserve final-stage slots before qualifiers are known | ✅ | Schedule placeholders |
+| BO3 medal reserve gets longer duration | ✅ | Scheduler |
+| Bronze/final simultaneous when configured/courts permit | ✅ | Scheduler |
+| Bind real playoff match to reserved slot without moving it | ✅ | Final generation/schedule binding |
+| Show real match, date/time, court, category, group/leg | ✅ | Schedule UI |
+| Category real start/end window | ✅ | Schedule UI |
+| Vertical schedule PNG, multi-page when needed | ✅ | Canvas export |
 
-| Capacidad V2.4.2 | Engine nuevo | D1 | UI Phase 4 | Estado / acción |
-|---|---:|---:|---:|---|
-| Múltiples canchas | ✅ | ✅ | ✅ | ✅ |
-| Duración por categoría | ✅ | ✅ config_json | ✅ | ✅ |
-| Descanso preferido 0/1/2 bloques | ✅ | ✅ config_json | ❌ hardcode 1 | 🟡 Exponer y usar valor guardado |
-| Nunca jugador simultáneo | ✅ | ✅ resultado | automático | ✅ |
-| Maximizar rotación | ✅ heurística | n/a | automático | ✅ con más fixtures de paridad |
-| Vuelta 1 completa antes de Vuelta 2 | ✅ regression test | ✅ | automático | ✅ |
-| Evitar consecutivos si hay alternativa | ✅ preferred rest | n/a | automático | ✅/🟡 ampliar fixtures |
-| Categoría asignada a día | ✅ | ✅ scheduled_date | ✅ | ✅ |
-| Orden manual de categorías dentro del día | ✅ `sortOrder` consumido | ✅ | ❌ no editable | 🟡 Exponer subir/bajar |
-| Completar categoría antes de siguiente | ✅ | ✅ | automático | ✅ |
-| Reserva fase final antes de conocer clasificados | ✅ | ✅ placeholders | ✅ cronograma | ✅ |
-| BO3 reserva mayor duración | ✅ x2 | ✅ | automático | ✅ |
-| Cierre real calculado, no límite duro | ✅ | ✅ | 🟡 no muestra ventana | 🟡 Mostrar hora inicio/cierre por categoría |
-| Resultados ordenados según cronograma | 🟡 revisar query/UI | ✅ | 🟡 | 🟡 Validar y fijar como criterio |
-| Imagen vertical de cronograma | ❌ | ❌ | ❌ | ❌ Portar export PNG |
+## Results, standings and final phase
 
-## 5. Resultados, standings y fase final
+| Legacy capability | Status | New HUAU implementation |
+|---|---|---|
+| BO1 result entry | ✅ | Inline editor |
+| BO3 set-by-set result entry | ✅ | Inline set editor |
+| Correct a result | ✅ | Result update flow |
+| Results ordered by schedule | ✅ | Backend schedule-order query + UI |
+| Highlight next pending match | ✅ | Results UI |
+| Pending and completed sections | ✅ | Results UI |
+| Group standings in the results workspace | ✅ | Engine output |
+| Legacy group tie-break rules | ✅ | Tournament Engine |
+| Cross-group Normalized/Equalized table | ✅ | Engine output/UI |
+| Automatic qualification | ✅ | Engine |
+| Automatically create final phase after last group result | ✅ | Result route |
+| Standard bracket/byes/winner propagation | ✅ | Engine |
+| Bronze from semifinal losers | ✅ | Engine |
+| Correcting group result can rebuild affected final phase safely | ✅ | Snapshot + impact guard; refuses silent rewrite of played finals |
+| Finals replace reserved placeholders | ✅ | Schedule binding |
+| Tournament completion state | ✅ | Backend status flow |
 
-| Capacidad V2.4.2 | Engine nuevo | D1 | UI Phase 4 | Estado / acción |
-|---|---:|---:|---:|---|
-| Carga de BO1 | ✅ | ✅ | 🟡 prompt navegador | 🟡 Reemplazar por editor inline |
-| Corrección de resultado | ✅ | ✅ audit/result_status | 🟡 prompt | 🟡 Editor inline seguro |
-| Carga BO3 set por set | ✅ | ✅ match_sets | 🟡 prompt | 🟡 Editor de sets inline |
-| Standings y desempates | ✅ | ✅ resultados | ❌ no visibles en resultados | 🟡 Mostrar tablas en vivo |
-| Ranking cruzado transparente | ✅ | ✅ | ❌ | 🟡 Mostrar tabla Normalized/Equalized |
-| Clasificación automática | ✅ | ✅ | ✅ al generar final | ✅ lógica, mejorar UX |
-| Fase final automática al último resultado de grupos | engine permite | ✅ | ❌ botón manual | 🟡 Recuperar auto-generación o decisión explícita equivalente |
-| Bracket/byes/propagación | ✅ | ✅ | ✅ básico | 🟡 Mejorar representación visual |
-| Recalcular llave al corregir grupos | 🟡 necesita política de seguridad | ✅ | ❌ | 🟡 Portar con snapshot/impacto |
+## Operation, sharing and recovery
 
-## 6. Visualización, difusión y operación
+| Legacy capability | Status | New HUAU implementation |
+|---|---|---|
+| Internal TV mode | ✅ | Dedicated admin TV surface |
+| Auto active category | ✅ | TV derives active/next category |
+| Standings during groups | ✅ | TV |
+| Bracket during finals | ✅ | TV |
+| Upcoming matches | ✅ | TV |
+| Latest results | ✅ | TV |
+| Auto-advance category | ✅ | TV |
+| Auto refresh | ✅ | TV refresh |
+| Group PNG | ✅ | Canvas export |
+| Promotional tournament image | ✅ | Canvas export |
+| Backup/export JSON | ✅ | Admin backup endpoint + UI |
+| Import legacy state as a new tournament | ✅ | Phase 3 importer exposed safely |
+| Reset competition but keep tournament/player setup | ✅ | Snapshot-protected reset |
+| Snapshots before destructive changes | ✅ | New architecture |
+| Restore snapshot | ✅ | Recovery UI/backend |
+| Audit trail / working revisions | ✅ | New architecture |
 
-| Capacidad V2.4.2 | Nuevo HUAU | Estado / acción |
-|---|---:|---|
-| Modo TV | ❌ Phase 4 | ➡️ Phase 9 HUAU Live/TV: debe conservar grupos, próximos, últimos, bracket y autoavance |
-| Refresco multidispositivo | 🟡 cloud D1 | ➡️ Phase 9 realtime + Phase 10 offline/sync |
-| Imagen PNG de grupos | ❌ | ❌ Portar en parity pass / compartir |
-| Imagen promocional del torneo | ❌ | ❌ Portar como superficie de difusión (puede quedar detrás de grupos/cronograma si priorizamos) |
-| Página/Live pública | ❌ Phase 4 | ➡️ Phase 9 |
-| Responsive móvil/tablet/TV | 🟡 admin | ➡️ Phase 9/10 según superficie |
+## Deliberate architectural replacements
 
-## 7. Seguridad, backup y resiliencia
+These legacy implementation details are **not missing functions**:
 
-| Capacidad V2.4.2 | Nuevo HUAU | Estado / acción |
-|---|---:|---|
-| Backup/export JSON | 🟡 importer/backup core | 🟡 Falta botón de export operativo |
-| Import legacy JSON | ✅ importer Phase 3 | 🟡 Falta flujo admin visible |
-| Snapshot antes de destructivo | ✅ | ✅ |
-| Restore snapshot | ✅ | ✅ básico |
-| Control de revisión multidispositivo | 🟡 working_revision | 🟡 Endurecer conflictos/concurrencia |
-| Offline durante evento | ❌ | ➡️ Phase 10 PWA/offline, requisito bloqueante antes de retirar legacy |
-| Cola y sincronización al reconectar | ❌ | ➡️ Phase 10 |
+| Legacy implementation | New decision |
+|---|---|
+| Mac/Python local server | 🔁 Cloudflare Worker + D1 |
+| `/api/state` local source of truth | 🔁 D1 domain persistence |
+| Netlify polling/autoload of `tournament-state.json` | 🔁 Explicit backup/import + cloud persistence |
+| localStorage as canonical tournament state | 🔁 D1; local operational cache comes in PWA phase |
+| Application Cache / old-iOS compatibility hacks | 🔁 Modern PWA/offline architecture |
+| Two separate local/Netlify distributions | 🔁 One cloud product |
 
-# Decisión de producto para Phase 4.1
+## Later architectural phases, not legacy-parity omissions
 
-**No cerrar Phase 4 ni avanzar funcionalmente a Team Engine hasta recuperar la paridad del Tournament estándar.**
+- ⏭ Public HUAU Live/realtime surface: Phase 9.
+- ⏭ PWA/offline queue/conflict sync: Phase 10.
+- ⏭ Team Competition Engine: Phase 5 (new capability).
+- ⏭ Online registrations: Phase 6 (new capability).
+- ⏭ Payments: Phase 7 (new capability).
+- ⏭ Bilingual Format Explanation Engine: Phase 8 (expanded new capability).
 
-La implementación se divide en seis bloques para poder probar sin meter un parche gigante:
+## Acceptance gate
 
-1. **4.1A — Configuración y scheduler parity**  
-   Descanso configurable, consuelo, permitir/evitar revancha, rendimiento/bombos, mínimo de partidos, valores persistidos, orden de categorías, ventanas horarias.
+Before merging Phase 4 into `main`:
 
-2. **4.1B — Siembra y grupos parity**  
-   Serpentina explícita, aleatorio, orden manual, grupos manuales, sugerencia automática.
+1. Apply migration 0003 to `huau-dev`.
+2. Run `pnpm typecheck`, `pnpm test`, `pnpm lint`.
+3. Validate the branch preview with at least:
+   - 4-pair single group;
+   - unequal 3/4/4;
+   - two-round regression;
+   - manual groups;
+   - live draw without modifying confirmed competition until Confirm;
+   - BO3 medal match;
+   - result correction after final phase generation;
+   - schedule/results chronological parity;
+   - TV mode;
+   - backup export/import and snapshot restore.
+4. Only after branch validation, apply the same migration to `huau-staging`, merge to `main`, and rehearse a realistic tournament.
 
-3. **4.1C — Sorteo en vivo parity**  
-   Sesión persistida, sacar siguiente, automático/pausa, mezclar, reiniciar, confirmar sin tocar estructura previamente.
-
-4. **4.1D — Resultados y standings parity**  
-   Editor inline BO1/BO3, corrección, tablas, comparación cruzada, resultado según cronograma, finalización automática segura.
-
-5. **4.1E — Compartir/export parity**  
-   PNG de grupos, PNG de cronograma, backup/export/import visible.
-
-6. **4.1F — Fixtures de aceptación**  
-   Reproducir fixtures representativos del V2.4.2 y comprobar standings, clasificados, bracket y cronograma. Sólo después Phase 4 queda cerrada.
-
-# Regla de cierre
-
-Una función del legacy sólo se marca ✅ cuando existe en el producto nuevo y tiene prueba automática o validación manual reproducible. Que el engine posea el campo o la función **no cuenta como paridad** si el organizador no puede usarla desde la nueva aplicación.

@@ -1,4 +1,4 @@
-export const HUAU_FOUNDATION_VERSION = "0.5.1-phase4.1a";
+export const HUAU_FOUNDATION_VERSION = "0.5.2-phase4.1-parity";
 
 export function foundationIdentity() {
   return { app: "HUAU Sports", version: HUAU_FOUNDATION_VERSION } as const;

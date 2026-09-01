@@ -8,4 +8,5 @@ export * from "./results";
 export * from "./schedule";
 export * from "./safety";
 export * from "./admin";
+export * from "./parity";
 export * from "./persistence";

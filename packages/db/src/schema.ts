@@ -350,6 +350,8 @@ export const tournamentEntries = sqliteTable(
     seedRating: real("seed_rating"),
     createdByUserId: text("created_by_user_id").references(() => user.id),
     createdByAdmin: integer("created_by_admin", { mode: "boolean" }).notNull().default(false),
+    sourceKind: text("source_kind"),
+    sourceKey: text("source_key"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
     version: integer("version").notNull().default(1),
@@ -637,3 +639,78 @@ export const criticalAuditEvents = sqliteTable(
     index("critical_audit_organization_idx").on(table.organizationId, table.createdAt),
   ],
 );
+
+// Phase 4.1: HUAU Tournament legacy-parity administrative model.
+export const tournamentSettings = sqliteTable("tournament_settings", {
+  tournamentId: text("tournament_id").primaryKey().references(() => tournaments.id, { onDelete: "cascade" }),
+  club: text("club").notNull().default(""),
+  city: text("city").notNull().default("Piriápolis"),
+  location: text("location").notNull().default(""),
+  description: text("description").notNull().default(""),
+  contact: text("contact").notNull().default(""),
+  dailyStart: text("daily_start").notNull().default("09:00"),
+  dailyEnd: text("daily_end").notNull().default("20:00"),
+  defaultMatchMinutes: integer("default_match_minutes").notNull().default(30),
+  paymentType: text("payment_type", { enum: ["per_category", "base_plus_extra", "free"] }).notNull().default("per_category"),
+  entryFeeMinor: integer("entry_fee_minor"),
+  baseFeeMinor: integer("base_fee_minor"),
+  extraCategoryFeeMinor: integer("extra_category_fee_minor"),
+  registrationCloseAt: integer("registration_close_at"),
+  minimumGroup: integer("minimum_group").notNull().default(3),
+  preferredGroup: integer("preferred_group").notNull().default(4),
+  maximumGroup: integer("maximum_group").notNull().default(4),
+  suggestedQualifiersPerGroup: integer("suggested_qualifiers_per_group").notNull().default(2),
+  seedingMethod: text("seeding_method", { enum: ["snake", "manual", "random", "live"] }).notNull().default("snake"),
+  minimumRestSlots: integer("minimum_rest_slots").notNull().default(1),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export const tournamentPlayerProfiles = sqliteTable(
+  "tournament_player_profiles",
+  {
+    id: text("id").primaryKey(),
+    tournamentId: text("tournament_id").notNull().references(() => tournaments.id, { onDelete: "cascade" }),
+    organizationPersonId: text("organization_person_id").references(() => organizationPeople.id, { onDelete: "set null" }),
+    displayName: text("display_name").notNull(),
+    club: text("club").notNull().default(""),
+    contact: text("contact").notNull().default(""),
+    duprSingles: real("dupr_singles").notNull().default(0),
+    duprDoubles: real("dupr_doubles").notNull().default(0),
+    paymentStatus: text("payment_status", { enum: ["pending", "paid"] }).notNull().default("pending"),
+    playerStatus: text("player_status", { enum: ["pending", "confirmed"] }).notNull().default("confirmed"),
+    notes: text("notes").notNull().default(""),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+    version: integer("version").notNull().default(1),
+  },
+  (table) => [
+    index("tournament_player_profiles_tournament_idx").on(table.tournamentId, table.sortOrder),
+    uniqueIndex("tournament_player_profiles_person_uq").on(table.tournamentId, table.organizationPersonId),
+  ],
+);
+
+export const tournamentPlayerCategories = sqliteTable(
+  "tournament_player_categories",
+  {
+    playerProfileId: text("player_profile_id").notNull().references(() => tournamentPlayerProfiles.id, { onDelete: "cascade" }),
+    categoryId: text("category_id").notNull().references(() => tournamentCategories.id, { onDelete: "cascade" }),
+    partnerProfileId: text("partner_profile_id").references(() => tournamentPlayerProfiles.id, { onDelete: "set null" }),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.playerProfileId, table.categoryId] }),
+    index("tournament_player_categories_category_idx").on(table.categoryId),
+    index("tournament_player_categories_partner_idx").on(table.partnerProfileId),
+  ],
+);
+
+export const tournamentDrawSessions = sqliteTable("tournament_draw_sessions", {
+  categoryId: text("category_id").primaryKey().references(() => tournamentCategories.id, { onDelete: "cascade" }),
+  status: text("status", { enum: ["ready", "running", "complete", "confirmed"] }).notNull().default("ready"),
+  stateJson: text("state_json").notNull(),
+  createdByUserId: text("created_by_user_id").notNull().references(() => user.id),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
