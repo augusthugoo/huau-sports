@@ -1,4 +1,4 @@
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const appMeta = sqliteTable("app_meta", {
   key: text("key").primaryKey(),
@@ -264,5 +264,376 @@ export const organizationCapabilityPolicies = sqliteTable(
       table.capability,
       table.permissionKey,
     ),
+  ],
+);
+
+// Phase 3: Tournament persistence and migration layer.
+export const tournaments = sqliteTable(
+  "tournaments",
+  {
+    id: text("id").primaryKey(),
+    organizerOrganizationId: text("organizer_organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    hostVenueId: text("host_venue_id"),
+    name: text("name").notNull(),
+    slug: text("slug").notNull().unique(),
+    sport: text("sport", { enum: ["pickleball", "padel", "tennis"] }).notNull(),
+    status: text("status", {
+      enum: ["draft", "registration_open", "registration_closed", "draw_ready", "scheduled", "live", "completed", "cancelled"],
+    }).notNull(),
+    visibility: text("visibility", { enum: ["public", "members", "invite"] }).notNull(),
+    startAt: integer("start_at").notNull(),
+    endAt: integer("end_at"),
+    timezone: text("timezone").notNull(),
+    courtCount: integer("court_count").notNull(),
+    publicParticipants: integer("public_participants", { mode: "boolean" }).notNull().default(true),
+    publicLive: integer("public_live", { mode: "boolean" }).notNull().default(true),
+    structureLocked: integer("structure_locked", { mode: "boolean" }).notNull().default(false),
+    publishedRevision: integer("published_revision").notNull().default(0),
+    workingRevision: integer("working_revision").notNull().default(0),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("tournaments_org_idx").on(table.organizerOrganizationId),
+    index("tournaments_status_idx").on(table.organizerOrganizationId, table.status),
+  ],
+);
+
+export const tournamentCategories = sqliteTable(
+  "tournament_categories",
+  {
+    id: text("id").primaryKey(),
+    tournamentId: text("tournament_id")
+      .notNull()
+      .references(() => tournaments.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    entryType: text("entry_type", { enum: ["individual", "pair", "team"] }).notNull(),
+    competitionGender: text("competition_gender", { enum: ["male", "female", "mixed", "open"] }),
+    maxEntries: integer("max_entries"),
+    registrationStatus: text("registration_status", { enum: ["closed", "open", "waitlist_only"] }).notNull(),
+    priceScope: text("price_scope", { enum: ["free", "per_entry", "per_person"] }).notNull(),
+    priceMinor: integer("price_minor"),
+    currency: text("currency"),
+    formatVersionId: text("format_version_id"),
+    scheduledDate: text("scheduled_date"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    structureLocked: integer("structure_locked", { mode: "boolean" }).notNull().default(false),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+    version: integer("version").notNull().default(1),
+  },
+  (table) => [
+    uniqueIndex("tournament_categories_tournament_name_uq").on(table.tournamentId, table.name),
+    index("tournament_categories_tournament_idx").on(table.tournamentId, table.sortOrder),
+  ],
+);
+
+export const tournamentEntries = sqliteTable(
+  "tournament_entries",
+  {
+    id: text("id").primaryKey(),
+    categoryId: text("category_id")
+      .notNull()
+      .references(() => tournamentCategories.id, { onDelete: "cascade" }),
+    entryType: text("entry_type", { enum: ["individual", "pair", "team"] }).notNull(),
+    displayName: text("display_name").notNull(),
+    captainUserId: text("captain_user_id").references(() => user.id),
+    status: text("status", {
+      enum: ["draft", "inviting", "ready", "pending_payment", "confirmed", "waitlisted", "withdrawn", "rejected"],
+    }).notNull(),
+    waitlistPosition: integer("waitlist_position"),
+    seedRating: real("seed_rating"),
+    createdByUserId: text("created_by_user_id").references(() => user.id),
+    createdByAdmin: integer("created_by_admin", { mode: "boolean" }).notNull().default(false),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+    version: integer("version").notNull().default(1),
+  },
+  (table) => [index("tournament_entries_category_idx").on(table.categoryId, table.status)],
+);
+
+export const entryMembers = sqliteTable(
+  "entry_members",
+  {
+    id: text("id").primaryKey(),
+    entryId: text("entry_id")
+      .notNull()
+      .references(() => tournamentEntries.id, { onDelete: "cascade" }),
+    organizationPersonId: text("organization_person_id")
+      .notNull()
+      .references(() => organizationPeople.id),
+    memberRole: text("member_role", { enum: ["player", "captain", "substitute"] }).notNull(),
+    rosterSlot: text("roster_slot"),
+    status: text("status", { enum: ["pending_invite", "accepted", "manual", "declined", "removed"] }).notNull(),
+    invitedUserId: text("invited_user_id").references(() => user.id),
+    acceptedAt: integer("accepted_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("entry_members_entry_person_uq").on(table.entryId, table.organizationPersonId),
+    index("entry_members_entry_idx").on(table.entryId),
+  ],
+);
+
+export const competitionFormatVersions = sqliteTable(
+  "competition_format_versions",
+  {
+    id: text("id").primaryKey(),
+    categoryId: text("category_id")
+      .notNull()
+      .references(() => tournamentCategories.id, { onDelete: "cascade" }),
+    versionNumber: integer("version_number").notNull(),
+    formatKind: text("format_kind", { enum: ["standard", "team"] }).notNull(),
+    configJson: text("config_json").notNull(),
+    explanationSchemaVersion: integer("explanation_schema_version").notNull().default(1),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id),
+    createdAt: integer("created_at").notNull(),
+    lockedAt: integer("locked_at"),
+  },
+  (table) => [uniqueIndex("competition_format_versions_category_version_uq").on(table.categoryId, table.versionNumber)],
+);
+
+export const competitions = sqliteTable("competitions", {
+  id: text("id").primaryKey(),
+  categoryId: text("category_id")
+    .notNull()
+    .unique()
+    .references(() => tournamentCategories.id, { onDelete: "cascade" }),
+  formatVersionId: text("format_version_id")
+    .notNull()
+    .references(() => competitionFormatVersions.id),
+  status: text("status", { enum: ["draft", "groups_generated", "group_stage", "groups_complete", "final_phase", "completed"] }).notNull(),
+  structureRevision: integer("structure_revision").notNull().default(1),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export const competitionGroups = sqliteTable(
+  "competition_groups",
+  {
+    id: text("id").primaryKey(),
+    competitionId: text("competition_id")
+      .notNull()
+      .references(() => competitions.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    sortOrder: integer("sort_order").notNull(),
+  },
+  (table) => [uniqueIndex("competition_groups_competition_name_uq").on(table.competitionId, table.name)],
+);
+
+export const competitionGroupEntries = sqliteTable(
+  "competition_group_entries",
+  {
+    groupId: text("group_id")
+      .notNull()
+      .references(() => competitionGroups.id, { onDelete: "cascade" }),
+    entryId: text("entry_id")
+      .notNull()
+      .references(() => tournamentEntries.id, { onDelete: "cascade" }),
+    seed: integer("seed"),
+    sortOrder: integer("sort_order").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.groupId, table.entryId] })],
+);
+
+export const competitionEncounters = sqliteTable(
+  "competition_encounters",
+  {
+    id: text("id").primaryKey(),
+    competitionId: text("competition_id")
+      .notNull()
+      .references(() => competitions.id, { onDelete: "cascade" }),
+    stage: text("stage", { enum: ["group", "playoff", "consolation", "bronze", "final"] }).notNull(),
+    groupId: text("group_id").references(() => competitionGroups.id, { onDelete: "set null" }),
+    roundLabel: text("round_label"),
+    roundNumber: integer("round_number"),
+    legNumber: integer("leg_number").notNull().default(1),
+    entryAId: text("entry_a_id").references(() => tournamentEntries.id),
+    entryBId: text("entry_b_id").references(() => tournamentEntries.id),
+    sourceEncounterAId: text("source_encounter_a_id"),
+    sourceEncounterBId: text("source_encounter_b_id"),
+    sourceLoserAId: text("source_loser_a_id"),
+    sourceLoserBId: text("source_loser_b_id"),
+    status: text("status", { enum: ["pending", "bye", "ready", "in_progress", "finished", "skipped"] }).notNull(),
+    winnerEntryId: text("winner_entry_id").references(() => tournamentEntries.id),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+    version: integer("version").notNull().default(1),
+  },
+  (table) => [
+    index("competition_encounters_competition_stage_idx").on(table.competitionId, table.stage),
+    index("competition_encounters_group_leg_idx").on(table.groupId, table.legNumber),
+  ],
+);
+
+export const matches = sqliteTable(
+  "matches",
+  {
+    id: text("id").primaryKey(),
+    encounterId: text("encounter_id")
+      .notNull()
+      .references(() => competitionEncounters.id, { onDelete: "cascade" }),
+    rubberKey: text("rubber_key"),
+    rubberOrder: integer("rubber_order").notNull().default(1),
+    mode: text("mode", { enum: ["singles", "doubles"] }).notNull(),
+    competitionGender: text("competition_gender", { enum: ["male", "female", "mixed", "open"] }),
+    bestOf: integer("best_of").notNull().default(1),
+    pointTarget: integer("point_target"),
+    scoringMode: text("scoring_mode"),
+    status: text("status", { enum: ["pending", "ready", "in_progress", "finished", "skipped"] }).notNull(),
+    sideALabel: text("side_a_label"),
+    sideBLabel: text("side_b_label"),
+    winnerSide: text("winner_side", { enum: ["A", "B"] }),
+    manualOverride: integer("manual_override", { mode: "boolean" }).notNull().default(false),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+    version: integer("version").notNull().default(1),
+  },
+  (table) => [index("matches_encounter_idx").on(table.encounterId, table.rubberOrder)],
+);
+
+export const matchResults = sqliteTable("match_results", {
+  matchId: text("match_id")
+    .primaryKey()
+    .references(() => matches.id, { onDelete: "cascade" }),
+  scoreA: integer("score_a"),
+  scoreB: integer("score_b"),
+  winnerSide: text("winner_side", { enum: ["A", "B"] }),
+  resultStatus: text("result_status", { enum: ["pending", "final", "corrected"] }).notNull(),
+  enteredByUserId: text("entered_by_user_id").references(() => user.id),
+  enteredAt: integer("entered_at"),
+  correctedAt: integer("corrected_at"),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export const matchSets = sqliteTable(
+  "match_sets",
+  {
+    id: text("id").primaryKey(),
+    matchId: text("match_id")
+      .notNull()
+      .references(() => matches.id, { onDelete: "cascade" }),
+    setNumber: integer("set_number").notNull(),
+    scoreA: integer("score_a").notNull(),
+    scoreB: integer("score_b").notNull(),
+    winnerSide: text("winner_side", { enum: ["A", "B"] }).notNull(),
+  },
+  (table) => [uniqueIndex("match_sets_match_set_uq").on(table.matchId, table.setNumber)],
+);
+
+export const scheduleItems = sqliteTable(
+  "schedule_items",
+  {
+    id: text("id").primaryKey(),
+    tournamentId: text("tournament_id")
+      .notNull()
+      .references(() => tournaments.id, { onDelete: "cascade" }),
+    categoryId: text("category_id")
+      .notNull()
+      .references(() => tournamentCategories.id, { onDelete: "cascade" }),
+    encounterId: text("encounter_id").references(() => competitionEncounters.id, { onDelete: "set null" }),
+    matchId: text("match_id").references(() => matches.id, { onDelete: "set null" }),
+    placeholderKey: text("placeholder_key"),
+    stage: text("stage").notNull(),
+    roundLabel: text("round_label"),
+    courtLabel: text("court_label").notNull(),
+    startAt: integer("start_at").notNull(),
+    endAt: integer("end_at").notNull(),
+    status: text("status", { enum: ["reserved", "bound", "completed", "cancelled"] }).notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+    version: integer("version").notNull().default(1),
+  },
+  (table) => [
+    index("schedule_items_tournament_start_idx").on(table.tournamentId, table.startAt),
+    index("schedule_items_category_idx").on(table.categoryId, table.startAt),
+  ],
+);
+
+export const scheduleRevisions = sqliteTable(
+  "schedule_revisions",
+  {
+    id: text("id").primaryKey(),
+    tournamentId: text("tournament_id")
+      .notNull()
+      .references(() => tournaments.id, { onDelete: "cascade" }),
+    revisionNumber: integer("revision_number").notNull(),
+    generatedFromStructureRevision: integer("generated_from_structure_revision").notNull(),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id),
+    createdAt: integer("created_at").notNull(),
+    isCurrent: integer("is_current", { mode: "boolean" }).notNull().default(true),
+  },
+  (table) => [uniqueIndex("schedule_revisions_tournament_revision_uq").on(table.tournamentId, table.revisionNumber)],
+);
+
+export const tournamentMutations = sqliteTable(
+  "tournament_mutations",
+  {
+    mutationId: text("mutation_id").primaryKey(),
+    tournamentId: text("tournament_id")
+      .notNull()
+      .references(() => tournaments.id, { onDelete: "cascade" }),
+    actorUserId: text("actor_user_id")
+      .notNull()
+      .references(() => user.id),
+    deviceId: text("device_id"),
+    baseRevision: integer("base_revision").notNull(),
+    appliedRevision: integer("applied_revision"),
+    mutationType: text("mutation_type").notNull(),
+    entityId: text("entity_id"),
+    payloadHash: text("payload_hash").notNull(),
+    status: text("status", { enum: ["applied", "conflict", "rejected"] }).notNull(),
+    createdAt: integer("created_at").notNull(),
+    appliedAt: integer("applied_at"),
+  },
+  (table) => [index("tournament_mutations_tournament_revision_idx").on(table.tournamentId, table.appliedRevision)],
+);
+
+export const tournamentSnapshots = sqliteTable(
+  "tournament_snapshots",
+  {
+    id: text("id").primaryKey(),
+    tournamentId: text("tournament_id")
+      .notNull()
+      .references(() => tournaments.id, { onDelete: "cascade" }),
+    scopeType: text("scope_type", { enum: ["tournament", "category"] }).notNull(),
+    scopeId: text("scope_id"),
+    reason: text("reason").notNull(),
+    revision: integer("revision").notNull(),
+    payloadJson: text("payload_json").notNull(),
+    createdByUserId: text("created_by_user_id").references(() => user.id),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [index("tournament_snapshots_tournament_revision_idx").on(table.tournamentId, table.revision)],
+);
+
+export const criticalAuditEvents = sqliteTable(
+  "critical_audit_events",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").references(() => organizations.id, { onDelete: "set null" }),
+    tournamentId: text("tournament_id").references(() => tournaments.id, { onDelete: "set null" }),
+    actorUserId: text("actor_user_id").references(() => user.id, { onDelete: "set null" }),
+    actorType: text("actor_type", { enum: ["user", "platform_admin", "system", "webhook"] }).notNull(),
+    action: text("action").notNull(),
+    entityType: text("entity_type"),
+    entityId: text("entity_id"),
+    summary: text("summary").notNull(),
+    metadataJson: text("metadata_json"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    index("critical_audit_tournament_idx").on(table.tournamentId, table.createdAt),
+    index("critical_audit_organization_idx").on(table.organizationId, table.createdAt),
   ],
 );
