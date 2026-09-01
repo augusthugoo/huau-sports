@@ -7,9 +7,10 @@ Cloud-first foundation for the HUAU Sports ecosystem: Club + Tournament + Ref.
 - Phase 0 Foundation: **DONE**.
 - Phase 1 Identity, Organizations & Platform Shell: **DONE and validated on staging**.
 - Phase 2 Tournament Engine: **DONE, regression-tested and merged to main**.
-- Phase 3 Tournament Persistence & Migration: **IN PROGRESS — persistence schema + legacy import/export layer implemented**.
+- Phase 3 Tournament Persistence & Migration: **DONE and validated on staging**.
+- Phase 4 Tournament Admin UI: **IMPLEMENTED — pending branch validation**.
 
-See `docs/phase-3/PHASE_3_STATUS.md`.
+See `docs/phase-4/PHASE_4_STATUS.md`.
 
 ## Local environment
 

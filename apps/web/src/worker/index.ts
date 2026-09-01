@@ -9,6 +9,7 @@ import {
 } from "@huau/db";
 import { and, eq, inArray } from "drizzle-orm";
 import { createAuth } from "./auth";
+import { handleTournamentAdminApi } from "./tournament-admin";
 
 const json = (body: unknown, init: ResponseInit = {}) =>
   new Response(JSON.stringify(body), {
@@ -54,9 +55,6 @@ async function isPlatformAdmin(userId: string, email: string, env: Env) {
 }
 
 async function isOrgAdmin(userId: string, organizationId: string, env: Env, request?: Request) {
-  if (await isPlatformAdminById(userId, env)) {
-    return request?.headers.get("x-huau-support-org") === organizationId;
-  }
   const db = createDb(env.HUAU_DB);
   const [row] = await db
     .select({ id: organizationUserCapabilities.id })
@@ -70,7 +68,14 @@ async function isOrgAdmin(userId: string, organizationId: string, env: Env, requ
       ),
     )
     .limit(1);
-  return Boolean(row);
+  if (row) return true;
+
+  // Platform support access is explicit and scoped. A platform admin who is also
+  // a real organization admin does not need the support header.
+  if (await isPlatformAdminById(userId, env)) {
+    return request?.headers.get("x-huau-support-org") === organizationId;
+  }
+  return false;
 }
 
 async function isPlatformAdminById(userId: string, env: Env) {
@@ -486,6 +491,12 @@ export default {
     if (url.pathname === "/api/platform/organizations" && request.method === "POST") {
       return handlePlatformCreateOrganization(request, env);
     }
+
+    const tournamentAdminResponse = await handleTournamentAdminApi(request, env, url, {
+      requireUser,
+      isOrgAdmin,
+    });
+    if (tournamentAdminResponse) return tournamentAdminResponse;
 
     if (url.pathname.startsWith("/api/")) return json({ ok: false, code: "NOT_FOUND" }, { status: 404 });
     return json({ ok: false, code: "WORKER_ROUTE_NOT_FOUND" }, { status: 404 });

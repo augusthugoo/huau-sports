@@ -1,16 +1,17 @@
-899b46fb0d7fd08492aa26fdb27ec73c63b80bfab99bbce942b4b033ed6532d3  ./README.md
-502016456766786ffb435860a1bef8c1af07fa18d85504995fe4d08cd64222b8  ./apps/web/package.json
-066555fc9fe266286674c2708ebed4c8c450a7c23c8076658ea3045bda7338d9  ./apps/web/wrangler.jsonc
-12a08203ac22730e4edafdedc2ef7de70b5559bf8b2d626fa560f6bcea4e4de2  ./docs/phase-3/PHASE_3_STATUS.md
-afe1f9f8794faa2eb09dc27a44a2fa72f7c09cf4c46b32643e36b121f5d6652d  ./package.json
-4475d3af62218d90b163b9efc8172ad1c9c55499146078fc5755d23dc181432b  ./packages/core/package.json
-a4c075098e44941ff53621668d45aefbdba36b3d4d302af01ab0b9c7f2ed893c  ./packages/core/src/index.ts
-9a6d0627aa21698e49c412c080d71d7b1fd874b2ccd7c16cb896ab73b333fc74  ./packages/core/src/tournament/index.ts
-b864162e2528ae1648814449e7a8630fb9b41d3aa777084f98f38d4cf83c2ef3  ./packages/core/src/tournament/persistence/backup.ts
-6587314f10d7358401b73abbac5c5c7952d1317d762cd87cf2030ed29191cd56  ./packages/core/src/tournament/persistence/index.ts
-6c7629fdc73129f30f6ff6bdcceea6eacec912686a6b60f92ad9f38c19bf9922  ./packages/core/src/tournament/persistence/legacy-import.test.ts
-0b1f694390bd6277170b7e7a21c11f615bf6c410b3493da10bcc84a697394cb3  ./packages/core/src/tournament/persistence/legacy-import.ts
-508870144759a6a0d2997f4b8a0ef7dda0b890894103f70a113a49b3c450a542  ./packages/core/src/tournament/persistence/types.ts
-0480f2e0c10d2616190161b7221b4b1a7d51b9d95c65aeb404571afd33e07121  ./packages/db/drizzle/0002_phase3_tournament_persistence.sql
-2a215cfd2c351f7640a89d3d4b8576c21144087c8838d727a0c7ba33dc19a1f8  ./packages/db/package.json
-eb80a453b094ddee52a3e5a0aad25ad6ba76b39f5f677be99ddcff08250677b3  ./packages/db/src/schema.ts
+# SHA-256 manifest — HUAU Sports Phase 4 overlay
+# Generated 2026-09-01
+a2d8e04f0b5ac86fc0b6b3d4b84dda476eb837966816d71e9261fe96849a66af  ./README.md
+66c19a526b2975af2b13d136d26c1974779f174b8b72ff7f9ed63ec29c3a406b  ./apps/web/package.json
+d02ca3cede278f4d2a43993007f6e028514a4ad34a985e46edef8b74b3d9656a  ./apps/web/src/App.tsx
+12c9e0a051851879c818173a80f466749edbe2b6d33ad08b1a9f43301cd1d9fe  ./apps/web/src/styles.css
+80267c6e5fd47d15807be8dd6b1bbe68bf813754ebb35bf17927fc360382a411  ./apps/web/src/worker/index.ts
+89c1012eef3002e87eb65c2f5ff8866a45ee58f05444ee85f3e4707d5285afd6  ./apps/web/src/worker/tournament-admin.ts
+d6773124a3423c68fd16a352a22ecaae178e917d4d8946dacc02b2ffd8a37f72  ./docs/phase-4/PHASE_4_STATUS.md
+e757ffb1f0d1cd0ef6518860d17fd8c1e9f8867b01ce214978ce7c2ed52c2695  ./package.json
+bcea1a2a373320648340c41bbc82a5be963dc60351cbb05bc44339c13e774f6c  ./packages/core/package.json
+7d982b55b7919882c4a70be1082e87fbdd83bb1f6df01e98e2df2186db284ee5  ./packages/core/src/index.test.ts
+c26b3c7fd79a504d49988cb1f7fc1708c6b88d0199cef3733edc34850995331e  ./packages/core/src/index.ts
+ad2779b89addc98b1e3c23855623ff39a125f3c1f226c2ecb78e092a38bf71eb  ./packages/core/src/tournament/admin.test.ts
+a3d6ee415b6fbca2dd3364df135f27576137b64a95ebf4a7b3ecb47596644de7  ./packages/core/src/tournament/admin.ts
+29166e62215da1a308b98de09ba5702397769971e538c384b82eeae3f8772a07  ./packages/core/src/tournament/index.ts
+74d260738d0f49266f30b9598f67b03ef6156a6725367efd0fb0f6a7fbe72e4b  ./packages/db/package.json
