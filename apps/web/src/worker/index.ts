@@ -1,7 +1,6 @@
 import {
   organizationMembershipRequests,
   organizationMemberships,
-  organizationPeople,
   organizations,
   organizationUserCapabilities,
   platformAdmins,
