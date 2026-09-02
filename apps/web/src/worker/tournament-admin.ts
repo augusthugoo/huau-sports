@@ -175,8 +175,11 @@ async function categoryForAccess(
 ): Promise<{ user: CurrentUser; tournament: TournamentRow; category: CategoryRow } | Response> {
   const category = await env.HUAU_DB.prepare(
     `SELECT id, tournament_id as tournamentId, name, entry_type as entryType,
-            competition_gender as competitionGender, scheduled_date as scheduledDate,
-            sort_order as sortOrder, structure_locked as structureLocked, format_version_id as formatVersionId
+            competition_gender as competitionGender, min_age as minAge, max_age as maxAge,
+            max_entries as maxEntries, registration_status as registrationStatus,
+            price_scope as priceScope, price_minor as priceMinor, currency,
+            scheduled_date as scheduledDate, sort_order as sortOrder,
+            structure_locked as structureLocked, format_version_id as formatVersionId
        FROM tournament_categories WHERE id=?`,
   )
     .bind(categoryId)
@@ -1964,7 +1967,12 @@ export async function handleTournamentAdminApi(
     const scheduledDate=body.scheduledDate===undefined?accessResult.category.scheduledDate:body.scheduledDate;
     const scheduledDateChanged=scheduledDate!==accessResult.category.scheduledDate;
     const minAge=body.minAge===undefined?accessResult.category.minAge:body.minAge; const maxAge=body.maxAge===undefined?accessResult.category.maxAge:body.maxAge; if(minAge!==null&&maxAge!==null&&minAge>maxAge)return json({ok:false,code:"INVALID_AGE_RANGE"},{status:400});
-    await env.HUAU_DB.prepare(`UPDATE tournament_categories SET name=COALESCE(?,name),entry_type=?,competition_gender=?,scheduled_date=?,min_age=?,max_age=?,max_entries=?,registration_status=?,price_scope=?,price_minor=?,currency=?,updated_at=?,version=version+1 WHERE id=?`).bind(body.name?.trim()||null,nextEntryType,body.competitionGender===undefined?accessResult.category.competitionGender:body.competitionGender,scheduledDate,minAge,maxAge,body.maxEntries===undefined?accessResult.category.maxEntries:body.maxEntries,body.registrationStatus??accessResult.category.registrationStatus,body.priceScope??accessResult.category.priceScope,(body.priceScope??accessResult.category.priceScope)==="free"?null:(body.priceMinor===undefined?accessResult.category.priceMinor:body.priceMinor),body.currency===undefined?accessResult.category.currency:body.currency,unixNow(),categoryId).run();
+    const nextRegistrationStatus=body.registrationStatus??accessResult.category.registrationStatus;
+    const registrationOpening=body.registrationStatus!==undefined&&body.registrationStatus!==accessResult.category.registrationStatus&&nextRegistrationStatus!=="closed";
+    if(registrationOpening&&(accessResult.tournament.structureLocked||accessResult.category.structureLocked))return json({ok:false,code:"COMPETITION_STRUCTURE_LOCKED"},{status:409});
+    const nextPriceScope=body.priceScope??accessResult.category.priceScope;
+    const nextPriceMinor=body.priceMinor===undefined?accessResult.category.priceMinor:body.priceMinor;
+    await env.HUAU_DB.prepare(`UPDATE tournament_categories SET name=COALESCE(?,name),entry_type=?,competition_gender=?,scheduled_date=?,min_age=?,max_age=?,max_entries=?,registration_status=?,price_scope=?,price_minor=?,currency=?,updated_at=?,version=version+1 WHERE id=?`).bind(body.name?.trim()||null,nextEntryType,body.competitionGender===undefined?accessResult.category.competitionGender:body.competitionGender,scheduledDate,minAge,maxAge,body.maxEntries===undefined?accessResult.category.maxEntries:body.maxEntries,nextRegistrationStatus,nextPriceScope,nextPriceMinor,body.currency===undefined?accessResult.category.currency:body.currency,unixNow(),categoryId).run();
     if(nextEntryType!==accessResult.category.entryType)await syncDerivedEntriesForCategory(env,categoryId,accessResult.user.id);
     if(structural||scheduledDateChanged){const settings=await settingsForTournament(env,accessResult.tournament.id);await regenerateTournamentSchedule(env,accessResult.tournament,accessResult.user.id,settings.dailyStart);}
     return json({ok:true});
@@ -2067,7 +2075,7 @@ export async function handleTournamentAdminApi(
     await env.HUAU_DB.prepare(
       `INSERT INTO tournament_categories (id,tournament_id,name,entry_type,competition_gender,min_age,max_age,max_entries,registration_status,price_scope,price_minor,currency,format_version_id,scheduled_date,sort_order,structure_locked,created_at,updated_at,version)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,?, ?,0,?,?,1)`,
-    ).bind(categoryId,tournamentId,name,body.entryType,body.competitionGender ?? null,body.minAge??null,body.maxAge??null,body.maxEntries??null,body.registrationStatus??"closed",body.priceScope??"free",body.priceScope==="free"?null:(body.priceMinor??null),body.currency??"UYU",body.scheduledDate ?? null,sortRow?.nextSort ?? 0,stamp,stamp).run();
+    ).bind(categoryId,tournamentId,name,body.entryType,body.competitionGender ?? null,body.minAge??null,body.maxAge??null,body.maxEntries??null,body.registrationStatus??"closed",body.priceScope??"free",body.priceMinor??null,body.currency??"UYU",body.scheduledDate ?? null,sortRow?.nextSort ?? 0,stamp,stamp).run();
     await env.HUAU_DB.prepare(`UPDATE tournaments SET working_revision=working_revision+1,updated_at=? WHERE id=?`).bind(stamp,tournamentId).run();
     return json({ ok:true, category:{ id:categoryId,name } },{status:201});
   }

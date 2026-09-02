@@ -1,6 +1,14 @@
 export type RegistrationEntryType = "individual" | "pair" | "team";
 export type RegistrationGender = "male" | "female" | "mixed" | "open" | null;
 export type RegistrationPriceScope = "free" | "per_entry" | "per_person";
+export type TournamentRegistrationPaymentType = "per_category" | "base_plus_extra" | "free";
+
+export type RegistrationPricingResolution = {
+  priceScope: RegistrationPriceScope;
+  priceMinor: number;
+  source: "category" | "tournament";
+  tournamentPaymentType: TournamentRegistrationPaymentType | null;
+};
 
 export type RegistrationCategoryRule = {
   entryType: RegistrationEntryType;
@@ -44,11 +52,11 @@ export function evaluateRegistrationEligibility(
   if (category.minAge !== null && age !== null && age < category.minAge) return { eligible: false, code: "BELOW_MIN_AGE", age };
   if (category.maxAge !== null && age !== null && age > category.maxAge) return { eligible: false, code: "ABOVE_MAX_AGE", age };
 
-  if (category.competitionGender === "male" && profile.sportGender !== "male") return { eligible: false, code: "GENDER_NOT_ELIGIBLE", age };
-  if (category.competitionGender === "female" && profile.sportGender !== "female") return { eligible: false, code: "GENDER_NOT_ELIGIBLE", age };
-  if (category.competitionGender === "mixed" && category.entryType === "individual" && profile.sportGender === "unspecified") {
+  if (["male", "female", "mixed"].includes(category.competitionGender ?? "") && profile.sportGender === "unspecified") {
     return { eligible: false, code: "SPORT_GENDER_REQUIRED", age };
   }
+  if (category.competitionGender === "male" && profile.sportGender !== "male") return { eligible: false, code: "GENDER_NOT_ELIGIBLE", age };
+  if (category.competitionGender === "female" && profile.sportGender !== "female") return { eligible: false, code: "GENDER_NOT_ELIGIBLE", age };
   return { eligible: true, age };
 }
 
@@ -59,6 +67,48 @@ export function registrationPriceMinor(
   if (category.priceScope === "free") return 0;
   const price = Math.max(0, Math.trunc(category.priceMinor ?? 0));
   return category.priceScope === "per_person" ? price * Math.max(1, Math.trunc(participantCount)) : price;
+}
+
+export function resolveRegistrationPricing(input: {
+  categoryPriceScope: RegistrationPriceScope;
+  categoryPriceMinor: number | null;
+  tournamentPaymentType: TournamentRegistrationPaymentType;
+  tournamentEntryFeeMinor: number | null;
+  tournamentBaseFeeMinor: number | null;
+  tournamentExtraCategoryFeeMinor: number | null;
+  priorActiveRegistrationCount: number;
+}): RegistrationPricingResolution {
+  // `priceMinor !== null` is the explicit category override marker.
+  // This lets `free + 0` mean an intentional free category, while
+  // the historical/default `free + null` cleanly inherits tournament pricing.
+  if (input.categoryPriceMinor !== null) {
+    return {
+      priceScope: input.categoryPriceScope,
+      priceMinor: Math.max(0, Math.trunc(input.categoryPriceMinor)),
+      source: "category",
+      tournamentPaymentType: null,
+    };
+  }
+
+  if (input.tournamentPaymentType === "free") {
+    return { priceScope: "free", priceMinor: 0, source: "tournament", tournamentPaymentType: "free" };
+  }
+  if (input.tournamentPaymentType === "per_category") {
+    return {
+      priceScope: "per_entry",
+      priceMinor: Math.max(0, Math.trunc(input.tournamentEntryFeeMinor ?? 0)),
+      source: "tournament",
+      tournamentPaymentType: "per_category",
+    };
+  }
+
+  const prior = Math.max(0, Math.trunc(input.priorActiveRegistrationCount));
+  return {
+    priceScope: "per_entry",
+    priceMinor: Math.max(0, Math.trunc(prior === 0 ? input.tournamentBaseFeeMinor ?? 0 : input.tournamentExtraCategoryFeeMinor ?? 0)),
+    source: "tournament",
+    tournamentPaymentType: "base_plus_extra",
+  };
 }
 
 export function capacityDecision(input: {

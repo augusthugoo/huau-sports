@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ageOnDate, capacityDecision, compactWaitlistPositions, evaluateRegistrationEligibility, registrationPriceMinor } from "./registration";
+import { ageOnDate, capacityDecision, compactWaitlistPositions, evaluateRegistrationEligibility, registrationPriceMinor, resolveRegistrationPricing } from "./registration";
 
 const base = {
   entryType: "individual" as const,
@@ -30,6 +30,13 @@ describe("Phase 6 registration acceptance", () => {
     expect(evaluateRegistrationEligibility(female, { sportGender: "male", birthDate: null }, "2026-11-15")).toMatchObject({ eligible: false, code: "GENDER_NOT_ELIGIBLE" });
   });
 
+  it("asks for sport gender before rejecting a gendered or mixed invitation", () => {
+    const female = { ...base, competitionGender: "female" as const };
+    const mixedPair = { ...base, entryType: "pair" as const, competitionGender: "mixed" as const };
+    expect(evaluateRegistrationEligibility(female, { sportGender: "unspecified", birthDate: null }, "2026-11-15")).toMatchObject({ eligible: false, code: "SPORT_GENDER_REQUIRED" });
+    expect(evaluateRegistrationEligibility(mixedPair, { sportGender: "unspecified", birthDate: null }, "2026-11-15")).toMatchObject({ eligible: false, code: "SPORT_GENDER_REQUIRED" });
+  });
+
   it("REG-AT-005 sends overflow entries to waitlist and compacts positions", () => {
     expect(capacityDecision({ maxEntries: 8, occupiedEntries: 8, registrationStatus: "open" })).toBe("waitlist");
     expect(compactWaitlistPositions([{ id: "a", waitlistPosition: 2 }, { id: "b", waitlistPosition: 4 }])).toEqual([
@@ -41,6 +48,27 @@ describe("Phase 6 registration acceptance", () => {
     expect(registrationPriceMinor({ priceScope: "free", priceMinor: 500 }, 2)).toBe(0);
     expect(registrationPriceMinor({ priceScope: "per_entry", priceMinor: 60000 }, 2)).toBe(60000);
     expect(registrationPriceMinor({ priceScope: "per_person", priceMinor: 60000 }, 2)).toBe(120000);
+  });
+
+  it("inherits tournament pricing unless a category explicitly overrides it", () => {
+    expect(resolveRegistrationPricing({
+      categoryPriceScope: "free", categoryPriceMinor: null, tournamentPaymentType: "per_category",
+      tournamentEntryFeeMinor: 50000, tournamentBaseFeeMinor: null, tournamentExtraCategoryFeeMinor: null, priorActiveRegistrationCount: 0,
+    })).toMatchObject({ priceScope: "per_entry", priceMinor: 50000, source: "tournament" });
+
+    expect(resolveRegistrationPricing({
+      categoryPriceScope: "free", categoryPriceMinor: 0, tournamentPaymentType: "per_category",
+      tournamentEntryFeeMinor: 50000, tournamentBaseFeeMinor: null, tournamentExtraCategoryFeeMinor: null, priorActiveRegistrationCount: 0,
+    })).toMatchObject({ priceScope: "free", priceMinor: 0, source: "category" });
+  });
+
+  it("uses base fee for the first active registration and extra fee afterwards", () => {
+    const common = {
+      categoryPriceScope: "free" as const, categoryPriceMinor: null, tournamentPaymentType: "base_plus_extra" as const,
+      tournamentEntryFeeMinor: null, tournamentBaseFeeMinor: 90000, tournamentExtraCategoryFeeMinor: 30000,
+    };
+    expect(resolveRegistrationPricing({ ...common, priorActiveRegistrationCount: 0 }).priceMinor).toBe(90000);
+    expect(resolveRegistrationPricing({ ...common, priorActiveRegistrationCount: 1 }).priceMinor).toBe(30000);
   });
 
   it("ageOnDate handles birthday boundary", () => {
