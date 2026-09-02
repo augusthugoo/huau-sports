@@ -782,6 +782,7 @@ async function addLegacyProfilesAfterImport(env: Env, bundle: TournamentPersiste
     Number(tournamentSource.qualifiersPerGroup ?? 2),String(tournamentSource.seedingMethod ?? "").toLowerCase().includes("manual") ? "manual" : String(tournamentSource.seedingMethod ?? "").toLowerCase().includes("aleat") ? "random" : "snake",Math.max(0,Number(tournamentSource.minimumRestSlots ?? 1)),stamp).run();
   for (const category of bundle.categories) await syncDerivedEntriesForCategory(env, category.id, bundle.tournament.createdByUserId);
 }
+/* eslint-disable @typescript-eslint/no-explicit-any -- legacy V2.4.2 adapter intentionally accepts dynamic backup shapes */
 async function legacyStateForTournament(env: Env, tournamentId: string): Promise<LegacyStateShape> {
   const detail = await tournamentDetail(env, tournamentId);
   if (!detail) throw new Error("TOURNAMENT_NOT_FOUND");
@@ -839,7 +840,6 @@ async function legacyStateForTournament(env: Env, tournamentId: string): Promise
       name,
       entries: groupRows.filter((row) => row.categoryId === category.id && row.name === name && row.entryId).sort((a,b)=>Number(a.sortOrder??0)-Number(b.sortOrder??0)).map((row) => entryById.get(String(row.entryId))).filter(Boolean),
     }));
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const matches = (detail.matches as Array<any>).filter((match) => match.categoryId === category.id).map((match) => ({
       id: legacyEncounterId.get(match.encounterId), category: category.name, stage: match.stage === "group" ? "Grupo" : "Final", group: match.groupName ?? "",
       round: match.roundLabel ?? (match.stage === "final" ? "Final" : match.stage), legNumber: match.legNumber ?? 1,
@@ -852,13 +852,10 @@ async function legacyStateForTournament(env: Env, tournamentId: string): Promise
       sourceLoserA: match.sourceLoserAId ? legacyEncounterId.get(match.sourceLoserAId) ?? 0 : 0,
       sourceLoserB: match.sourceLoserBId ? legacyEncounterId.get(match.sourceLoserBId) ?? 0 : 0,
       bestOf: match.bestOf, pointTarget: match.pointTarget,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       sets: (match.sets ?? []).map((set:any) => ({ a: set.scoreA, b: set.scoreB })),
     }));
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     if (groups.length || matches.length) competitions[category.name] = { format: formats[category.name], groups, matches, finalGenerated: matches.some((match:any) => match.stage !== "Grupo") };
   }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const schedule = (detail.schedule as Array<any>).map((item) => ({
     id: item.id, category: item.categoryName, matchId: item.encounterId ? legacyEncounterId.get(item.encounterId) ?? 0 : 0,
     date: dateFromUnix(Number(item.startAt)), time: new Date(toMsForServer(Number(item.startAt))).toLocaleTimeString("en-GB",{timeZone:detail.tournament.timezone,hour:"2-digit",minute:"2-digit",hour12:false}),
@@ -881,11 +878,12 @@ async function legacyStateForTournament(env: Env, tournamentId: string): Promise
       status: detail.tournament.status,
     },
     players, formats, competitions,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     drawSessions: Object.fromEntries((detail.drawSessions as Array<any>).map((session) => [categoryNameById.get(session.categoryId) ?? session.categoryId, JSON.parse(session.stateJson)])),
     schedule,
   };
 }
+
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
 function toMsForServer(value: number) { return value < 10_000_000_000 ? value * 1000 : value; }
 
@@ -1008,20 +1006,44 @@ async function loadCompetition(env: Env, categoryId: string): Promise<Competitio
     .first<{ id: string; categoryId: string; status: string; formatVersionId: string; configJson: string }>();
   if (!competitionRow) return null;
   const format = normalizeStandardFormat(JSON.parse(competitionRow.configJson) as Partial<StandardCompetitionFormat>);
-  const entries = await loadEntryModels(env, categoryId);
+  // Recovery pass: these reads are independent once the competition id is known.
+  // Running them in parallel avoids five serial D1 round-trips on every workspace refresh.
+  const [entries, groupRows, membershipRows, encounterRows, setRows] = await Promise.all([
+    loadEntryModels(env, categoryId),
+    env.HUAU_DB.prepare(
+      `SELECT g.id,g.name,g.sort_order as sortOrder FROM competition_groups g WHERE g.competition_id=? ORDER BY g.sort_order`,
+    ).bind(competitionRow.id).all<{ id: string; name: string; sortOrder: number }>(),
+    env.HUAU_DB.prepare(
+      `SELECT ge.group_id as groupId,ge.entry_id as entryId,ge.sort_order as sortOrder
+         FROM competition_group_entries ge JOIN competition_groups g ON g.id=ge.group_id
+        WHERE g.competition_id=? ORDER BY ge.sort_order`,
+    ).bind(competitionRow.id).all<{ groupId: string; entryId: string; sortOrder: number }>(),
+    env.HUAU_DB.prepare(
+      `SELECT e.id,e.stage,e.group_id as groupId,g.name as groupName,e.round_label as roundLabel,
+              e.round_number as roundNumber,e.leg_number as legNumber,e.entry_a_id as entryAId,e.entry_b_id as entryBId,
+              e.source_encounter_a_id as sourceA,e.source_encounter_b_id as sourceB,
+              e.source_loser_a_id as sourceLoserA,e.source_loser_b_id as sourceLoserB,
+              e.status,e.winner_entry_id as winnerEntryId,m.id as matchId,m.best_of as bestOf,m.point_target as pointTarget,
+              r.score_a as scoreA,r.score_b as scoreB
+         FROM competition_encounters e
+         LEFT JOIN competition_groups g ON g.id=e.group_id
+         LEFT JOIN matches m ON m.encounter_id=e.id AND m.rubber_order=1
+         LEFT JOIN match_results r ON r.match_id=m.id
+        WHERE e.competition_id=? ORDER BY e.created_at,e.id`,
+    ).bind(competitionRow.id).all<{
+      id: string; stage: CompetitionEncounter["stage"]; groupId: string | null; groupName: string | null;
+      roundLabel: string | null; roundNumber: number | null; legNumber: number; entryAId: string | null; entryBId: string | null;
+      sourceA: string | null; sourceB: string | null; sourceLoserA: string | null; sourceLoserB: string | null;
+      status: CompetitionEncounter["status"]; winnerEntryId: string | null; matchId: string | null; bestOf: 1 | 3 | null;
+      pointTarget: number | null; scoreA: number | null; scoreB: number | null;
+    }>(),
+    env.HUAU_DB.prepare(
+      `SELECT s.match_id as matchId,s.set_number as setNumber,s.score_a as scoreA,s.score_b as scoreB
+         FROM match_sets s JOIN matches m ON m.id=s.match_id JOIN competition_encounters e ON e.id=m.encounter_id
+        WHERE e.competition_id=? ORDER BY s.match_id,s.set_number`,
+    ).bind(competitionRow.id).all<{ matchId: string; setNumber: number; scoreA: number; scoreB: number }>(),
+  ]);
   const entryMap = new Map(entries.map((entry) => [entry.id, entry]));
-  const groupRows = await env.HUAU_DB.prepare(
-    `SELECT g.id,g.name,g.sort_order as sortOrder FROM competition_groups g WHERE g.competition_id=? ORDER BY g.sort_order`,
-  )
-    .bind(competitionRow.id)
-    .all<{ id: string; name: string; sortOrder: number }>();
-  const membershipRows = await env.HUAU_DB.prepare(
-    `SELECT ge.group_id as groupId,ge.entry_id as entryId,ge.sort_order as sortOrder
-       FROM competition_group_entries ge JOIN competition_groups g ON g.id=ge.group_id
-      WHERE g.competition_id=? ORDER BY ge.sort_order`,
-  )
-    .bind(competitionRow.id)
-    .all<{ groupId: string; entryId: string; sortOrder: number }>();
   const byGroup = new Map<string, TournamentEntry[]>();
   for (const membership of membershipRows.results) {
     const entry = entryMap.get(membership.entryId);
@@ -1035,34 +1057,6 @@ async function loadCompetition(env: Env, categoryId: string): Promise<Competitio
     name: group.name,
     entries: byGroup.get(group.id) ?? [],
   }));
-  const encounterRows = await env.HUAU_DB.prepare(
-    `SELECT e.id,e.stage,e.group_id as groupId,g.name as groupName,e.round_label as roundLabel,
-            e.round_number as roundNumber,e.leg_number as legNumber,e.entry_a_id as entryAId,e.entry_b_id as entryBId,
-            e.source_encounter_a_id as sourceA,e.source_encounter_b_id as sourceB,
-            e.source_loser_a_id as sourceLoserA,e.source_loser_b_id as sourceLoserB,
-            e.status,e.winner_entry_id as winnerEntryId,m.id as matchId,m.best_of as bestOf,m.point_target as pointTarget,
-            r.score_a as scoreA,r.score_b as scoreB
-       FROM competition_encounters e
-       LEFT JOIN competition_groups g ON g.id=e.group_id
-       LEFT JOIN matches m ON m.encounter_id=e.id AND m.rubber_order=1
-       LEFT JOIN match_results r ON r.match_id=m.id
-      WHERE e.competition_id=? ORDER BY e.created_at,e.id`,
-  )
-    .bind(competitionRow.id)
-    .all<{
-      id: string; stage: CompetitionEncounter["stage"]; groupId: string | null; groupName: string | null;
-      roundLabel: string | null; roundNumber: number | null; legNumber: number; entryAId: string | null; entryBId: string | null;
-      sourceA: string | null; sourceB: string | null; sourceLoserA: string | null; sourceLoserB: string | null;
-      status: CompetitionEncounter["status"]; winnerEntryId: string | null; matchId: string | null; bestOf: 1 | 3 | null;
-      pointTarget: number | null; scoreA: number | null; scoreB: number | null;
-    }>();
-  const setRows = await env.HUAU_DB.prepare(
-    `SELECT s.match_id as matchId,s.set_number as setNumber,s.score_a as scoreA,s.score_b as scoreB
-       FROM match_sets s JOIN matches m ON m.id=s.match_id JOIN competition_encounters e ON e.id=m.encounter_id
-      WHERE e.competition_id=? ORDER BY s.match_id,s.set_number`,
-  )
-    .bind(competitionRow.id)
-    .all<{ matchId: string; setNumber: number; scoreA: number; scoreB: number }>();
   const setsByMatch = new Map<string, Array<{ scoreA: number; scoreB: number }>>();
   for (const set of setRows.results) {
     const list = setsByMatch.get(set.matchId) ?? [];
@@ -1318,8 +1312,12 @@ async function tournamentDetail(env: Env, tournamentId: string) {
 
   const standings: Array<Record<string, unknown>> = [];
   const crossGroup: Array<Record<string, unknown>> = [];
-  for (const category of categories.results as Array<{id:string}>) {
-    const competition = await loadCompetition(env, category.id);
+  const categoryRows = categories.results as Array<{ id: string; entryCount: number; competitionStatus: string | null; scheduledDate: string | null }>;
+  // Recovery pass: hydrate all categories concurrently instead of serially.
+  const competitions = await Promise.all(categoryRows.map((category) => loadCompetition(env, category.id)));
+  for (let categoryIndex = 0; categoryIndex < categoryRows.length; categoryIndex += 1) {
+    const category = categoryRows[categoryIndex]!;
+    const competition = competitions[categoryIndex];
     if (!competition) continue;
     for (const group of competition.groups) {
       const rows = calculateGroupStandings(competition, group.id);
@@ -1345,7 +1343,6 @@ async function tournamentDetail(env: Env, tournamentId: string) {
     }
   }
 
-  const categoryRows = categories.results as Array<{ id: string; entryCount: number; competitionStatus: string | null; scheduledDate: string | null }>;
   const checklist = tournamentSetupChecklist({
     hasGeneral: Boolean(tournament.name && tournament.startAt && tournament.courtCount),
     categoryCount: categoryRows.length,
@@ -1729,8 +1726,7 @@ export async function handleTournamentAdminApi(
     const categoryId=decodeURIComponent(formatSimulate[1]!);const accessResult=await categoryForAccess(categoryId,request,env,access);if(accessResult instanceof Response)return accessResult;
     await syncDerivedEntriesForCategory(env,categoryId,accessResult.user.id);const entries=await loadEntryModels(env,categoryId);const settings=await settingsForTournament(env,accessResult.tournament.id);
     const body=await readJson<Record<string,unknown>>(request);const availableMinutes=Math.max(0,Number(body.availableMinutes??0));
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const options=buildLegacyFormatOptions({entries:entries.length,courts:Math.max(1,Number(body.courts??accessResult.tournament.courtCount)),availableMinutes,matchMinutes:Math.max(5,Number(body.matchMinutes??settings.defaultMatchMinutes)),minimumGroup:Math.max(2,Number(body.minimumGroup??settings.minimumGroup)),preferredGroup:Math.max(2,Number(body.preferredGroup??settings.preferredGroup)),maximumGroup:Math.max(2,Number(body.maximumGroup??settings.maximumGroup)),finalDrawMethod:body.finalDrawMethod==="pots"?"pots":"performance",avoidGroupRematches:body.avoidGroupRematches!==false,bronzeMatch:body.bronzeMatch===true,medalBestOf:Number(body.medalBestOf)===3?3:1,medalSchedule:body.medalSchedule==="simultaneous"?"simultaneous":"sequential",standardPointTarget:Math.max(1,Number(body.standardPointTarget??15)),medalPointTarget:Math.max(1,Number(body.medalPointTarget??11)),groupRounds:Number(body.groupRounds)===2?2:1,crossGroupMethod:body.crossGroupMethod==="equalized"?"equalized":"normalized",playoffMode:["standard","top2_final","top3_step","top4_semis","league_only"].includes(String(body.playoffMode))?body.playoffMode as any:"standard",consolationMode:body.consolationMode==="knockout"?"knockout":"none",minimumGuaranteedMatches:Math.max(0,Number(body.minimumGuaranteedMatches??0)),wildcardQualifiers:Math.max(0,Number(body.wildcardQualifiers??0)),requestedQualifiersPerGroup:Number(body.requestedQualifiersPerGroup)===1?1:Number(body.requestedQualifiersPerGroup)===2?2:0});
+    const options=buildLegacyFormatOptions({entries:entries.length,courts:Math.max(1,Number(body.courts??accessResult.tournament.courtCount)),availableMinutes,matchMinutes:Math.max(5,Number(body.matchMinutes??settings.defaultMatchMinutes)),minimumGroup:Math.max(2,Number(body.minimumGroup??settings.minimumGroup)),preferredGroup:Math.max(2,Number(body.preferredGroup??settings.preferredGroup)),maximumGroup:Math.max(2,Number(body.maximumGroup??settings.maximumGroup)),finalDrawMethod:body.finalDrawMethod==="pots"?"pots":"performance",avoidGroupRematches:body.avoidGroupRematches!==false,bronzeMatch:body.bronzeMatch===true,medalBestOf:Number(body.medalBestOf)===3?3:1,medalSchedule:body.medalSchedule==="simultaneous"?"simultaneous":"sequential",standardPointTarget:Math.max(1,Number(body.standardPointTarget??15)),medalPointTarget:Math.max(1,Number(body.medalPointTarget??11)),groupRounds:Number(body.groupRounds)===2?2:1,crossGroupMethod:body.crossGroupMethod==="equalized"?"equalized":"normalized",playoffMode:["standard","top2_final","top3_step","top4_semis","league_only"].includes(String(body.playoffMode))?(String(body.playoffMode) as "standard"|"top2_final"|"top3_step"|"top4_semis"|"league_only"):"standard",consolationMode:body.consolationMode==="knockout"?"knockout":"none",minimumGuaranteedMatches:Math.max(0,Number(body.minimumGuaranteedMatches??0)),wildcardQualifiers:Math.max(0,Number(body.wildcardQualifiers??0)),requestedQualifiersPerGroup:Number(body.requestedQualifiersPerGroup)===1?1:Number(body.requestedQualifiersPerGroup)===2?2:0});
     return json({ok:true,options});
   }
 

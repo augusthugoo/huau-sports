@@ -475,3 +475,55 @@ textarea { resize:vertical; }
   .snapshot-list article { align-items:flex-start; flex-direction:column; }
   .tv-category { align-items:flex-start; flex-direction:column; }
 }
+
+/* Phase 4.1 Recovery Pass — restore operational density and hierarchy */
+.tpw .panel { padding:26px; }
+.tpw .panel-title { gap:20px; margin-bottom:20px; }
+.tpw .panel-title > div { display:grid; gap:7px; min-width:0; }
+.tpw .panel-title h2, .tpw .panel-title p { margin:0; }
+.tpw .panel-title p { color:#858580; line-height:1.5; }
+.tpw details > summary { margin-top:16px; padding-top:4px; cursor:pointer; }
+.tpw .form-actions { margin-top:14px; }
+.tpw .tpw-form > button:last-child { margin-top:2px; }
+.player-identity { display:grid; gap:7px; min-width:0; }
+.player-identity strong { font-size:18px; letter-spacing:-.025em; }
+.player-identity span { color:#8c8c87; font-size:12px; line-height:1.4; }
+.player-statuses { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+.player-card details { margin-top:8px; }
+.player-card details > summary { color:#d7d7d2; }
+.category-card header { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; }
+.category-card header > div:first-child { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.category-card header small { flex-basis:100%; margin-left:42px; color:#777; }
+
+.format-simulator > .panel-title { margin-bottom:22px; }
+.format-simulator .simulator-context { margin-top:2px; padding:12px 14px; border:1px solid #242424; border-radius:12px; background:#0a0a0a; }
+.format-simulator .tpw-form > button.ghost { min-height:52px; margin-top:4px; font-size:15px; font-weight:750; }
+.format-options { grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:16px; align-items:start; margin-top:24px; }
+.format-options.compact-options { grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); }
+.format-option-card { display:grid; gap:0; border:1px solid #333!important; border-radius:18px!important; padding:20px!important; background:#101010!important; box-shadow:0 12px 30px rgba(0,0,0,.16); }
+.format-option-card.recommended { border-color:#70706a!important; box-shadow:inset 0 0 0 1px rgba(255,255,255,.05),0 12px 30px rgba(0,0,0,.18); }
+.format-option-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
+.format-option-label { border:1px solid #3a3a3a; border-radius:999px; padding:7px 11px; color:#c8c8c3; font-size:10px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; }
+.format-fit { border-radius:999px; padding:6px 10px; font-size:10px; font-weight:800; }
+.format-fit.good { color:#111; background:#efefeb; }
+.format-fit.bad { color:#f0aaa2; border:1px solid rgba(255,107,107,.35); }
+.format-option-card h3 { margin:0; font-size:25px; letter-spacing:-.04em; }
+.format-group-sizes { margin:7px 0 18px; color:#858580; font-size:12px; }
+.format-stat-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:16px; }
+.format-stat-grid > div { min-height:72px; display:flex; flex-direction:column; justify-content:center; gap:5px; padding:11px 12px; border-radius:12px; background:#efefeb; color:#111; }
+.format-stat-grid strong { font-size:16px; letter-spacing:-.025em; }
+.format-stat-grid span { color:#5d5d59; font-size:9px; line-height:1.2; }
+.format-detail-list { display:grid; gap:7px; padding:0 1px 16px; color:#9a9a95; font-size:11px; line-height:1.35; }
+.format-explanation { margin-top:2px; padding:13px 14px; border:1px solid #303030; border-radius:12px; background:#0b0b0b; }
+.format-explanation strong { display:block; margin-bottom:6px; font-size:12px; color:#efefeb; }
+.format-explanation p { margin:0; color:#8d8d88; font-size:10px; line-height:1.5; }
+.format-option-action { margin-top:14px; }
+.format-option-action .light { width:100%; min-height:46px; }
+
+@media (max-width:680px){
+  .tpw .panel { padding:20px; }
+  .player-card-head { flex-direction:column; }
+  .player-statuses { justify-content:flex-start; }
+  .category-card header small { margin-left:0; }
+  .format-options, .format-options.compact-options { grid-template-columns:1fr; }
+}
