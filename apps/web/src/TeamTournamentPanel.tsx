@@ -50,6 +50,10 @@ type TeamMatch = {
   scoreA: number | null;
   scoreB: number | null;
   resultStatus: string | null;
+  scheduleStart: number | null;
+  scheduleEnd: number | null;
+  courtLabel: string | null;
+  scheduleStatus: string | null;
   sets: Array<{ setNumber: number; scoreA: number; scoreB: number; winnerSide: string }>;
 };
 
@@ -212,7 +216,7 @@ export function TeamTournamentPanel({ tournamentId, locale }: Props) {
             )}
           </p>
         </div>
-        <span className="pill strong">PHASE 5B</span>
+        <span className="pill strong">PHASE 5C</span>
       </article>
 
       {error ? <div className="tpw-alert">{error}</div> : null}
@@ -247,7 +251,6 @@ export function TeamTournamentPanel({ tournamentId, locale }: Props) {
               <TeamFormatBuilder category={category} locale={locale} busy={busy} mutate={mutate} />
               <TeamRosterManager category={category} profiles={detail.profiles} locale={locale} busy={busy} mutate={mutate} />
               <TeamStructure category={category} locale={locale} busy={busy} mutate={mutate} />
-              <TeamStandings category={category} locale={locale} />
               <TeamEncounters category={category} locale={locale} busy={busy} mutate={mutate} />
             </>
           ) : null}
@@ -497,13 +500,15 @@ function TeamRosterManager({
       .map((profile) => ({
         personId: profile.personId,
         role: String(data.get(`role:${profile.personId}`) ?? "player"),
-        sportGender: String(data.get(`gender:${profile.personId}`) ?? profile.sportGender),
       }));
     await mutate(async () => {
       await impactApi(locale, `/api/admin/team-categories/${category.id}/teams`, "POST", { name: data.get("name"), members });
       form.reset();
     });
   };
+
+  const usedPersonIds = new Set(category.entries.flatMap((entry) => entry.roster.map((member) => member.personId)));
+  const availableProfiles = profiles.filter((profile) => !usedPersonIds.has(profile.personId));
 
   return (
     <article className="panel team-rosters">
@@ -519,19 +524,18 @@ function TeamRosterManager({
       <form className="team-roster-create" onSubmit={create}>
         <label className="team-name-field"><span>{tr(locale, "Nombre del equipo", "Team name")}</span><input name="name" required placeholder="HUAU Black" /></label>
         <div className="team-player-picker">
-          {profiles.length ? profiles.map((profile) => (
+          {availableProfiles.length ? availableProfiles.map((profile) => (
             <div className="team-player-option" key={profile.personId}>
-              <label className="check"><input type="checkbox" name={`member:${profile.personId}`} /><span><strong>{profile.displayName}</strong><small>{profile.club || "—"}</small></span></label>
-              <select name={`gender:${profile.personId}`} defaultValue={profile.sportGender}><option value="unspecified">—</option><option value="male">M</option><option value="female">F</option></select>
+              <label className="check"><input type="checkbox" name={`member:${profile.personId}`} /><span><strong>{profile.displayName}</strong><small>{profile.club || "—"} · {profile.sportGender === "male" ? "M" : profile.sportGender === "female" ? "F" : tr(locale, "género pendiente", "gender pending")}</small></span></label>
               <select name={`role:${profile.personId}`} defaultValue="player"><option value="player">Player</option><option value="captain">Captain</option><option value="substitute">Sub</option></select>
             </div>
-          )) : <p className="muted">{tr(locale, "Primero cargá jugadores en la pestaña Jugadores.", "Add players in the Players tab first.")}</p>}
+          )) : <p className="muted">{profiles.length ? tr(locale, "Todos los jugadores disponibles ya pertenecen a un equipo de esta categoría.", "All available players already belong to a team in this category.") : tr(locale, "Primero cargá jugadores y su género en la pestaña Jugadores.", "Add players and their gender in the Players tab first.")}</p>}
         </div>
-        <button className="light" disabled={busy || !profiles.length}>{tr(locale, "Crear equipo", "Create team")}</button>
+        <button className="light" disabled={busy || !availableProfiles.length}>{tr(locale, "Crear equipo", "Create team")}</button>
       </form>
 
       <div className="team-entry-grid">
-        {category.entries.map((entry) => <TeamEntryCard key={entry.id} entry={entry} profiles={profiles} locale={locale} busy={busy} mutate={mutate} />)}
+        {category.entries.map((entry) => <TeamEntryCard key={entry.id} entry={entry} category={category} profiles={profiles} locale={locale} busy={busy} mutate={mutate} />)}
       </div>
     </article>
   );
@@ -539,12 +543,14 @@ function TeamRosterManager({
 
 function TeamEntryCard({
   entry,
+  category,
   profiles,
   locale,
   busy,
   mutate,
 }: {
   entry: TeamEntry;
+  category: TeamCategory;
   profiles: Profile[];
   locale: Locale;
   busy: boolean;
@@ -558,7 +564,6 @@ function TeamEntryCard({
       .map((profile) => ({
         personId: profile.personId,
         role: String(data.get(`role:${profile.personId}`) ?? "player"),
-        sportGender: String(data.get(`gender:${profile.personId}`) ?? profile.sportGender),
       }));
     await mutate(() => impactApi(locale, `/api/admin/team-entries/${entry.id}`, "PUT", { name: data.get("name"), members }));
   };
@@ -567,6 +572,8 @@ function TeamEntryCard({
     await mutate(() => impactApi(locale, `/api/admin/team-entries/${entry.id}`, "DELETE", {}));
   };
   const rosterById = new Map(entry.roster.map((member) => [member.personId, member] as const));
+  const usedByOtherTeams = new Set(category.entries.filter((candidate) => candidate.id !== entry.id).flatMap((candidate) => candidate.roster.map((member) => member.personId)));
+  const editableProfiles = profiles.filter((profile) => rosterById.has(profile.personId) || !usedByOtherTeams.has(profile.personId));
   return (
     <article className="team-entry-card">
       <header><div><strong>{entry.displayName}</strong><span>{entry.roster.length} {tr(locale, "jugadores", "players")}</span></div><div className="form-actions"><span className="pill">{entry.status}</span><button className="danger small" type="button" disabled={busy} onClick={() => void remove()}>×</button></div></header>
@@ -576,11 +583,10 @@ function TeamEntryCard({
         <form className="team-entry-edit" onSubmit={save}>
           <label><span>{tr(locale, "Nombre", "Name")}</span><input name="name" defaultValue={entry.displayName} required /></label>
           <div className="team-player-picker compact">
-            {profiles.map((profile) => {
+            {editableProfiles.map((profile) => {
               const member = rosterById.get(profile.personId);
               return <div className="team-player-option" key={profile.personId}>
-                <label className="check"><input type="checkbox" name={`member:${profile.personId}`} defaultChecked={Boolean(member)} /><span>{profile.displayName}</span></label>
-                <select name={`gender:${profile.personId}`} defaultValue={member?.sportGender ?? profile.sportGender}><option value="unspecified">—</option><option value="male">M</option><option value="female">F</option></select>
+                <label className="check"><input type="checkbox" name={`member:${profile.personId}`} defaultChecked={Boolean(member)} /><span><strong>{profile.displayName}</strong><small>{profile.sportGender === "male" ? "M" : profile.sportGender === "female" ? "F" : tr(locale, "género pendiente", "gender pending")}</small></span></label>
                 <select name={`role:${profile.personId}`} defaultValue={member?.role ?? "player"}><option value="player">Player</option><option value="captain">Captain</option><option value="substitute">Sub</option></select>
               </div>;
             })}
@@ -661,7 +667,7 @@ function TeamEncounters({
   const entryById = new Map(category.entries.map((entry) => [entry.id, entry] as const));
   return (
     <article className="panel team-encounters">
-      <div className="panel-title"><div><div className="eyebrow">MATCH DESK</div><h2>{tr(locale, "Series, alineaciones y resultados", "Encounters, lineups & results")}</h2></div><span>{category.encounters.length}</span></div>
+      <div className="panel-title"><div><div className="eyebrow">LINEUP DESK</div><h2>{tr(locale, "Series y alineaciones", "Encounters & lineups")}</h2><p>{tr(locale, "La operación de resultados vive ahora en Resultados y respeta el cronograma global.", "Result operation now lives in Results and follows the global schedule.")}</p></div><span>{category.encounters.length}</span></div>
       <div className="team-encounter-list">
         {category.encounters.map((encounter) => <TeamEncounterCard key={encounter.id} encounter={encounter} format={category.format} entryA={entryById.get(encounter.entryAId)} entryB={entryById.get(encounter.entryBId)} locale={locale} busy={busy} mutate={mutate} />)}
       </div>
@@ -709,16 +715,12 @@ function TeamEncounterCard({
           <TeamLineupEditor encounter={encounter} entry={entryB} lineup={lineupB} format={format} locale={locale} busy={busy} mutate={mutate} />
         </div>
       </details>
-      <div className="team-rubber-results">
-        {format.encounter.rubbers.slice().sort((a, b) => a.order - b.order).map((rubber) => {
-          const match = encounter.matches.find((candidate) => candidate.rubberKey === rubber.key);
-          if (!match) return null;
-          return <TeamRubberResultEditor key={match.id} match={match} rubberLabel={rubber.label} sideA={entryA.displayName} sideB={entryB.displayName} lineupsLocked={lineupA?.status === "locked" && lineupB?.status === "locked"} locale={locale} busy={busy} mutate={mutate} />;
-        })}
-      </div>
+
     </article>
   );
 }
+
+function rosterEligibleForRubber(member:RosterMember,rubber:TeamFormat["encounter"]["rubbers"][number],slot:number){if(rubber.gender==="open")return true;if(rubber.gender==="male")return member.sportGender==="male";if(rubber.gender==="female")return member.sportGender==="female";if(rubber.gender==="mixed")return slot===0?member.sportGender==="male":member.sportGender==="female";return true;}
 
 function TeamLineupEditor({
   encounter,
@@ -764,7 +766,7 @@ function TeamLineupEditor({
       {format.encounter.rubbers.slice().sort((a, b) => a.order - b.order).map((rubber) => {
         const current = assignmentMap.get(rubber.key) ?? [];
         const slots = rubber.mode === "singles" ? 1 : 2;
-        return <div className="team-lineup-rubber" key={rubber.key}><span>{rubber.label}</span><div>{Array.from({ length: slots }, (_, index) => <select name={`${rubber.key}:${index}`} key={index} defaultValue={current[index] ?? ""} required><option value="">—</option>{entry.roster.map((member) => <option key={member.personId} value={member.personId}>{member.name} · {member.sportGender === "male" ? "M" : member.sportGender === "female" ? "F" : "—"}</option>)}</select>)}</div></div>;
+        return <div className="team-lineup-rubber" key={rubber.key}><span>{rubber.label}</span><div>{Array.from({ length: slots }, (_, index) => <select name={`${rubber.key}:${index}`} key={index} defaultValue={current[index] ?? ""} required><option value="">—</option>{entry.roster.filter(member=>rosterEligibleForRubber(member,rubber,index)).map((member) => <option key={member.personId} value={member.personId}>{member.name} · {member.sportGender === "male" ? "M" : member.sportGender === "female" ? "F" : "—"}</option>)}</select>)}</div></div>;
       })}
       <div className="form-actions"><button className="ghost small" name="lineupAction" value="draft" disabled={busy}>{tr(locale, "Guardar draft", "Save draft")}</button><button className="light small" name="lineupAction" value="lock" disabled={busy}>{tr(locale, "Guardar y bloquear", "Save & lock")}</button></div>
     </form>
@@ -808,4 +810,99 @@ function TeamRubberResultEditor({
       <div className="team-result-action">{match.resultStatus ? <strong>{match.scoreA} — {match.scoreB}</strong> : <small>{match.status}</small>}<button className="light small" disabled={busy || !lineupsLocked || (match.status !== "ready" && !match.resultStatus)}>{match.resultStatus ? tr(locale, "Corregir", "Correct") : tr(locale, "Cargar", "Enter")}</button></div>
     </form>
   );
+}
+
+function useTeamSnapshot(tournamentId: string, pollMs = 0) {
+  const [detail, setDetail] = useState<TeamDetail | null>(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const load = useCallback(async () => {
+    try {
+      const result = await api<TeamDetail>(`/api/admin/tournaments/${tournamentId}/team`);
+      setDetail(result);
+      setError("");
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "TEAM_LOAD_FAILED");
+    } finally {
+      setLoading(false);
+    }
+  }, [tournamentId]);
+  useEffect(() => {
+    void load();
+    if (!pollMs) return;
+    const timer = window.setInterval(() => void load(), pollMs);
+    return () => window.clearInterval(timer);
+  }, [load, pollMs]);
+  return { detail, error, loading, reload: load };
+}
+
+function encounterDisplayScore(category:TeamCategory,encounter:TeamEncounter){const weights=new Map<string,number>(category.format?.encounter.rubbers.map(rubber=>[rubber.key,rubber.weight] as const)??[]);return {a:encounter.matches.filter(match=>match.winnerSide==="A").reduce((sum,match)=>sum+(weights.get(match.rubberKey)??1),0),b:encounter.matches.filter(match=>match.winnerSide==="B").reduce((sum,match)=>sum+(weights.get(match.rubberKey)??1),0)};}
+
+export function TeamCompetitionPanel({ tournamentId, locale }: Props) {
+  const { detail, error, loading } = useTeamSnapshot(tournamentId);
+  if (loading) return <article className="panel"><p className="muted">{tr(locale, "Cargando competencia Team…", "Loading Team competition…")}</p></article>;
+  if (error) return <div className="tpw-alert">{error}</div>;
+  if (!detail?.categories.length) return null;
+  return <section className="tpw-stack team-global-competition">
+    {detail.categories.map((category) => <article className="panel" key={category.id}>
+      <div className="panel-title"><div><div className="eyebrow">TEAM COMPETITION</div><h2>{category.name}</h2><p>{tr(locale,"Series y standings del Team Engine integrados a Competencia.","Team Engine encounters and standings integrated into Competition.")}</p></div><span>{category.encounters.length} {tr(locale,"series","encounters")}</span></div>
+      <TeamStandings category={category} locale={locale}/>
+      {category.groups.length ? <div className="team-competition-groups">{[...new Map<string,{id:string;name:string}>(category.groups.map(row=>[row.id,{id:row.id,name:row.name}] as const)).values()].map(group=><div className="team-competition-group" key={group.id}><h3>{tr(locale,"Grupo","Group")} {group.name}</h3>{category.encounters.filter(encounter=>encounter.groupId===group.id).map(encounter=>{
+        const score=encounterDisplayScore(category,encounter);
+        return <div className="team-competition-series" key={encounter.id}><span>{encounter.sideA}</span><strong>{score.a} — {score.b}</strong><span>{encounter.sideB}</span><small>{encounter.status}</small></div>;
+      })}</div>)}</div> : <div className="empty-state">{tr(locale,"Generá la estructura Team para ver series y standings.","Generate the Team structure to see encounters and standings.")}</div>}
+    </article>)}
+  </section>;
+}
+
+type TeamResultItem = { category: TeamCategory; encounter: TeamEncounter; match: TeamMatch; label: string; lineupsLocked: boolean };
+function teamResultItems(detail: TeamDetail): TeamResultItem[] {
+  const items: TeamResultItem[] = [];
+  detail.categories.forEach(category => {
+    const labelByKey = new Map<string,string>(category.format?.encounter.rubbers.map(rubber => [rubber.key, rubber.label] as const) ?? []);
+    category.encounters.forEach(encounter => {
+      const lineupsLocked = encounter.lineups.filter(lineup => lineup.status === "locked").length >= 2;
+      encounter.matches.forEach(match => items.push({ category, encounter, match, label: labelByKey.get(match.rubberKey) ?? match.rubberKey, lineupsLocked }));
+    });
+  });
+  return items.sort((a,b)=>{
+    const aTime=a.match.scheduleStart ?? Number.MAX_SAFE_INTEGER;
+    const bTime=b.match.scheduleStart ?? Number.MAX_SAFE_INTEGER;
+    return aTime-bTime || a.category.name.localeCompare(b.category.name) || a.encounter.id.localeCompare(b.encounter.id) || a.match.rubberOrder-b.match.rubberOrder;
+  });
+}
+
+export function TeamResultsPanel({ tournamentId, locale }: Props) {
+  const { detail, error, loading, reload } = useTeamSnapshot(tournamentId);
+  const [busy,setBusy]=useState(false);
+  const [mutationError,setMutationError]=useState("");
+  if (loading) return <article className="panel"><p className="muted">{tr(locale,"Cargando resultados Team…","Loading Team results…")}</p></article>;
+  if (error) return <div className="tpw-alert">{error}</div>;
+  if (!detail?.categories.length) return null;
+  const items=teamResultItems(detail);
+  const active=items.filter(item=>item.match.status!=="finished"&&item.match.status!=="skipped"&&item.match.scheduleStatus!=="cancelled");
+  const completed=items.filter(item=>item.match.status==="finished");
+  const mutate=async(fn:()=>Promise<unknown>)=>{setBusy(true);setMutationError("");try{await fn();await reload();}catch(e){setMutationError(e instanceof Error?e.message:"TEAM_RESULT_FAILED");}finally{setBusy(false);}};
+  const row=(item:TeamResultItem,next=false)=><article className={`team-global-result ${next?"is-next":""}`} key={item.match.id}><div className="team-global-result-context"><span className="pill">TEAM · {item.category.name}</span><strong>{item.encounter.sideA} — {item.encounter.sideB}</strong><small>{item.match.scheduleStart?`${new Date(item.match.scheduleStart*1000).toLocaleString("es-UY",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})} · ${item.match.courtLabel??"—"}`:tr(locale,"Sin horario","Unscheduled")} · {tr(locale,"Grupo","Group")} {item.encounter.groupName??"—"}</small></div><TeamRubberResultEditor match={item.match} rubberLabel={item.label} sideA={item.encounter.sideA} sideB={item.encounter.sideB} lineupsLocked={item.lineupsLocked} locale={locale} busy={busy} mutate={mutate}/></article>;
+  return <section className="tpw-stack team-global-results"><article className="panel"><div className="panel-title"><div><div className="eyebrow">TEAM RESULTS</div><h2>{tr(locale,"Resultados Team por cronograma","Team results by schedule")}</h2><p>{tr(locale,"Los rubbers aparecen en el orden real del cronograma global y actualizan automáticamente la serie y los standings.","Rubbers follow the global schedule order and automatically update encounter score and standings.")}</p></div><span>{completed.length}/{items.filter(item=>item.match.status!=="skipped").length}</span></div>{mutationError&&<div className="tpw-alert">{mutationError}</div>}<div className="results-section"><h3>{tr(locale,"Pendientes","Pending")}</h3>{active.length?active.map((item,index)=>row(item,index===0)):<div className="empty-state">{tr(locale,"No quedan rubbers Team pendientes.","No pending Team rubbers.")}</div>}</div>{completed.length>0&&<details className="completed-results"><summary>{tr(locale,"Resultados Team cargados","Completed Team results")} · {completed.length}</summary>{completed.slice().sort((a,b)=>(b.match.scheduleStart??0)-(a.match.scheduleStart??0)).map(item=>row(item))}</details>}</article></section>;
+}
+
+export function TeamTVPanel({ tournamentId, categoryId, locale, tournamentName }: Props & { categoryId:string; tournamentName:string }) {
+  const { detail, error, loading } = useTeamSnapshot(tournamentId, 5000);
+  if (loading) return <section className="tv-shell"><div className="empty-state">{tr(locale,"Cargando TV Team…","Loading Team TV…")}</div></section>;
+  if (error) return <section className="tv-shell"><div className="tpw-alert">{error}</div></section>;
+  const category=detail?.categories.find(item=>item.id===categoryId);
+  if(!category)return <section className="tv-shell"><div className="empty-state">{tr(locale,"Categoría Team no disponible.","Team category unavailable.")}</div></section>;
+  const allMatches=category.encounters.flatMap(encounter=>encounter.matches.map(match=>({encounter,match})));
+  const current=category.encounters.find(encounter=>encounter.matches.some(match=>match.status==="ready"||match.status==="in_progress"))
+    ?? category.encounters.find(encounter=>encounter.status!=="finished")
+    ?? category.encounters.slice().reverse().find(encounter=>encounter.status==="finished") ?? null;
+  const labelByKey=new Map<string,string>(category.format?.encounter.rubbers.map(rubber=>[rubber.key,rubber.label] as const)??[]);
+  const upcoming=allMatches.filter(item=>item.match.status!=="finished"&&item.match.status!=="skipped"&&item.match.scheduleStatus!=="cancelled").sort((a,b)=>(a.match.scheduleStart??Number.MAX_SAFE_INTEGER)-(b.match.scheduleStart??Number.MAX_SAFE_INTEGER)).slice(0,6);
+  const recent=allMatches.filter(item=>item.match.status==="finished").sort((a,b)=>(b.match.scheduleStart??0)-(a.match.scheduleStart??0)).slice(0,5);
+  const standing=category.standings.find(item=>item.groupId===current?.groupId)??category.standings[0];
+  const currentScore=current?encounterDisplayScore(category,current):{a:0,b:0};
+  const entryById=new Map(category.entries.map(entry=>[entry.id,entry] as const));
+  const lineupNames=(entryId:string,rubberKey:string)=>{if(!current)return "";const lineup=current.lineups.find(item=>item.entryId===entryId);const entry=entryById.get(entryId);if(!lineup||!entry)return "";return lineup.assignments.filter(item=>item.rubberKey===rubberKey).sort((a,b)=>a.position-b.position).map(item=>entry.roster.find(member=>member.personId===item.personId)?.name).filter(Boolean).join(" + ");};
+  return <section className="tv-shell team-tv-shell"><header><div><span>HUAU TEAM TOURNAMENT</span><h2>{tournamentName}</h2></div><strong>{new Date().toLocaleTimeString("es-UY",{hour:"2-digit",minute:"2-digit"})}</strong></header><div className="tv-category"><div><span>TEAM · {category.name}</span><h1>{current?`${current.sideA} ${currentScore.a} — ${currentScore.b} ${current.sideB}`:category.name}</h1></div><span className="pill strong">LIVE</span></div><div className="team-tv-grid"><div className="team-tv-main">{current?<><div className="team-tv-rubbers">{current.matches.slice().sort((a,b)=>a.rubberOrder-b.rubberOrder).map(match=><div className={`team-tv-rubber ${match.status}`} key={match.id}><span>{match.rubberOrder}</span><div><strong>{labelByKey.get(match.rubberKey)??match.rubberKey}</strong><small>{match.courtLabel??"—"}{match.scheduleStart?` · ${new Date(match.scheduleStart*1000).toLocaleTimeString("es-UY",{hour:"2-digit",minute:"2-digit"})}`:""}</small><small>{current?`${lineupNames(current.entryAId,match.rubberKey)||"—"} / ${lineupNames(current.entryBId,match.rubberKey)||"—"}`:""}</small></div><b>{match.status==="finished"?`${match.scoreA} — ${match.scoreB}`:match.status}</b></div>)}</div></>:<div className="empty-state">{tr(locale,"No hay series generadas.","No encounters generated.")}</div>}{standing?.rows?.length?<div className="team-tv-standing"><h3>{tr(locale,"Tabla","Standings")} · {tr(locale,"Grupo","Group")} {standing.groupName}</h3>{standing.rows.slice(0,6).map((row,index)=><div key={row.entryId}><span>{index+1}</span><strong>{row.entryName}</strong><b>{row.wins}-{row.losses}</b><small>{row.rubberDiff>0?`+${row.rubberDiff}`:row.rubberDiff}</small></div>)}</div>:null}</div><aside><h3>{tr(locale,"Próximos rubbers","Upcoming rubbers")}</h3>{upcoming.map(({encounter,match})=><div className="tv-match" key={match.id}><b>{match.scheduleStart?new Date(match.scheduleStart*1000).toLocaleTimeString("es-UY",{hour:"2-digit",minute:"2-digit"}):"—"} · {match.courtLabel??"—"}</b><span>{labelByKey.get(match.rubberKey)??match.rubberKey} · {encounter.sideA} — {encounter.sideB}</span></div>)}<h3>{tr(locale,"Últimos resultados","Latest results")}</h3>{recent.map(({encounter,match})=><div className="tv-match" key={match.id}><b>{match.scoreA} — {match.scoreB}</b><span>{labelByKey.get(match.rubberKey)??match.rubberKey} · {encounter.sideA} / {encounter.sideB}</span></div>)}</aside></div></section>;
 }

@@ -648,3 +648,52 @@ textarea { resize:vertical; }
   .team-lineup-rubber > div { grid-template-columns:1fr; }
 }
 .team-entry-card > header .form-actions { margin-top:0; }
+
+/* Phase 5C — Team Tournament integration */
+.tournament-card-shell { position:relative; display:grid; grid-template-columns:minmax(0,1fr) 42px; gap:8px; align-items:stretch; }
+.tournament-card-shell .tournament-card { min-width:0; }
+.tournament-delete { border:1px solid #382525; border-radius:14px; background:#110909; color:#9b6f6f; font-size:22px; transition:.18s ease; }
+.tournament-delete:hover:not(:disabled) { border-color:#744; color:#eee; background:#1b0d0d; }
+.danger-actions { display:flex; flex-wrap:wrap; gap:9px; justify-content:flex-end; }
+.danger.destructive { border-color:#6a2f2f; background:#210b0b; }
+.team-schedule-row { border-color:#3b3b35; background:linear-gradient(90deg,#0f0f0d,#090909); }
+.team-schedule-row > div > span { color:#a0a099; }
+.team-global-competition .team-standings { padding:0; border:0; background:transparent; margin-top:12px; }
+.team-global-competition .team-standings > .panel-title { display:none; }
+.team-competition-groups { display:grid; grid-template-columns:repeat(auto-fit,minmax(290px,1fr)); gap:12px; margin-top:16px; }
+.team-competition-group { border:1px solid #272727; border-radius:15px; padding:14px; background:#090909; }
+.team-competition-group h3 { margin:0 0 10px; }
+.team-competition-series { display:grid; grid-template-columns:minmax(90px,1fr) auto minmax(90px,1fr) auto; gap:8px; align-items:center; padding:9px 0; border-top:1px solid #202020; font-size:11px; }
+.team-competition-series span:nth-of-type(2) { text-align:right; }
+.team-competition-series strong { font-size:14px; white-space:nowrap; }
+.team-competition-series small { color:#777; text-transform:uppercase; letter-spacing:.06em; }
+.team-global-results .panel { overflow:hidden; }
+.team-global-result { display:grid; grid-template-columns:minmax(220px,.75fr) minmax(0,2fr); gap:12px; align-items:stretch; margin-top:8px; border:1px solid #242424; border-radius:15px; padding:10px; background:#080808; }
+.team-global-result.is-next { border-color:#66665e; box-shadow:inset 3px 0 0 #efefeb; }
+.team-global-result-context { display:grid; align-content:center; gap:5px; padding:4px 5px; }
+.team-global-result-context .pill { width:max-content; }
+.team-global-result-context small { color:#74746f; line-height:1.45; }
+.team-global-result .team-result-row { border:0; padding:0; background:transparent; }
+.tv-team-selector { padding:8px 10px; }
+.tv-team-selector .form-actions { justify-content:flex-end; }
+.team-tv-shell { min-height:640px; }
+.team-tv-grid { display:grid; grid-template-columns:minmax(0,1.6fr) minmax(260px,.65fr); gap:18px; }
+.team-tv-main { display:grid; gap:18px; }
+.team-tv-rubbers { display:grid; gap:8px; }
+.team-tv-rubber { display:grid; grid-template-columns:38px minmax(0,1fr) auto; gap:12px; align-items:center; padding:14px 16px; border:1px solid #2a2a2a; border-radius:14px; background:#090909; }
+.team-tv-rubber > span { display:grid; place-items:center; width:32px; height:32px; border-radius:9px; background:#151515; color:#aaa; font-weight:750; }
+.team-tv-rubber strong, .team-tv-rubber small { display:block; }
+.team-tv-rubber small { margin-top:4px; color:#777; }
+.team-tv-rubber.finished { border-color:#4a4a43; }
+.team-tv-rubber.ready, .team-tv-rubber.in_progress { border-color:#77776e; }
+.team-tv-rubber.skipped { opacity:.5; }
+.team-tv-rubber > b { text-transform:uppercase; font-size:11px; }
+.team-tv-standing { border:1px solid #2a2a2a; border-radius:16px; padding:15px; background:#090909; }
+.team-tv-standing h3 { margin:0 0 9px; }
+.team-tv-standing > div { display:grid; grid-template-columns:30px minmax(0,1fr) 46px 52px; gap:8px; align-items:center; padding:8px 0; border-top:1px solid #202020; }
+.team-tv-standing > div span, .team-tv-standing > div small { color:#777; }
+@media (max-width:900px){
+  .team-global-result, .team-tv-grid { grid-template-columns:1fr; }
+  .team-global-result .team-result-row { grid-template-columns:1fr; }
+  .tournament-card-shell { grid-template-columns:minmax(0,1fr) 42px; }
+}
