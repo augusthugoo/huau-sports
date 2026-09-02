@@ -1,0 +1,107 @@
+import type { TeamFormat, TeamStandingCriterion } from "./types";
+
+export const DEFAULT_TEAM_STANDINGS_CRITERIA: TeamStandingCriterion[] = [
+  "encounter_wins",
+  "encounter_win_rate",
+  "rubber_diff",
+  "point_diff",
+  "points_for",
+];
+
+export function createMixedFiveRubberTeamFormat(mixedDoublesPlay: "always" | "if_tied" = "always"): TeamFormat {
+  return {
+    schemaVersion: 1,
+    roster: {
+      min: 4,
+      max: 6,
+      composition: "mixed",
+      rules: {
+        maleMin: 2,
+        maleMax: null,
+        femaleMin: 2,
+        femaleMax: null,
+      },
+      substitutesAllowed: true,
+      captainRequired: false,
+    },
+    encounter: {
+      winnerRule: "majority",
+      targetWins: null,
+      playRemainingAfterClinched: true,
+      rubbers: [
+        {
+          key: "md",
+          label: "Dobles Masculino",
+          order: 1,
+          mode: "doubles",
+          gender: "male",
+          play: "always",
+          isTiebreaker: false,
+          weight: 1,
+          bestOf: 1,
+          pointTarget: 15,
+          scoringMode: null,
+        },
+        {
+          key: "wd",
+          label: "Dobles Femenino",
+          order: 2,
+          mode: "doubles",
+          gender: "female",
+          play: "always",
+          isTiebreaker: false,
+          weight: 1,
+          bestOf: 1,
+          pointTarget: 15,
+          scoringMode: null,
+        },
+        {
+          key: "ms",
+          label: "Singles Masculino",
+          order: 3,
+          mode: "singles",
+          gender: "male",
+          play: "always",
+          isTiebreaker: false,
+          weight: 1,
+          bestOf: 1,
+          pointTarget: 15,
+          scoringMode: null,
+        },
+        {
+          key: "ws",
+          label: "Singles Femenino",
+          order: 4,
+          mode: "singles",
+          gender: "female",
+          play: "always",
+          isTiebreaker: false,
+          weight: 1,
+          bestOf: 1,
+          pointTarget: 15,
+          scoringMode: null,
+        },
+        {
+          key: "xd",
+          label: "Dobles Mixto",
+          order: 5,
+          mode: "doubles",
+          gender: "mixed",
+          play: mixedDoublesPlay,
+          isTiebreaker: mixedDoublesPlay === "if_tied",
+          weight: 1,
+          bestOf: 1,
+          pointTarget: 15,
+          scoringMode: null,
+        },
+      ],
+    },
+    competition: {
+      groupRounds: 1,
+      playoffMode: "standard",
+    },
+    standings: {
+      criteria: [...DEFAULT_TEAM_STANDINGS_CRITERIA],
+    },
+  };
+}

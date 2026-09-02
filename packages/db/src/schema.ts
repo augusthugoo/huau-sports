@@ -531,6 +531,71 @@ export const matchSets = sqliteTable(
   (table) => [uniqueIndex("match_sets_match_set_uq").on(table.matchId, table.setNumber)],
 );
 
+export const matchSideMembers = sqliteTable(
+  "match_side_members",
+  {
+    matchId: text("match_id")
+      .notNull()
+      .references(() => matches.id, { onDelete: "cascade" }),
+    side: text("side", { enum: ["A", "B"] }).notNull(),
+    organizationPersonId: text("organization_person_id")
+      .notNull()
+      .references(() => organizationPeople.id),
+    position: integer("position").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.matchId, table.side, table.organizationPersonId] }),
+    uniqueIndex("match_side_members_match_side_position_uq").on(table.matchId, table.side, table.position),
+    index("match_side_members_match_side_idx").on(table.matchId, table.side, table.position),
+  ],
+);
+
+export const teamEncounterLineups = sqliteTable(
+  "team_encounter_lineups",
+  {
+    id: text("id").primaryKey(),
+    encounterId: text("encounter_id")
+      .notNull()
+      .references(() => competitionEncounters.id, { onDelete: "cascade" }),
+    entryId: text("entry_id")
+      .notNull()
+      .references(() => tournamentEntries.id, { onDelete: "cascade" }),
+    status: text("status", { enum: ["draft", "locked"] }).notNull().default("draft"),
+    lockedAt: integer("locked_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("team_encounter_lineups_encounter_entry_uq").on(table.encounterId, table.entryId),
+    index("team_encounter_lineups_encounter_idx").on(table.encounterId),
+  ],
+);
+
+export const teamLineupAssignments = sqliteTable(
+  "team_lineup_assignments",
+  {
+    id: text("id").primaryKey(),
+    lineupId: text("lineup_id")
+      .notNull()
+      .references(() => teamEncounterLineups.id, { onDelete: "cascade" }),
+    rubberKey: text("rubber_key").notNull(),
+    organizationPersonId: text("organization_person_id")
+      .notNull()
+      .references(() => organizationPeople.id),
+    position: integer("position").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("team_lineup_assignments_lineup_rubber_person_uq").on(
+      table.lineupId,
+      table.rubberKey,
+      table.organizationPersonId,
+    ),
+    uniqueIndex("team_lineup_assignments_lineup_rubber_position_uq").on(table.lineupId, table.rubberKey, table.position),
+    index("team_lineup_assignments_lineup_idx").on(table.lineupId, table.rubberKey, table.position),
+  ],
+);
+
 export const scheduleItems = sqliteTable(
   "schedule_items",
   {

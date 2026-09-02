@@ -5,7 +5,7 @@ describe("foundationIdentity", () => {
   it("exposes the HUAU application identity", () => {
     expect(foundationIdentity()).toEqual({
       app: "HUAU Sports",
-      version: "0.5.2-phase4.1-parity",
+      version: "0.6.0-phase5-team-engine",
     });
   });
 });

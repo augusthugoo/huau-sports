@@ -1,4 +1,4 @@
-export const HUAU_FOUNDATION_VERSION = "0.5.2-phase4.1-parity";
+export const HUAU_FOUNDATION_VERSION = "0.6.0-phase5-team-engine";
 
 export function foundationIdentity() {
   return { app: "HUAU Sports", version: HUAU_FOUNDATION_VERSION } as const;
@@ -6,3 +6,4 @@ export function foundationIdentity() {
 
 export * from "./authorization";
 export * from "./tournament";
+export * from "./team";
