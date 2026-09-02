@@ -1,6 +1,6 @@
 {
   "name": "@huau/web",
-  "version": "0.6.0-phase5-team-engine",
+  "version": "0.6.1-phase5-team-admin",
   "private": true,
   "type": "module",
   "scripts": {

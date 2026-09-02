@@ -84,6 +84,9 @@ type CategorySnapshotPayload = {
   matchResults: SqlRow[];
   matchSets: SqlRow[];
   scheduleItems: SqlRow[];
+  teamLineups?: SqlRow[];
+  teamLineupAssignments?: SqlRow[];
+  matchSideMembers?: SqlRow[];
 };
 
 const json = (body: unknown, init: ResponseInit = {}) =>
@@ -912,6 +915,9 @@ async function snapshotCategory(
     matchResults,
     matchSets,
     scheduleItems,
+    teamLineups,
+    teamLineupAssignments,
+    matchSideMembers,
   ] = await Promise.all([
     env.HUAU_DB.prepare(`SELECT * FROM tournament_categories WHERE id=?`).bind(category.id).first(),
     env.HUAU_DB.prepare(`SELECT * FROM tournament_entries WHERE category_id=? ORDER BY created_at,id`).bind(category.id).all(),
@@ -928,9 +934,12 @@ async function snapshotCategory(
     env.HUAU_DB.prepare(`SELECT r.* FROM match_results r JOIN matches m ON m.id=r.match_id JOIN competition_encounters e ON e.id=m.encounter_id JOIN competitions c ON c.id=e.competition_id WHERE c.category_id=?`).bind(category.id).all(),
     env.HUAU_DB.prepare(`SELECT s.* FROM match_sets s JOIN matches m ON m.id=s.match_id JOIN competition_encounters e ON e.id=m.encounter_id JOIN competitions c ON c.id=e.competition_id WHERE c.category_id=?`).bind(category.id).all(),
     env.HUAU_DB.prepare(`SELECT * FROM schedule_items WHERE category_id=? ORDER BY start_at,court_label`).bind(category.id).all(),
+    env.HUAU_DB.prepare(`SELECT tl.* FROM team_encounter_lineups tl JOIN competition_encounters ce ON ce.id=tl.encounter_id JOIN competitions c ON c.id=ce.competition_id WHERE c.category_id=? ORDER BY tl.created_at,tl.id`).bind(category.id).all(),
+    env.HUAU_DB.prepare(`SELECT tla.* FROM team_lineup_assignments tla JOIN team_encounter_lineups tl ON tl.id=tla.lineup_id JOIN competition_encounters ce ON ce.id=tl.encounter_id JOIN competitions c ON c.id=ce.competition_id WHERE c.category_id=? ORDER BY tla.created_at,tla.id`).bind(category.id).all(),
+    env.HUAU_DB.prepare(`SELECT msm.* FROM match_side_members msm JOIN matches m ON m.id=msm.match_id JOIN competition_encounters ce ON ce.id=m.encounter_id JOIN competitions c ON c.id=ce.competition_id WHERE c.category_id=? ORDER BY msm.match_id,msm.side,msm.position`).bind(category.id).all(),
   ]);
   const payload: CategorySnapshotPayload = {
-    snapshotVersion: 2,
+    snapshotVersion: 3,
     category: (categoryFull ?? {}) as SqlRow,
     entries: entries.results as SqlRow[],
     entryMembers: entryMembers.results as SqlRow[],
@@ -946,6 +955,9 @@ async function snapshotCategory(
     matchResults: matchResults.results as SqlRow[],
     matchSets: matchSets.results as SqlRow[],
     scheduleItems: scheduleItems.results as SqlRow[],
+    teamLineups: teamLineups.results as SqlRow[],
+    teamLineupAssignments: teamLineupAssignments.results as SqlRow[],
+    matchSideMembers: matchSideMembers.results as SqlRow[],
   };
   const snapshotId = uuid();
   await env.HUAU_DB.prepare(
@@ -956,6 +968,29 @@ async function snapshotCategory(
     .bind(snapshotId, tournament.id, category.id, reason, tournament.workingRevision, JSON.stringify(payload), userId, unixNow())
     .run();
   return snapshotId;
+}
+
+export async function snapshotCategoryByIdForAdmin(
+  env: Env,
+  tournamentId: string,
+  categoryId: string,
+  userId: string,
+  reason: string,
+): Promise<string> {
+  const tournament = await env.HUAU_DB.prepare(
+    `SELECT id,organizer_organization_id as organizerOrganizationId,name,slug,sport,status,visibility,start_at as startAt,end_at as endAt,
+            timezone,court_count as courtCount,public_participants as publicParticipants,public_live as publicLive,
+            structure_locked as structureLocked,published_revision as publishedRevision,working_revision as workingRevision
+       FROM tournaments WHERE id=?`,
+  ).bind(tournamentId).first<TournamentRow>();
+  if (!tournament) throw new Error("TOURNAMENT_NOT_FOUND");
+  const category = await env.HUAU_DB.prepare(
+    `SELECT id,tournament_id as tournamentId,name,entry_type as entryType,competition_gender as competitionGender,scheduled_date as scheduledDate,
+            sort_order as sortOrder,structure_locked as structureLocked,format_version_id as formatVersionId
+       FROM tournament_categories WHERE id=? AND tournament_id=?`,
+  ).bind(categoryId,tournamentId).first<CategoryRow>();
+  if (!category) throw new Error("CATEGORY_NOT_FOUND");
+  return snapshotCategory(env,tournament,category,userId,reason);
 }
 
 async function audit(
@@ -1104,7 +1139,7 @@ async function regenerateTournamentSchedule(env: Env, tournament: TournamentRow,
        FROM tournament_categories tc
        JOIN competitions c ON c.category_id=tc.id
        JOIN competition_format_versions f ON f.id=c.format_version_id
-      WHERE tc.tournament_id=? AND tc.scheduled_date IS NOT NULL
+      WHERE tc.tournament_id=? AND tc.scheduled_date IS NOT NULL AND f.format_kind='standard'
       ORDER BY tc.sort_order`,
   )
     .bind(tournament.id)
@@ -1198,7 +1233,7 @@ async function tournamentDailyStart(env: Env, tournamentId: string): Promise<str
        FROM tournament_categories tc
        JOIN competitions c ON c.category_id=tc.id
        JOIN competition_format_versions f ON f.id=c.format_version_id
-      WHERE tc.tournament_id=? ORDER BY tc.sort_order LIMIT 1`,
+      WHERE tc.tournament_id=? AND f.format_kind='standard' ORDER BY tc.sort_order LIMIT 1`,
   ).bind(tournamentId).all<{ configJson: string }>();
   const first = rows.results[0];
   if (!first) return "09:00";
@@ -1264,7 +1299,7 @@ async function tournamentDetail(env: Env, tournamentId: string) {
          LEFT JOIN competition_groups g ON g.id=ce.group_id LEFT JOIN tournament_entries ea ON ea.id=ce.entry_a_id
          LEFT JOIN tournament_entries eb ON eb.id=ce.entry_b_id LEFT JOIN matches m ON m.encounter_id=ce.id AND m.rubber_order=1
          LEFT JOIN match_results mr ON mr.match_id=m.id LEFT JOIN schedule_items si ON si.encounter_id=ce.id
-        WHERE tc.tournament_id=?
+        WHERE tc.tournament_id=? AND tc.entry_type<>'team'
         ORDER BY COALESCE(si.start_at,9223372036854775807),tc.sort_order,CASE ce.stage WHEN 'group' THEN 0 WHEN 'playoff' THEN 1 WHEN 'consolation' THEN 2 WHEN 'bronze' THEN 3 ELSE 4 END,ce.round_number,ce.created_at`,
     ).bind(tournamentId).all(),
     env.HUAU_DB.prepare(
@@ -1314,9 +1349,9 @@ async function tournamentDetail(env: Env, tournamentId: string) {
 
   const standings: Array<Record<string, unknown>> = [];
   const crossGroup: Array<Record<string, unknown>> = [];
-  const categoryRows = categories.results as Array<{ id: string; entryCount: number; competitionStatus: string | null; scheduledDate: string | null }>;
-  // Recovery pass: hydrate all categories concurrently instead of serially.
-  const competitions = await Promise.all(categoryRows.map((category) => loadCompetition(env, category.id)));
+  const categoryRows = categories.results as Array<{ id: string; entryType: "individual" | "pair" | "team"; entryCount: number; competitionStatus: string | null; scheduledDate: string | null }>;
+  // Standard Tournament standings stay isolated from Team Engine categories.
+  const competitions = await Promise.all(categoryRows.map((category) => category.entryType === "team" ? Promise.resolve(null) : loadCompetition(env, category.id)));
   for (let categoryIndex = 0; categoryIndex < categoryRows.length; categoryIndex += 1) {
     const category = categoryRows[categoryIndex]!;
     const competition = competitions[categoryIndex];
@@ -1402,7 +1437,7 @@ async function restoreSnapshot(
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ).bind(
       category.id, category.tournament_id, category.name, category.entry_type, category.competition_gender, category.max_entries,
-      category.registration_status, category.price_scope, category.price_minor, category.currency, category.format_version_id,
+      category.registration_status, category.price_scope, category.price_minor, category.currency, null,
       category.scheduled_date, category.sort_order, category.structure_locked, category.created_at, unixNow(), category.version,
     ));
     for (const row of payload.entries ?? []) statements.push(env.HUAU_DB.prepare(
@@ -1438,6 +1473,9 @@ async function restoreSnapshot(
   for (const row of payload.formatVersions) statements.push(env.HUAU_DB.prepare(
     `INSERT OR REPLACE INTO competition_format_versions (id,category_id,version_number,format_kind,config_json,explanation_schema_version,created_by_user_id,created_at,locked_at) VALUES (?,?,?,?,?,?,?,?,?)`,
   ).bind(row.id,row.category_id,row.version_number,row.format_kind,row.config_json,row.explanation_schema_version,row.created_by_user_id,row.created_at,row.locked_at));
+  if (fullSnapshot) statements.push(
+    env.HUAU_DB.prepare(`UPDATE tournament_categories SET format_version_id=? WHERE id=?`).bind(category.format_version_id, snapshot.scopeId),
+  );
   for (const row of payload.competitions) statements.push(env.HUAU_DB.prepare(
     `INSERT INTO competitions (id,category_id,format_version_id,status,structure_revision,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`,
   ).bind(row.id,row.category_id,row.format_version_id,row.status,row.structure_revision,row.created_at,row.updated_at));
@@ -1462,6 +1500,15 @@ async function restoreSnapshot(
   for (const row of payload.scheduleItems) statements.push(env.HUAU_DB.prepare(
     `INSERT INTO schedule_items (id,tournament_id,category_id,encounter_id,match_id,placeholder_key,stage,round_label,court_label,start_at,end_at,status,created_at,updated_at,version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
   ).bind(row.id,row.tournament_id,row.category_id,row.encounter_id,row.match_id,row.placeholder_key,row.stage,row.round_label,row.court_label,row.start_at,row.end_at,row.status,row.created_at,row.updated_at,row.version));
+  for (const row of payload.teamLineups ?? []) statements.push(env.HUAU_DB.prepare(
+    `INSERT INTO team_encounter_lineups (id,encounter_id,entry_id,status,locked_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`,
+  ).bind(row.id,row.encounter_id,row.entry_id,row.status,row.locked_at,row.created_at,row.updated_at));
+  for (const row of payload.teamLineupAssignments ?? []) statements.push(env.HUAU_DB.prepare(
+    `INSERT INTO team_lineup_assignments (id,lineup_id,rubber_key,organization_person_id,position,created_at) VALUES (?,?,?,?,?,?)`,
+  ).bind(row.id,row.lineup_id,row.rubber_key,row.organization_person_id,row.position,row.created_at));
+  for (const row of payload.matchSideMembers ?? []) statements.push(env.HUAU_DB.prepare(
+    `INSERT INTO match_side_members (match_id,side,organization_person_id,position) VALUES (?,?,?,?)`,
+  ).bind(row.match_id,row.side,row.organization_person_id,row.position));
   if (fullSnapshot) {
     for (const row of payload.drawSessions ?? []) statements.push(env.HUAU_DB.prepare(
       `INSERT INTO tournament_draw_sessions (category_id,status,state_json,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?)`,

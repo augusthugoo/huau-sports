@@ -10,6 +10,7 @@ import {
 import { and, eq, inArray } from "drizzle-orm";
 import { createAuth } from "./auth";
 import { handleTournamentAdminApi } from "./tournament-admin";
+import { handleTeamAdminApi } from "./team-admin";
 
 const json = (body: unknown, init: ResponseInit = {}) =>
   new Response(JSON.stringify(body), {
@@ -491,6 +492,12 @@ export default {
     if (url.pathname === "/api/platform/organizations" && request.method === "POST") {
       return handlePlatformCreateOrganization(request, env);
     }
+
+    const teamAdminResponse = await handleTeamAdminApi(request, env, url, {
+      requireUser,
+      isOrgAdmin,
+    });
+    if (teamAdminResponse) return teamAdminResponse;
 
     const tournamentAdminResponse = await handleTournamentAdminApi(request, env, url, {
       requireUser,
