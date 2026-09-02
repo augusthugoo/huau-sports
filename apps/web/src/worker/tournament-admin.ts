@@ -205,6 +205,7 @@ type TournamentSettingsRow = {
   baseFeeMinor: number | null;
   extraCategoryFeeMinor: number | null;
   registrationCloseAt: number | null;
+  maxCategoriesPerPlayer: number | null;
   minimumGroup: number;
   preferredGroup: number;
   maximumGroup: number;
@@ -251,7 +252,7 @@ async function settingsForTournament(env: Env, tournamentId: string): Promise<To
     `SELECT tournament_id as tournamentId,club,city,location,description,contact,daily_start as dailyStart,daily_end as dailyEnd,
             default_match_minutes as defaultMatchMinutes,payment_type as paymentType,entry_fee_minor as entryFeeMinor,
             base_fee_minor as baseFeeMinor,extra_category_fee_minor as extraCategoryFeeMinor,registration_close_at as registrationCloseAt,
-            minimum_group as minimumGroup,preferred_group as preferredGroup,maximum_group as maximumGroup,
+            max_categories_per_player as maxCategoriesPerPlayer,minimum_group as minimumGroup,preferred_group as preferredGroup,maximum_group as maximumGroup,
             suggested_qualifiers_per_group as suggestedQualifiersPerGroup,seeding_method as seedingMethod,
             minimum_rest_slots as minimumRestSlots
        FROM tournament_settings WHERE tournament_id=?`,
@@ -824,12 +825,13 @@ async function addLegacyProfilesAfterImport(env: Env, bundle: TournamentPersiste
   });
   if (assignmentStatements.length) await runBatches(env.HUAU_DB, assignmentStatements);
   await env.HUAU_DB.prepare(
-    `INSERT OR REPLACE INTO tournament_settings (tournament_id,club,city,location,description,contact,daily_start,daily_end,default_match_minutes,payment_type,entry_fee_minor,base_fee_minor,extra_category_fee_minor,registration_close_at,minimum_group,preferred_group,maximum_group,suggested_qualifiers_per_group,seeding_method,minimum_rest_slots,updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    `INSERT OR REPLACE INTO tournament_settings (tournament_id,club,city,location,description,contact,daily_start,daily_end,default_match_minutes,payment_type,entry_fee_minor,base_fee_minor,extra_category_fee_minor,registration_close_at,max_categories_per_player,minimum_group,preferred_group,maximum_group,suggested_qualifiers_per_group,seeding_method,minimum_rest_slots,updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
   ).bind(bundle.tournament.id,String(tournamentSource.club ?? ""),String(tournamentSource.city ?? "Piriápolis"),String(tournamentSource.location ?? ""),String(tournamentSource.description ?? ""),String(tournamentSource.contact ?? ""),
     String(tournamentSource.dailyStart ?? "09:00"),String(tournamentSource.dailyEnd ?? "20:00"),Math.max(5,Number(tournamentSource.matchMinutes ?? 30)),legacyPaymentType(tournamentSource.paymentType),
     tournamentSource.entryFee ? Math.round(Number(tournamentSource.entryFee)*100) : null,tournamentSource.baseFee ? Math.round(Number(tournamentSource.baseFee)*100) : null,
-    tournamentSource.extraCategoryFee ? Math.round(Number(tournamentSource.extraCategoryFee)*100) : null,legacyLocalDateTimeToUnix(tournamentSource.registrationClose),Math.max(2,Number(tournamentSource.minimumGroup ?? 3)),Math.max(2,Number(tournamentSource.preferredGroup ?? 4)),Math.max(2,Number(tournamentSource.maximumGroup ?? 4)),
+    tournamentSource.extraCategoryFee ? Math.round(Number(tournamentSource.extraCategoryFee)*100) : null,legacyLocalDateTimeToUnix(tournamentSource.registrationClose),
+    tournamentSource.maxCategoriesPerPlayer ? Math.max(1,Math.trunc(Number(tournamentSource.maxCategoriesPerPlayer))) : null,Math.max(2,Number(tournamentSource.minimumGroup ?? 3)),Math.max(2,Number(tournamentSource.preferredGroup ?? 4)),Math.max(2,Number(tournamentSource.maximumGroup ?? 4)),
     Number(tournamentSource.qualifiersPerGroup ?? 2),String(tournamentSource.seedingMethod ?? "").toLowerCase().includes("manual") ? "manual" : String(tournamentSource.seedingMethod ?? "").toLowerCase().includes("aleat") ? "random" : "snake",Math.max(0,Number(tournamentSource.minimumRestSlots ?? 1)),stamp).run();
   for (const category of bundle.categories) await syncDerivedEntriesForCategory(env, category.id, bundle.tournament.createdByUserId);
 }
@@ -922,7 +924,7 @@ async function legacyStateForTournament(env: Env, tournamentId: string): Promise
       categoryDates, courtCount: detail.tournament.courtCount, matchMinutes: detail.settings.defaultMatchMinutes,
       paymentType: detail.settings.paymentType, entryFee: detail.settings.entryFeeMinor ? detail.settings.entryFeeMinor/100 : "",
       baseFee: detail.settings.baseFeeMinor ? detail.settings.baseFeeMinor/100 : "", extraCategoryFee: detail.settings.extraCategoryFeeMinor ? detail.settings.extraCategoryFeeMinor/100 : "",
-      registrationClose: detail.settings.registrationCloseAt ?? "", categories: (detail.categories as Array<{name:string}>).map((category)=>category.name),
+      registrationClose: detail.settings.registrationCloseAt ?? "", maxCategoriesPerPlayer: detail.settings.maxCategoriesPerPlayer ?? "", categories: (detail.categories as Array<{name:string}>).map((category)=>category.name),
       categoryOrder: (detail.categories as Array<{name:string}>).map((category)=>category.name), minimumGroup: detail.settings.minimumGroup,
       preferredGroup: detail.settings.preferredGroup, maximumGroup: detail.settings.maximumGroup, qualifiersPerGroup: detail.settings.suggestedQualifiersPerGroup,
       seedingMethod: detail.settings.seedingMethod, scheduleMode: "Categorías completas por jornada", minimumRestSlots: detail.settings.minimumRestSlots,
@@ -1847,13 +1849,15 @@ export async function handleTournamentAdminApi(
     const stamp = unixNow();
     await env.HUAU_DB.batch([
       env.HUAU_DB.prepare(
-        `UPDATE tournament_settings SET club=?,city=?,location=?,description=?,contact=?,daily_start=?,daily_end=?,default_match_minutes=?,payment_type=?,entry_fee_minor=?,base_fee_minor=?,extra_category_fee_minor=?,registration_close_at=?,minimum_group=?,preferred_group=?,maximum_group=?,suggested_qualifiers_per_group=?,seeding_method=?,minimum_rest_slots=?,updated_at=? WHERE tournament_id=?`,
+        `UPDATE tournament_settings SET club=?,city=?,location=?,description=?,contact=?,daily_start=?,daily_end=?,default_match_minutes=?,payment_type=?,entry_fee_minor=?,base_fee_minor=?,extra_category_fee_minor=?,registration_close_at=?,max_categories_per_player=?,minimum_group=?,preferred_group=?,maximum_group=?,suggested_qualifiers_per_group=?,seeding_method=?,minimum_rest_slots=?,updated_at=? WHERE tournament_id=?`,
       ).bind(body.club ?? current.club,body.city ?? current.city,body.location ?? current.location,body.description ?? current.description,body.contact ?? current.contact,dailyStart,dailyEnd,
         Math.max(5,Math.trunc(Number(body.defaultMatchMinutes ?? current.defaultMatchMinutes))),body.paymentType ?? current.paymentType,
         Object.prototype.hasOwnProperty.call(body,"entryFeeMinor") ? body.entryFeeMinor ?? null : current.entryFeeMinor,
         Object.prototype.hasOwnProperty.call(body,"baseFeeMinor") ? body.baseFeeMinor ?? null : current.baseFeeMinor,
         Object.prototype.hasOwnProperty.call(body,"extraCategoryFeeMinor") ? body.extraCategoryFeeMinor ?? null : current.extraCategoryFeeMinor,
-        Object.prototype.hasOwnProperty.call(body,"registrationCloseAt") ? body.registrationCloseAt ?? null : current.registrationCloseAt,minimumGroup,preferredGroup,maximumGroup,
+        Object.prototype.hasOwnProperty.call(body,"registrationCloseAt") ? body.registrationCloseAt ?? null : current.registrationCloseAt,
+        Object.prototype.hasOwnProperty.call(body,"maxCategoriesPerPlayer") ? (body.maxCategoriesPerPlayer === null ? null : Math.max(1,Math.trunc(Number(body.maxCategoriesPerPlayer)))) : current.maxCategoriesPerPlayer,
+        minimumGroup,preferredGroup,maximumGroup,
         Math.max(0,Math.min(2,Math.trunc(Number(body.suggestedQualifiersPerGroup ?? current.suggestedQualifiersPerGroup)))),safeLegacySeeding(body.seedingMethod ?? current.seedingMethod),
         Math.max(0,Math.min(4,Math.trunc(Number(body.minimumRestSlots ?? current.minimumRestSlots)))),stamp,tournamentId),
       env.HUAU_DB.prepare(

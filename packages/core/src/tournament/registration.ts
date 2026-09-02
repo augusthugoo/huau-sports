@@ -111,6 +111,12 @@ export function resolveRegistrationPricing(input: {
   };
 }
 
+export function categoryLimitReached(maxCategoriesPerPlayer: number | null, activeCategoryCount: number): boolean {
+  if (maxCategoriesPerPlayer === null) return false;
+  const limit = Math.max(0, Math.trunc(maxCategoriesPerPlayer));
+  return Math.max(0, Math.trunc(activeCategoryCount)) >= limit;
+}
+
 export function capacityDecision(input: {
   maxEntries: number | null;
   occupiedEntries: number;

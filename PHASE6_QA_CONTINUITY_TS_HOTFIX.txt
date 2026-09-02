@@ -1,0 +1,10 @@
+Phase 6 QA Continuity — TypeScript hotfix
+
+Fixes the three typecheck errors in apps/web/src/worker/registration.ts:
+- keeps the invitation JSON body explicitly typed after catch fallback
+- narrows nullable entryId before passing it to userAlreadyInCategory
+
+Apply over the already-applied QA Continuity patch, then rerun:
+  pnpm typecheck && pnpm lint && pnpm test
+
+No database migration should be run until all gates are green.

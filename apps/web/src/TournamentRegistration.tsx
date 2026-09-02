@@ -74,6 +74,7 @@ type PublicCategory = {
   occupiedEntries: number;
   waitlistCount: number;
   registrationBlockedCode: string | null;
+  viewerAlreadyRegistered: boolean;
 };
 
 export type PublicTournamentData = {
@@ -91,6 +92,8 @@ export type PublicTournamentData = {
   };
   registrationCloseAt: number | null;
   pricingPolicy: PricingPolicy;
+  maxCategoriesPerPlayer: number | null;
+  activeCategoryCount: number;
   categories: PublicCategory[];
   viewer: { authenticated: boolean; profile: PlayerProfile | null };
 };
@@ -108,6 +111,11 @@ function codeCopy(locale: Locale, code: string) {
     REGISTRATION_DEADLINE_PASSED: ["El período de inscripción ya cerró.", "Registration is closed."],
     TOURNAMENT_REGISTRATION_CLOSED: ["El torneo no está recibiendo inscripciones.", "The tournament is not accepting registrations."],
     COMPETITION_STRUCTURE_LOCKED: ["La competencia ya fue cerrada para nuevas inscripciones.", "The competition is already locked for new registrations."],
+    MAX_CATEGORIES_REACHED: ["Ya alcanzaste el máximo de categorías permitido para este torneo.", "You already reached this tournament's maximum categories per player."],
+    INVITEE_ALREADY_REGISTERED_IN_CATEGORY: ["Ese jugador ya forma parte de una inscripción activa en esta categoría.", "That player is already part of an active registration in this category."],
+    INVITEE_ALREADY_IN_ENTRY: ["Ese jugador ya forma parte de esta inscripción.", "That player is already part of this registration."],
+    PAIR_ALREADY_COMPLETE: ["La pareja ya está completa.", "The pair is already complete."],
+    TEAM_ROSTER_FULL: ["El roster ya alcanzó su máximo.", "The roster already reached its maximum."],
   };
   return map[code]?.[locale === "es" ? 0 : 1] ?? code;
 }
@@ -116,6 +124,8 @@ function blockedButtonCopy(locale: Locale, code: string) {
   if (code === "COMPETITION_STRUCTURE_LOCKED") return tr(locale, "Competencia cerrada", "Competition locked");
   if (code === "REGISTRATION_DEADLINE_PASSED") return tr(locale, "Inscripciones cerradas", "Registration closed");
   if (code === "TOURNAMENT_REGISTRATION_CLOSED") return tr(locale, "Torneo cerrado", "Tournament closed");
+  if (code === "ALREADY_REGISTERED_IN_CATEGORY") return tr(locale, "Ya estás inscripto", "Already registered");
+  if (code === "MAX_CATEGORIES_REACHED") return tr(locale, "Máximo alcanzado", "Limit reached");
   return tr(locale, "Cerrada", "Closed");
 }
 
@@ -289,6 +299,7 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
       </section>
       {notice && <div className="registration-notice">{notice}</div>}
       {error && <div className="registration-alert">{error}</div>}
+      {data.viewer.authenticated && data.maxCategoriesPerPlayer !== null && <div className="registration-limit-note">{tr(locale, `Categorías: ${data.activeCategoryCount}/${data.maxCategoriesPerPlayer}`, `Categories: ${data.activeCategoryCount}/${data.maxCategoriesPerPlayer}`)}</div>}
       {profileNeededSomewhere && <EligibilityProfileCard locale={locale} profile={data.viewer.profile} busy={busy === "profile"} onSave={saveProfile} />}
       <section className="public-registration-grid">
         {data.categories.map((category) => {
@@ -344,23 +355,52 @@ type Invitation = {
   inviterName: string;
 };
 
+type RegistrationMember = {
+  personId: string;
+  name: string;
+  email: string | null;
+  memberRole: string;
+  status: string;
+  userId: string | null;
+};
+
+type RegistrationEntryInvitation = {
+  id: string;
+  inviteeEmail: string;
+  memberRole: string;
+  status: string;
+  expiresAt: number;
+  inviteeUserId: string | null;
+};
+
+type ManagedRegistration = {
+  id: string;
+  registrationNumber: number;
+  status: string;
+  participantCount: number;
+  finalAmountMinor: number;
+  currency: string | null;
+  waitlistPosition: number | null;
+  tournamentName: string;
+  slug: string;
+  categoryName: string;
+  categoryId: string;
+  entryType: "individual" | "pair" | "team";
+  entryName: string | null;
+  entryId: string | null;
+  isOwner: number;
+  viewerRole: string | null;
+  members: RegistrationMember[];
+  entryInvitations: RegistrationEntryInvitation[];
+  canManageInvitations: boolean;
+  rosterMin: number | null;
+  rosterMax: number | null;
+};
+
 type MyData = {
   ok: true;
   profile: PlayerProfile | null;
-  registrations: Array<{
-    id: string;
-    registrationNumber: number;
-    status: string;
-    participantCount: number;
-    finalAmountMinor: number;
-    currency: string | null;
-    waitlistPosition: number | null;
-    tournamentName: string;
-    slug: string;
-    categoryName: string;
-    entryType: string;
-    entryName: string | null;
-  }>;
+  registrations: ManagedRegistration[];
   invitations: Invitation[];
 };
 
@@ -420,6 +460,41 @@ export function MyTournamentRegistrations({ locale, go, onProfileSaved }: { loca
     }
   };
 
+  const inviteMember = async (registration: ManagedRegistration) => {
+    const label = registration.entryType === "pair"
+      ? tr(locale, "Email de la pareja", "Partner email")
+      : tr(locale, "Email del integrante", "Member email");
+    const email = window.prompt(label)?.trim();
+    if (!email) return;
+    setBusy(`invite-${registration.id}`);
+    setError("");
+    try {
+      await api(`/api/tournament-registrations/${registration.id}/invitations`, {
+        method: "POST",
+        body: JSON.stringify({ email, role: "player" }),
+      });
+      await load();
+    } catch (e) {
+      const code = e instanceof RegistrationError ? e.code : "INVITATION_FAILED";
+      setError(codeCopy(locale, code));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const cancelInvite = async (registrationId: string, invitationId: string) => {
+    setBusy(`invite-${invitationId}`);
+    setError("");
+    try {
+      await api(`/api/tournament-registrations/${registrationId}/invitations/${invitationId}`, { method: "DELETE" });
+      await load();
+    } catch (e) {
+      setError(codeCopy(locale, e instanceof RegistrationError ? e.code : "INVITATION_FAILED"));
+    } finally {
+      setBusy("");
+    }
+  };
+
   const cancel = async (id: string) => {
     if (!window.confirm(tr(locale, "¿Cancelar esta inscripción?", "Cancel this registration?"))) return;
     setBusy(id);
@@ -441,12 +516,12 @@ export function MyTournamentRegistrations({ locale, go, onProfileSaved }: { loca
       {(profileNeeded || invitationNeedsMissingProfile) && <EligibilityProfileCard locale={locale} profile={data?.profile ?? null} busy={busy === "profile"} onSave={saveProfile} compact />}
       {data?.invitations.length ? (
         <section className="panel">
-          <div className="panel-title"><h2>{tr(locale, "Invitaciones pendientes", "Pending invitations")}</h2><span>{data.invitations.length}</span></div>
+          <div className="panel-title"><div><h2>{tr(locale, "Invitaciones pendientes", "Pending invitations")}</h2><p className="muted">{tr(locale, "Unirte completa la pareja o el roster. Si la inscripción tiene costo, no queda confirmada hasta que el pago sea aprobado.", "Joining completes the pair or roster. If the registration has a fee, it is not confirmed until payment is approved.")}</p></div><span>{data.invitations.length}</span></div>
           <div className="registration-list">
             {data.invitations.map((invitation) => (
               <article className="registration-row" key={invitation.id}>
                 <div><span className="pill">{invitation.memberRole}</span><strong>{invitation.tournamentName} · {invitation.categoryName}</strong><small>{invitation.entryName} · {tr(locale, "invita", "invited by")} {invitation.inviterName}</small></div>
-                <div className="form-actions"><button className="ghost small" disabled={busy === invitation.id} onClick={() => void respond(invitation.id, "decline")}>{tr(locale, "Rechazar", "Decline")}</button><button className="light small" disabled={busy === invitation.id} onClick={() => void respond(invitation.id, "accept")}>{tr(locale, "Aceptar", "Accept")}</button></div>
+                <div className="form-actions"><button className="ghost small" disabled={busy === invitation.id} onClick={() => void respond(invitation.id, "decline")}>{tr(locale, "Rechazar", "Decline")}</button><button className="light small" disabled={busy === invitation.id} onClick={() => void respond(invitation.id, "accept")}>{tr(locale, "Unirme", "Join")}</button></div>
               </article>
             ))}
           </div>
@@ -455,40 +530,52 @@ export function MyTournamentRegistrations({ locale, go, onProfileSaved }: { loca
       <section className="panel">
         <div className="panel-title"><h2>{tr(locale, "Inscripciones", "Registrations")}</h2><span>{data?.registrations.length ?? 0}</span></div>
         <div className="registration-list">
-          {data?.registrations.length ? data.registrations.map((registration) => (
-            <article className="registration-row" key={registration.id}>
-              <button className="registration-main" onClick={() => go(`/tournaments/${registration.slug}`)}><span className={`pill status-${registration.status}`}>#{registration.registrationNumber} · {registration.status}</span><strong>{registration.tournamentName} · {registration.categoryName}</strong><small>{registration.entryName || registration.entryType}{registration.waitlistPosition ? ` · waitlist #${registration.waitlistPosition}` : ""} · {money(registration.finalAmountMinor, registration.currency, locale)}</small></button>
-              {!['cancelled', 'rejected'].includes(registration.status) && <button className="ghost small" disabled={busy === registration.id} onClick={() => void cancel(registration.id)}>{tr(locale, "Cancelar", "Cancel")}</button>}
-            </article>
-          )) : <div className="empty-state">{tr(locale, "Todavía no tenés inscripciones.", "You do not have registrations yet.")}</div>}
+          {data?.registrations.length ? data.registrations.map((registration) => {
+            const pendingInvites = registration.entryInvitations.filter((invitation) => invitation.status === "pending");
+            const pairComplete = registration.entryType === "pair" && registration.members.length >= 2;
+            const teamFull = registration.entryType === "team" && registration.rosterMax !== null && registration.members.length + pendingInvites.length >= registration.rosterMax;
+            const canInvite = registration.canManageInvitations && !['cancelled', 'rejected'].includes(registration.status) && (registration.entryType === "pair" ? !pairComplete : registration.entryType === "team" ? !teamFull : false);
+            return (
+              <article className="registration-card" key={registration.id}>
+                <div className="registration-card-head">
+                  <button className="registration-main" onClick={() => go(`/tournaments/${registration.slug}`)}><span className={`pill status-${registration.status}`}>#{registration.registrationNumber} · {registration.status}</span><strong>{registration.tournamentName} · {registration.categoryName}</strong><small>{registration.entryName || registration.entryType}{registration.waitlistPosition ? ` · waitlist #${registration.waitlistPosition}` : ""} · {money(registration.finalAmountMinor, registration.currency, locale)}</small></button>
+                  {registration.isOwner === 1 && !['cancelled', 'rejected'].includes(registration.status) && <button className="ghost small" disabled={busy === registration.id} onClick={() => void cancel(registration.id)}>{tr(locale, "Cancelar", "Cancel")}</button>}
+                </div>
+                {registration.entryType !== "individual" && (
+                  <div className="registration-entry-manager">
+                    <div className="registration-member-grid">
+                      {registration.members.map((member) => <div className="registration-member" key={member.personId}><span className="pill">{member.memberRole}</span><strong>{member.name}</strong><small>{member.email || tr(locale, "Cuenta HUAU", "HUAU account")}</small></div>)}
+                      {pendingInvites.map((invitation) => <div className="registration-member pending" key={invitation.id}><span className="pill">pending</span><strong>{invitation.inviteeEmail}</strong><small>{tr(locale, "Invitación pendiente", "Pending invitation")}</small>{registration.canManageInvitations && <button className="text-button" disabled={busy === `invite-${invitation.id}`} onClick={() => void cancelInvite(registration.id, invitation.id)}>{tr(locale, "Cancelar invitación", "Cancel invitation")}</button>}</div>)}
+                    </div>
+                    <div className="registration-manager-actions">
+                      {registration.entryType === "team" && registration.rosterMin !== null && <span className="muted">{tr(locale, `Roster ${registration.members.length}/${registration.rosterMin} mínimo${registration.rosterMax !== null ? ` · máx. ${registration.rosterMax}` : ""}`, `Roster ${registration.members.length}/${registration.rosterMin} minimum${registration.rosterMax !== null ? ` · max ${registration.rosterMax}` : ""}`)}</span>}
+                      {canInvite && <button className="ghost small" disabled={busy === `invite-${registration.id}`} onClick={() => void inviteMember(registration)}>{registration.entryType === "pair" ? (pendingInvites.length ? tr(locale, "Cambiar invitación", "Change invitation") : tr(locale, "Invitar pareja", "Invite partner")) : tr(locale, "Agregar integrante", "Add member")}</button>}
+                    </div>
+                  </div>
+                )}
+                {registration.status === "awaiting_payment" && <div className="registration-payment-note"><strong>{tr(locale, "Pago pendiente", "Payment pending")}</strong><span>{tr(locale, "La pareja/equipo ya está vinculada, pero la inscripción no queda confirmada hasta aprobar el pago.", "The pair/team is linked, but the registration is not confirmed until payment is approved.")}</span></div>}
+              </article>
+            );
+          }) : <div className="empty-state">{tr(locale, "Todavía no tenés inscripciones.", "You do not have registrations yet.")}</div>}
         </div>
       </section>
     </main>
   );
 }
 
+type AdminRegistration = ManagedRegistration & {
+  priceScope: string;
+  baseAmountMinor: number;
+  discountMinor: number;
+  createdAt: number;
+  userName: string;
+  userEmail: string;
+};
+
 type AdminData = {
   ok: true;
   publicUrl: string;
-  registrations: Array<{
-    id: string;
-    registrationNumber: number;
-    status: string;
-    participantCount: number;
-    priceScope: string;
-    baseAmountMinor: number;
-    discountMinor: number;
-    finalAmountMinor: number;
-    currency: string | null;
-    waitlistPosition: number | null;
-    createdAt: number;
-    categoryId: string;
-    categoryName: string;
-    entryType: string;
-    entryName: string | null;
-    userName: string;
-    userEmail: string;
-  }>;
+  registrations: AdminRegistration[];
 };
 
 export function TournamentRegistrationAdmin({ tournamentId, locale }: { tournamentId: string; locale: Locale }) {
@@ -527,25 +614,56 @@ export function TournamentRegistrationAdmin({ tournamentId, locale }: { tourname
     catch (e) { setError(e instanceof Error ? e.message : "ADJUSTMENT_FAILED"); }
     finally { setBusy(""); }
   };
+  const invite = async (registration: AdminRegistration) => {
+    const email = window.prompt(registration.entryType === "pair" ? tr(locale, "Email de la pareja", "Partner email") : tr(locale, "Email del integrante", "Member email"))?.trim();
+    if (!email) return;
+    setBusy(`invite-${registration.id}`);
+    setError("");
+    try {
+      await api(`/api/admin/registrations/${registration.id}/invitations`, { method: "POST", body: JSON.stringify({ email, role: "player" }) });
+      await load();
+    } catch (e) {
+      setError(codeCopy(locale, e instanceof RegistrationError ? e.code : "INVITATION_FAILED"));
+    } finally {
+      setBusy("");
+    }
+  };
+  const cancelInvite = async (registrationId: string, invitationId: string) => {
+    setBusy(`invite-${invitationId}`);
+    try {
+      await api(`/api/admin/registrations/${registrationId}/invitations/${invitationId}`, { method: "DELETE" });
+      await load();
+    } catch (e) {
+      setError(codeCopy(locale, e instanceof RegistrationError ? e.code : "INVITATION_FAILED"));
+    } finally {
+      setBusy("");
+    }
+  };
   const copyLink = async () => { if (data) await navigator.clipboard.writeText(`${window.location.origin}${data.publicUrl}`); };
 
   return (
     <section className="tpw-stack">
       <article className="panel">
-        <div className="panel-title"><div><div className="eyebrow">ONLINE REGISTRATION</div><h2>{tr(locale, "Inscripciones del torneo", "Tournament registrations")}</h2><p>{tr(locale, "Single, parejas, equipos, invitaciones, cupos y waitlist desde la misma fuente de Tournament.", "Singles, pairs, teams, invitations, capacity and waitlist from Tournament's shared source.")}</p></div><button className="ghost small" onClick={() => void copyLink()}>{tr(locale, "Copiar link público", "Copy public link")}</button></div>
+        <div className="panel-title"><div><div className="eyebrow">ONLINE REGISTRATION</div><h2>{tr(locale, "Inscripciones del torneo", "Tournament registrations")}</h2><p>{tr(locale, "Singles, parejas, equipos, invitaciones, cupos y waitlist desde la misma fuente de Tournament.", "Singles, pairs, teams, invitations, capacity and waitlist from Tournament's shared source.")}</p></div><button className="ghost small" onClick={() => void copyLink()}>{tr(locale, "Copiar link público", "Copy public link")}</button></div>
         {error && <div className="registration-alert">{error}</div>}
         <div className="registration-admin-table">
           <div className="registration-admin-head"><span>#</span><span>{tr(locale, "Jugador / equipo", "Player / entry")}</span><span>{tr(locale, "Categoría", "Category")}</span><span>{tr(locale, "Estado", "Status")}</span><span>{tr(locale, "Importe", "Amount")}</span><span></span></div>
-          {data?.registrations.map((registration) => (
-            <div className="registration-admin-row" key={registration.id}>
-              <span>{registration.registrationNumber}</span>
-              <div><strong>{registration.entryName || registration.userName}</strong><small>{registration.userEmail}</small></div>
-              <span>{registration.categoryName}</span>
-              <span><b className={`pill status-${registration.status}`}>{registration.status}</b>{registration.waitlistPosition ? ` #${registration.waitlistPosition}` : ""}</span>
-              <span>{money(registration.finalAmountMinor, registration.currency, locale)}{registration.discountMinor > 0 && <small> − {money(registration.discountMinor, registration.currency, locale)}</small>}</span>
-              <div className="form-actions">{registration.status === "waitlisted" && <button className="light small" disabled={busy === registration.id} onClick={() => void promote(registration.id)}>{tr(locale, "Promover", "Promote")}</button>}<button className="ghost small" disabled={busy === registration.id} onClick={() => void discount(registration.id)}>{tr(locale, "Descuento", "Discount")}</button><button className="ghost small" disabled={busy === registration.id} onClick={() => void courtesy(registration.id)}>{tr(locale, "Cortesía", "Courtesy")}</button></div>
-            </div>
-          ))}
+          {data?.registrations.map((registration) => {
+            const pending = registration.entryInvitations.filter((invitation) => invitation.status === "pending");
+            const pairComplete = registration.entryType === "pair" && registration.members.length >= 2;
+            const teamFull = registration.entryType === "team" && registration.rosterMax !== null && registration.members.length + pending.length >= registration.rosterMax;
+            const canInvite = registration.entryType === "pair" ? !pairComplete : registration.entryType === "team" ? !teamFull : false;
+            return (
+              <div className="registration-admin-row" key={registration.id}>
+                <span>{registration.registrationNumber}</span>
+                <div><strong>{registration.entryName || registration.userName}</strong><small>{registration.members.map((member) => member.name).join(" · ") || registration.userEmail}</small>{pending.map((invitation) => <small key={invitation.id}>{tr(locale, "Pendiente", "Pending")}: {invitation.inviteeEmail} <button className="text-button inline" disabled={busy === `invite-${invitation.id}`} onClick={() => void cancelInvite(registration.id, invitation.id)}>×</button></small>)}</div>
+                <span>{registration.categoryName}</span>
+                <span><b className={`pill status-${registration.status}`}>{registration.status}</b>{registration.waitlistPosition ? ` #${registration.waitlistPosition}` : ""}</span>
+                <span>{money(registration.finalAmountMinor, registration.currency, locale)}{registration.discountMinor > 0 && <small> − {money(registration.discountMinor, registration.currency, locale)}</small>}</span>
+                <div className="form-actions">{registration.status === "waitlisted" && <button className="light small" disabled={busy === registration.id} onClick={() => void promote(registration.id)}>{tr(locale, "Promover", "Promote")}</button>}{canInvite && <button className="light small" disabled={busy === `invite-${registration.id}`} onClick={() => void invite(registration)}>{registration.entryType === "pair" ? (pending.length ? tr(locale, "Cambiar invitación", "Change invite") : tr(locale, "Invitar pareja", "Invite partner")) : tr(locale, "Invitar integrante", "Invite member")}</button>}<button className="ghost small" disabled={busy === registration.id} onClick={() => void discount(registration.id)}>{tr(locale, "Descuento", "Discount")}</button><button className="ghost small" disabled={busy === registration.id} onClick={() => void courtesy(registration.id)}>{tr(locale, "Cortesía", "Courtesy")}</button></div>
+              </div>
+            );
+          })}
         </div>
         {!data?.registrations.length && <div className="empty-state">{tr(locale, "Todavía no hay inscripciones online.", "No online registrations yet.")}</div>}
       </article>

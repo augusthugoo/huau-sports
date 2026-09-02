@@ -1,5 +1,6 @@
 import {
   capacityDecision,
+  categoryLimitReached,
   evaluateRegistrationEligibility,
   parseTeamFormat,
   registrationPriceMinor,
@@ -28,6 +29,7 @@ type PricingSettingsRow = {
   entryFeeMinor: number | null;
   baseFeeMinor: number | null;
   extraCategoryFeeMinor: number | null;
+  maxCategoriesPerPlayer: number | null;
 };
 
 type RegistrationRow = {
@@ -49,9 +51,25 @@ async function profileForUser(env:Env,userId:string){return env.HUAU_DB.prepare(
 
 async function registrationCloseAt(env:Env,tournamentId:string){const row=await env.HUAU_DB.prepare(`SELECT registration_close_at as registrationCloseAt FROM tournament_settings WHERE tournament_id=?`).bind(tournamentId).first<{registrationCloseAt:number|null}>();return row?.registrationCloseAt??null;}
 async function pricingSettingsForTournament(env:Env,tournamentId:string):Promise<PricingSettingsRow>{
-  const row=await env.HUAU_DB.prepare(`SELECT payment_type as paymentType,entry_fee_minor as entryFeeMinor,base_fee_minor as baseFeeMinor,extra_category_fee_minor as extraCategoryFeeMinor FROM tournament_settings WHERE tournament_id=?`).bind(tournamentId).first<PricingSettingsRow>();
-  return row??{paymentType:"free",entryFeeMinor:null,baseFeeMinor:null,extraCategoryFeeMinor:null};
+  const row=await env.HUAU_DB.prepare(`SELECT payment_type as paymentType,entry_fee_minor as entryFeeMinor,base_fee_minor as baseFeeMinor,extra_category_fee_minor as extraCategoryFeeMinor,max_categories_per_player as maxCategoriesPerPlayer FROM tournament_settings WHERE tournament_id=?`).bind(tournamentId).first<PricingSettingsRow>();
+  return row??{paymentType:"free",entryFeeMinor:null,baseFeeMinor:null,extraCategoryFeeMinor:null,maxCategoriesPerPlayer:null};
 }
+async function activeCategoryCountForUser(env:Env,tournamentId:string,userId:string){
+  const row=await env.HUAU_DB.prepare(`SELECT COUNT(DISTINCT tc.id) as count
+    FROM tournament_categories tc
+    JOIN tournament_entries e ON e.category_id=tc.id AND e.status NOT IN ('withdrawn','rejected')
+    JOIN entry_members em ON em.entry_id=e.id AND em.status IN ('accepted','manual')
+    JOIN organization_people op ON op.id=em.organization_person_id
+    WHERE tc.tournament_id=? AND op.user_id=?`).bind(tournamentId,userId).first<{count:number}>();
+  return Number(row?.count??0);
+}
+
+async function categoryLimitCode(env:Env,tournamentId:string,userId:string){
+  const settings=await pricingSettingsForTournament(env,tournamentId);
+  const activeCategoryCount=await activeCategoryCountForUser(env,tournamentId,userId);
+  return { settings, activeCategoryCount, reached: categoryLimitReached(settings.maxCategoriesPerPlayer,activeCategoryCount) };
+}
+
 async function priorActiveRegistrationCount(env:Env,tournamentId:string,userId:string,beforeRegistrationNumber?:number){
   const beforeClause=beforeRegistrationNumber===undefined?"":"AND registration_number < ?";
   const values:Array<string|number>=[tournamentId,userId];
@@ -162,16 +180,18 @@ async function publicTournament(slug:string,request:Request,env:Env,access:Acces
   const categories=await env.HUAU_DB.prepare(`SELECT tc.id,tc.tournament_id as tournamentId,tc.name,tc.entry_type as entryType,tc.competition_gender as competitionGender,tc.min_age as minAge,tc.max_age as maxAge,tc.max_entries as maxEntries,tc.registration_status as registrationStatus,tc.price_scope as priceScope,tc.price_minor as priceMinor,tc.currency,tc.structure_locked as structureLocked,tc.format_version_id as formatVersionId,tc.scheduled_date as scheduledDate,(SELECT COUNT(*) FROM tournament_entries e WHERE e.category_id=tc.id AND e.status NOT IN ('waitlisted','withdrawn','rejected')) as occupiedEntries,(SELECT COUNT(*) FROM tournament_entries e WHERE e.category_id=tc.id AND e.status='waitlisted') as waitlistCount FROM tournament_categories tc WHERE tc.tournament_id=? ORDER BY tc.sort_order,tc.name`).bind(tournament.id).all<CategoryRow&{scheduledDate:string|null;occupiedEntries:number;waitlistCount:number}>();
   const currentUser=await access.requireUser(request,env);let profile=null;if(currentUser)profile=await profileForUser(env,currentUser.id);
   const prior=currentUser?await priorActiveRegistrationCount(env,tournament.id,currentUser.id):0;
-  const publicCategories=categories.results.map(category=>{
+  const limit=currentUser?await categoryLimitCode(env,tournament.id,currentUser.id):{activeCategoryCount:0,reached:false};
+  const publicCategories=await Promise.all(categories.results.map(async category=>{
     const resolution=resolveRegistrationPricing({
       categoryPriceScope:category.priceScope,categoryPriceMinor:category.priceMinor,tournamentPaymentType:settings.paymentType,
       tournamentEntryFeeMinor:settings.entryFeeMinor,tournamentBaseFeeMinor:settings.baseFeeMinor,tournamentExtraCategoryFeeMinor:settings.extraCategoryFeeMinor,priorActiveRegistrationCount:prior,
     });
-    const blockedCode=category.registrationStatus==="closed"?"CATEGORY_REGISTRATION_CLOSED":tournament.status!=="registration_open"?"TOURNAMENT_REGISTRATION_CLOSED":(tournament.structureLocked||category.structureLocked)?"COMPETITION_STRUCTURE_LOCKED":closeAt&&now()>closeAt?"REGISTRATION_DEADLINE_PASSED":null;
+    const alreadyRegistered=currentUser?await userAlreadyInCategory(env,currentUser.id,category.id):false;
+    const blockedCode=category.registrationStatus==="closed"?"CATEGORY_REGISTRATION_CLOSED":tournament.status!=="registration_open"?"TOURNAMENT_REGISTRATION_CLOSED":(tournament.structureLocked||category.structureLocked)?"COMPETITION_STRUCTURE_LOCKED":closeAt&&now()>closeAt?"REGISTRATION_DEADLINE_PASSED":alreadyRegistered?"ALREADY_REGISTERED_IN_CATEGORY":limit.reached?"MAX_CATEGORIES_REACHED":null;
     const priceDescription=resolution.source==="category"?"category_override":settings.paymentType==="base_plus_extra"?(prior===0?"tournament_base":"tournament_extra"):settings.paymentType==="per_category"?"tournament_per_category":"tournament_free";
-    return {...category,priceScope:resolution.priceScope,priceMinor:resolution.priceMinor,priceSource:resolution.source,priceDescription,registrationBlockedCode:blockedCode};
-  });
-  return json({ok:true,tournament,registrationCloseAt:closeAt,pricingPolicy:settings,categories:publicCategories,viewer:currentUser?{authenticated:true,profile}:{authenticated:false,profile:null}});
+    return {...category,priceScope:resolution.priceScope,priceMinor:resolution.priceMinor,priceSource:resolution.source,priceDescription,registrationBlockedCode:blockedCode,viewerAlreadyRegistered:alreadyRegistered};
+  }));
+  return json({ok:true,tournament,registrationCloseAt:closeAt,pricingPolicy:settings,maxCategoriesPerPlayer:settings.maxCategoriesPerPlayer,activeCategoryCount:limit.activeCategoryCount,categories:publicCategories,viewer:currentUser?{authenticated:true,profile}:{authenticated:false,profile:null}});
 }
 
 async function createRegistration(tournamentId:string,categoryId:string,request:Request,env:Env,access:AccessHelpers){
@@ -183,6 +203,7 @@ async function createRegistration(tournamentId:string,categoryId:string,request:
   const profile=await profileForUser(env,user.id);if(!profile)return json({ok:false,code:"PROFILE_REQUIRED"},{status:409});
   const eligibility=evaluateRegistrationEligibility(category,profile,dateFromUnix(tournament.startAt));if(!eligibility.eligible)return json({ok:false,code:eligibility.code},{status:409});
   if(await userAlreadyInCategory(env,user.id,category.id))return json({ok:false,code:"ALREADY_REGISTERED_IN_CATEGORY"},{status:409});
+  const limit=await categoryLimitCode(env,tournament.id,user.id);if(limit.reached)return json({ok:false,code:"MAX_CATEGORIES_REACHED",maxCategoriesPerPlayer:limit.settings.maxCategoriesPerPlayer,activeCategoryCount:limit.activeCategoryCount},{status:409});
   const existing=await env.HUAU_DB.prepare(`SELECT id FROM tournament_registrations WHERE user_id=? AND category_id=? AND status NOT IN ('cancelled','rejected')`).bind(user.id,category.id).first();if(existing)return json({ok:false,code:"ALREADY_REGISTERED_IN_CATEGORY"},{status:409});
   type RegistrationCreateBody={partnerEmail?:string;teamName?:string;memberEmails?:Array<string|{email:string;role?:"player"|"substitute"}>};const body:RegistrationCreateBody=await readJson<RegistrationCreateBody>(request).catch(()=>({}));
   const capacity=await acquireCategoryDecision(env,category);if(capacity.decision==="closed")return json({ok:false,code:"CATEGORY_REGISTRATION_CLOSED"},{status:409});
@@ -222,6 +243,7 @@ async function respondInvitation(invitationId:string,request:Request,env:Env,acc
   const tournament=await tournamentById(env,String(invitation.tournament_id));const category=await categoryById(env,String(invitation.category_id));const profile=await profileForUser(env,user.id);if(!tournament||!category||!profile)return json({ok:false,code:"PROFILE_REQUIRED"},{status:409});
   if(tournament.structureLocked||category.structureLocked)return json({ok:false,code:"COMPETITION_STRUCTURE_LOCKED"},{status:409});
   const eligibility=evaluateRegistrationEligibility(category,profile,dateFromUnix(tournament.startAt));if(!eligibility.eligible)return json({ok:false,code:eligibility.code},{status:409});const entryId=String(invitation.entry_id);if(await userAlreadyInCategory(env,user.id,category.id,entryId))return json({ok:false,code:"ALREADY_REGISTERED_IN_CATEGORY"},{status:409});
+  const limit=await categoryLimitCode(env,tournament.id,user.id);if(limit.reached)return json({ok:false,code:"MAX_CATEGORIES_REACHED",maxCategoriesPerPlayer:limit.settings.maxCategoriesPerPlayer,activeCategoryCount:limit.activeCategoryCount},{status:409});
   const personId=await ensureOrganizationPerson(env,tournament,user,profile);const playerProfileId=await ensureTournamentPlayerProfile(env,tournament,personId,profile,user);const existingMember=await env.HUAU_DB.prepare(`SELECT id FROM entry_members WHERE entry_id=? AND organization_person_id=?`).bind(entryId,personId).first<{id:string}>();
   if(existingMember)await env.HUAU_DB.prepare(`UPDATE entry_members SET member_role=?,status='accepted',invited_user_id=?,accepted_at=?,updated_at=? WHERE id=?`).bind(String(invitation.member_role),user.id,stamp,stamp,existingMember.id).run();else await env.HUAU_DB.prepare(`INSERT INTO entry_members (id,entry_id,organization_person_id,member_role,roster_slot,status,invited_user_id,accepted_at,created_at,updated_at) VALUES (?,?,?,?,NULL,'accepted',?,?,?,?)`).bind(uuid(),entryId,personId,String(invitation.member_role),user.id,stamp,stamp,stamp).run();
   await env.HUAU_DB.prepare(`UPDATE entry_invitations SET status='accepted',invitee_user_id=?,responded_at=?,updated_at=? WHERE id=?`).bind(user.id,stamp,stamp,invitationId).run();
@@ -229,13 +251,95 @@ async function respondInvitation(invitationId:string,request:Request,env:Env,acc
   await recalcRegistration(env,String(invitation.registration_id));return json({ok:true,status:"accepted"});
 }
 
-async function myRegistrations(request:Request,env:Env,access:AccessHelpers){const user=await access.requireUser(request,env);if(!user)return json({ok:false,code:"UNAUTHENTICATED"},{status:401});const registrations=await env.HUAU_DB.prepare(`SELECT tr.id,tr.registration_number as registrationNumber,tr.status,tr.participant_count as participantCount,tr.final_amount_minor as finalAmountMinor,tr.currency,tr.waitlist_position as waitlistPosition,t.id as tournamentId,t.name as tournamentName,t.slug,tc.id as categoryId,tc.name as categoryName,tc.entry_type as entryType,e.display_name as entryName FROM tournament_registrations tr JOIN tournaments t ON t.id=tr.tournament_id JOIN tournament_categories tc ON tc.id=tr.category_id LEFT JOIN tournament_entries e ON e.id=tr.entry_id WHERE tr.user_id=? ORDER BY tr.created_at DESC`).bind(user.id).all();const invitations=await env.HUAU_DB.prepare(`SELECT i.id,i.status,i.member_role as memberRole,i.invitee_email as inviteeEmail,i.expires_at as expiresAt,t.name as tournamentName,t.slug,tc.name as categoryName,tc.entry_type as entryType,tc.competition_gender as competitionGender,tc.min_age as minAge,tc.max_age as maxAge,e.display_name as entryName,u.name as inviterName FROM entry_invitations i JOIN tournaments t ON t.id=i.tournament_id JOIN tournament_categories tc ON tc.id=i.category_id JOIN tournament_entries e ON e.id=i.entry_id JOIN user u ON u.id=i.inviter_user_id WHERE lower(i.invitee_email)=lower(?) AND i.status='pending' ORDER BY i.created_at DESC`).bind(user.email).all();const profile=await profileForUser(env,user.id);return json({ok:true,profile:profile??null,registrations:registrations.results,invitations:invitations.results});}
+type RegistrationViewerRow={
+  id:string;registrationNumber:number;status:string;participantCount:number;finalAmountMinor:number;currency:string|null;waitlistPosition:number|null;
+  tournamentId:string;tournamentName:string;slug:string;categoryId:string;categoryName:string;entryType:"individual"|"pair"|"team";entryName:string|null;entryId:string|null;
+  isOwner:number;viewerRole:string|null;
+};
+
+type RegistrationMemberView={personId:string;name:string;email:string|null;memberRole:string;status:string;userId:string|null};
+type RegistrationInvitationView={id:string;inviteeEmail:string;memberRole:string;status:string;expiresAt:number;inviteeUserId:string|null};
+
+async function registrationRosterMeta(env:Env,category:CategoryRow){
+  if(category.entryType!=="team")return {min:null as number|null,max:null as number|null};
+  const formatRow=await env.HUAU_DB.prepare(`SELECT config_json as configJson FROM competition_format_versions WHERE category_id=? AND format_kind='team' ORDER BY version_number DESC LIMIT 1`).bind(category.id).first<{configJson:string}>();
+  if(!formatRow)return {min:null,max:null};
+  try{const format=parseTeamFormat(JSON.parse(formatRow.configJson) as unknown);return {min:format.roster.min,max:format.roster.max};}catch{return {min:null,max:null};}
+}
+
+async function registrationDetails(env:Env,row:RegistrationViewerRow){
+  if(!row.entryId)return {...row,members:[],entryInvitations:[],canManageInvitations:false,rosterMin:null,rosterMax:null};
+  const [membersResult,invitationsResult,category]=await Promise.all([
+    env.HUAU_DB.prepare(`SELECT op.id as personId,TRIM(op.first_name||' '||op.last_name) as name,op.email,em.member_role as memberRole,em.status,op.user_id as userId FROM entry_members em JOIN organization_people op ON op.id=em.organization_person_id WHERE em.entry_id=? AND em.status IN ('accepted','manual') ORDER BY em.created_at`).bind(row.entryId).all<RegistrationMemberView>(),
+    env.HUAU_DB.prepare(`SELECT id,invitee_email as inviteeEmail,member_role as memberRole,status,expires_at as expiresAt,invitee_user_id as inviteeUserId FROM entry_invitations WHERE registration_id=? AND status IN ('pending','accepted','declined') ORDER BY created_at`).bind(row.id).all<RegistrationInvitationView>(),
+    categoryById(env,row.categoryId),
+  ]);
+  const roster=category?await registrationRosterMeta(env,category):{min:null,max:null};
+  const canManageInvitations=row.entryType==="pair"?Boolean(row.viewerRole||row.isOwner):row.entryType==="team"?Boolean(row.isOwner||row.viewerRole==="captain"):false;
+  return {...row,members:membersResult.results,entryInvitations:invitationsResult.results,canManageInvitations,rosterMin:roster.min,rosterMax:roster.max};
+}
+
+async function myRegistrations(request:Request,env:Env,access:AccessHelpers){
+  const user=await access.requireUser(request,env);if(!user)return json({ok:false,code:"UNAUTHENTICATED"},{status:401});
+  const registrations=await env.HUAU_DB.prepare(`SELECT tr.id,tr.registration_number as registrationNumber,tr.status,tr.participant_count as participantCount,tr.final_amount_minor as finalAmountMinor,tr.currency,tr.waitlist_position as waitlistPosition,t.id as tournamentId,t.name as tournamentName,t.slug,tc.id as categoryId,tc.name as categoryName,tc.entry_type as entryType,e.display_name as entryName,tr.entry_id as entryId,CASE WHEN tr.user_id=? THEN 1 ELSE 0 END as isOwner,(SELECT em.member_role FROM entry_members em JOIN organization_people op ON op.id=em.organization_person_id WHERE em.entry_id=tr.entry_id AND op.user_id=? AND em.status IN ('accepted','manual') LIMIT 1) as viewerRole FROM tournament_registrations tr JOIN tournaments t ON t.id=tr.tournament_id JOIN tournament_categories tc ON tc.id=tr.category_id LEFT JOIN tournament_entries e ON e.id=tr.entry_id WHERE tr.user_id=? OR EXISTS(SELECT 1 FROM entry_members em2 JOIN organization_people op2 ON op2.id=em2.organization_person_id WHERE em2.entry_id=tr.entry_id AND op2.user_id=? AND em2.status IN ('accepted','manual')) ORDER BY tr.created_at DESC`).bind(user.id,user.id,user.id,user.id).all<RegistrationViewerRow>();
+  const detailed=await Promise.all(registrations.results.map(row=>registrationDetails(env,row)));
+  const invitations=await env.HUAU_DB.prepare(`SELECT i.id,i.status,i.member_role as memberRole,i.invitee_email as inviteeEmail,i.expires_at as expiresAt,t.name as tournamentName,t.slug,tc.name as categoryName,tc.entry_type as entryType,tc.competition_gender as competitionGender,tc.min_age as minAge,tc.max_age as maxAge,e.display_name as entryName,u.name as inviterName FROM entry_invitations i JOIN tournaments t ON t.id=i.tournament_id JOIN tournament_categories tc ON tc.id=i.category_id JOIN tournament_entries e ON e.id=i.entry_id JOIN user u ON u.id=i.inviter_user_id WHERE lower(i.invitee_email)=lower(?) AND i.status='pending' ORDER BY i.created_at DESC`).bind(user.email).all();
+  const profile=await profileForUser(env,user.id);return json({ok:true,profile:profile??null,registrations:detailed,invitations:invitations.results});
+}
+
+async function registrationManageAccess(registrationId:string,request:Request,env:Env,access:AccessHelpers,allowAdmin=false){
+  const user=await access.requireUser(request,env);if(!user)return {response:json({ok:false,code:"UNAUTHENTICATED"},{status:401})};
+  const row=await env.HUAU_DB.prepare(`SELECT tr.id,tr.tournament_id as tournamentId,tr.category_id as categoryId,tr.entry_id as entryId,tr.user_id as ownerUserId,tr.status,tc.entry_type as entryType FROM tournament_registrations tr JOIN tournament_categories tc ON tc.id=tr.category_id WHERE tr.id=?`).bind(registrationId).first<{id:string;tournamentId:string;categoryId:string;entryId:string|null;ownerUserId:string;status:string;entryType:"individual"|"pair"|"team"}>();
+  if(!row||!row.entryId)return {response:json({ok:false,code:"REGISTRATION_NOT_FOUND"},{status:404})};
+  const tournament=await tournamentById(env,row.tournamentId);const category=await categoryById(env,row.categoryId);if(!tournament||!category)return {response:json({ok:false,code:"REGISTRATION_NOT_FOUND"},{status:404})};
+  let viewerRole:string|null=null;
+  const member=await env.HUAU_DB.prepare(`SELECT em.member_role as memberRole FROM entry_members em JOIN organization_people op ON op.id=em.organization_person_id WHERE em.entry_id=? AND op.user_id=? AND em.status IN ('accepted','manual') LIMIT 1`).bind(row.entryId,user.id).first<{memberRole:string}>();viewerRole=member?.memberRole??null;
+  const admin=allowAdmin?await access.isOrgAdmin(user.id,tournament.organizerOrganizationId,env,request):false;
+  const canManage=admin||row.ownerUserId===user.id||(row.entryType==="pair"&&Boolean(viewerRole))||(row.entryType==="team"&&viewerRole==="captain");
+  if(!canManage)return {response:json({ok:false,code:"FORBIDDEN"},{status:403})};
+  return {user,row,tournament,category,admin,viewerRole};
+}
+
+async function createOrReplaceInvitation(registrationId:string,request:Request,env:Env,access:AccessHelpers,allowAdmin=false){
+  const allowed=await registrationManageAccess(registrationId,request,env,access,allowAdmin);if("response" in allowed)return allowed.response;
+  const {row,tournament,category,user}=allowed;if(row.entryType==="individual")return json({ok:false,code:"INVITATIONS_NOT_SUPPORTED"},{status:409});
+  if(tournament.structureLocked||category.structureLocked)return json({ok:false,code:"COMPETITION_STRUCTURE_LOCKED"},{status:409});
+  type InvitationBody={email?:string;role?:"player"|"substitute"};
+  const body:InvitationBody=await readJson<InvitationBody>(request).catch(()=>({}));const email=normalizeEmail(body.email??"");if(!email)return json({ok:false,code:"INVITEE_EMAIL_REQUIRED"},{status:400});
+  const accepted=await env.HUAU_DB.prepare(`SELECT COUNT(*) as count FROM entry_members WHERE entry_id=? AND status IN ('accepted','manual')`).bind(row.entryId).first<{count:number}>();
+  if(row.entryType==="pair"&&Number(accepted?.count??0)>=2)return json({ok:false,code:"PAIR_ALREADY_COMPLETE"},{status:409});
+  if(row.entryType==="team"){
+    const meta=await registrationRosterMeta(env,category);const pending=await env.HUAU_DB.prepare(`SELECT COUNT(*) as count FROM entry_invitations WHERE registration_id=? AND status='pending'`).bind(registrationId).first<{count:number}>();
+    if(meta.max!==null&&Number(accepted?.count??0)+Number(pending?.count??0)>=meta.max)return json({ok:false,code:"TEAM_ROSTER_FULL"},{status:409});
+  }
+  const existingUser=await env.HUAU_DB.prepare(`SELECT id FROM user WHERE lower(email)=?`).bind(email).first<{id:string}>();
+  if(existingUser){
+    const alreadyMember=await env.HUAU_DB.prepare(`SELECT 1 as found FROM entry_members em JOIN organization_people op ON op.id=em.organization_person_id WHERE em.entry_id=? AND op.user_id=? AND em.status IN ('accepted','manual') LIMIT 1`).bind(row.entryId,existingUser.id).first<{found:number}>();
+    if(alreadyMember)return json({ok:false,code:"INVITEE_ALREADY_IN_ENTRY"},{status:409});
+    if(await userAlreadyInCategory(env,existingUser.id,category.id,row.entryId??undefined))return json({ok:false,code:"INVITEE_ALREADY_REGISTERED_IN_CATEGORY"},{status:409});
+  }
+  if(row.entryType==="pair")await env.HUAU_DB.prepare(`UPDATE entry_invitations SET status='cancelled',updated_at=? WHERE registration_id=? AND status='pending'`).bind(now(),registrationId).run();
+  else await env.HUAU_DB.prepare(`UPDATE entry_invitations SET status='cancelled',updated_at=? WHERE registration_id=? AND lower(invitee_email)=lower(?) AND status='pending'`).bind(now(),registrationId,email).run();
+  try{await inviteEmail(env,{registrationId,entryId:row.entryId!,tournamentId:row.tournamentId,categoryId:row.categoryId,inviter:user,email,role:body.role??"player"});}catch(error){return json({ok:false,code:error instanceof Error?error.message:"INVITATION_FAILED"},{status:409});}
+  await recalcRegistration(env,registrationId);return json({ok:true});
+}
+
+async function cancelManagedInvitation(registrationId:string,invitationId:string,request:Request,env:Env,access:AccessHelpers,allowAdmin=false){
+  const allowed=await registrationManageAccess(registrationId,request,env,access,allowAdmin);if("response" in allowed)return allowed.response;
+  const invitation=await env.HUAU_DB.prepare(`SELECT id,status FROM entry_invitations WHERE id=? AND registration_id=?`).bind(invitationId,registrationId).first<{id:string;status:string}>();if(!invitation)return json({ok:false,code:"INVITATION_NOT_FOUND"},{status:404});if(invitation.status!=="pending")return json({ok:false,code:"INVITATION_ALREADY_RESOLVED"},{status:409});
+  await env.HUAU_DB.prepare(`UPDATE entry_invitations SET status='cancelled',updated_at=? WHERE id=?`).bind(now(),invitationId).run();await recalcRegistration(env,registrationId);return json({ok:true});
+}
 
 async function cancelRegistration(registrationId:string,request:Request,env:Env,access:AccessHelpers){const user=await access.requireUser(request,env);if(!user)return json({ok:false,code:"UNAUTHENTICATED"},{status:401});const row=await env.HUAU_DB.prepare(`SELECT user_id as userId,status FROM tournament_registrations WHERE id=?`).bind(registrationId).first<{userId:string;status:string}>();if(!row)return json({ok:false,code:"REGISTRATION_NOT_FOUND"},{status:404});if(row.userId!==user.id)return json({ok:false,code:"FORBIDDEN"},{status:403});if(row.status==="cancelled")return json({ok:true});await cancelRegistrationInternal(env,registrationId);return json({ok:true});}
 
 async function adminAccess(tournamentId:string,request:Request,env:Env,access:AccessHelpers){const user=await access.requireUser(request,env);if(!user)return {response:json({ok:false,code:"UNAUTHENTICATED"},{status:401})};const tournament=await tournamentById(env,tournamentId);if(!tournament)return {response:json({ok:false,code:"TOURNAMENT_NOT_FOUND"},{status:404})};if(!await access.isOrgAdmin(user.id,tournament.organizerOrganizationId,env,request))return {response:json({ok:false,code:"FORBIDDEN"},{status:403})};return {user,tournament};}
 
-async function adminRegistrations(tournamentId:string,request:Request,env:Env,access:AccessHelpers){const allowed=await adminAccess(tournamentId,request,env,access);if("response" in allowed)return allowed.response;const rows=await env.HUAU_DB.prepare(`SELECT tr.id,tr.registration_number as registrationNumber,tr.status,tr.participant_count as participantCount,tr.price_scope as priceScope,tr.base_amount_minor as baseAmountMinor,tr.discount_minor as discountMinor,tr.final_amount_minor as finalAmountMinor,tr.currency,tr.waitlist_position as waitlistPosition,tr.created_at as createdAt,tc.id as categoryId,tc.name as categoryName,tc.entry_type as entryType,e.display_name as entryName,u.name as userName,u.email as userEmail FROM tournament_registrations tr JOIN tournament_categories tc ON tc.id=tr.category_id JOIN user u ON u.id=tr.user_id LEFT JOIN tournament_entries e ON e.id=tr.entry_id WHERE tr.tournament_id=? ORDER BY tc.sort_order,tr.created_at`).bind(tournamentId).all();return json({ok:true,registrations:rows.results,publicUrl:`/tournaments/${allowed.tournament.slug}`});}
+async function adminRegistrations(tournamentId:string,request:Request,env:Env,access:AccessHelpers){
+  const allowed=await adminAccess(tournamentId,request,env,access);if("response" in allowed)return allowed.response;
+  const rows=await env.HUAU_DB.prepare(`SELECT tr.id,tr.registration_number as registrationNumber,tr.status,tr.participant_count as participantCount,tr.price_scope as priceScope,tr.base_amount_minor as baseAmountMinor,tr.discount_minor as discountMinor,tr.final_amount_minor as finalAmountMinor,tr.currency,tr.waitlist_position as waitlistPosition,tr.created_at as createdAt,tc.id as categoryId,tc.name as categoryName,tc.entry_type as entryType,e.display_name as entryName,tr.entry_id as entryId,u.name as userName,u.email as userEmail FROM tournament_registrations tr JOIN tournament_categories tc ON tc.id=tr.category_id JOIN user u ON u.id=tr.user_id LEFT JOIN tournament_entries e ON e.id=tr.entry_id WHERE tr.tournament_id=? ORDER BY tc.sort_order,tr.created_at`).bind(tournamentId).all<RegistrationViewerRow&{priceScope:string;baseAmountMinor:number;discountMinor:number;createdAt:number;userName:string;userEmail:string}>();
+  const detailed=await Promise.all(rows.results.map(row=>registrationDetails(env,{...row,tournamentId, tournamentName:allowed.tournament.name,slug:allowed.tournament.slug,isOwner:1,viewerRole:null})));
+  return json({ok:true,registrations:detailed,publicUrl:`/tournaments/${allowed.tournament.slug}`});
+}
 
 async function adminPromote(registrationId:string,request:Request,env:Env,access:AccessHelpers){const row=await env.HUAU_DB.prepare(`SELECT tr.tournament_id as tournamentId,tr.category_id as categoryId,tr.entry_id as entryId,tr.status FROM tournament_registrations tr WHERE tr.id=?`).bind(registrationId).first<{tournamentId:string;categoryId:string;entryId:string|null;status:string}>();if(!row)return json({ok:false,code:"REGISTRATION_NOT_FOUND"},{status:404});const allowed=await adminAccess(row.tournamentId,request,env,access);if("response" in allowed)return allowed.response;if(row.status!=="waitlisted")return json({ok:false,code:"REGISTRATION_NOT_WAITLISTED"},{status:409});const category=await categoryById(env,row.categoryId);if(!category)return json({ok:false,code:"CATEGORY_NOT_FOUND"},{status:404});const occupied=await categoryOccupied(env,row.categoryId);if(category.maxEntries!==null&&occupied>=category.maxEntries)return json({ok:false,code:"CATEGORY_STILL_FULL"},{status:409});const stamp=now();await env.HUAU_DB.batch([env.HUAU_DB.prepare(`UPDATE tournament_registrations SET status='inviting',waitlist_position=NULL,updated_at=?,version=version+1 WHERE id=?`).bind(stamp,registrationId),...(row.entryId?[env.HUAU_DB.prepare(`UPDATE tournament_entries SET status='inviting',waitlist_position=NULL,updated_at=?,version=version+1 WHERE id=?`).bind(stamp,row.entryId)]:[])]);await compactWaitlist(env,row.categoryId);await recalcRegistration(env,registrationId);return json({ok:true});}
 
@@ -247,8 +351,12 @@ export async function handleRegistrationApi(request:Request,env:Env,access:Acces
   const create=url.pathname.match(/^\/api\/tournaments\/([^/]+)\/categories\/([^/]+)\/register$/);if(create&&request.method==="POST")return createRegistration(decodeURIComponent(create[1]!),decodeURIComponent(create[2]!),request,env,access);
   if(url.pathname==="/api/me/tournament-registrations"&&request.method==="GET")return myRegistrations(request,env,access);
   const invite=url.pathname.match(/^\/api\/entry-invitations\/([^/]+)\/respond$/);if(invite&&request.method==="POST")return respondInvitation(decodeURIComponent(invite[1]!),request,env,access);
+  const manageInvite=url.pathname.match(/^\/api\/tournament-registrations\/([^/]+)\/invitations$/);if(manageInvite&&request.method==="POST")return createOrReplaceInvitation(decodeURIComponent(manageInvite[1]!),request,env,access);
+  const removeInvite=url.pathname.match(/^\/api\/tournament-registrations\/([^/]+)\/invitations\/([^/]+)$/);if(removeInvite&&request.method==="DELETE")return cancelManagedInvitation(decodeURIComponent(removeInvite[1]!),decodeURIComponent(removeInvite[2]!),request,env,access);
   const cancel=url.pathname.match(/^\/api\/tournament-registrations\/([^/]+)\/cancel$/);if(cancel&&request.method==="POST")return cancelRegistration(decodeURIComponent(cancel[1]!),request,env,access);
   const admin=url.pathname.match(/^\/api\/admin\/tournaments\/([^/]+)\/registrations$/);if(admin&&request.method==="GET")return adminRegistrations(decodeURIComponent(admin[1]!),request,env,access);
+  const adminInvite=url.pathname.match(/^\/api\/admin\/registrations\/([^/]+)\/invitations$/);if(adminInvite&&request.method==="POST")return createOrReplaceInvitation(decodeURIComponent(adminInvite[1]!),request,env,access,true);
+  const adminRemoveInvite=url.pathname.match(/^\/api\/admin\/registrations\/([^/]+)\/invitations\/([^/]+)$/);if(adminRemoveInvite&&request.method==="DELETE")return cancelManagedInvitation(decodeURIComponent(adminRemoveInvite[1]!),decodeURIComponent(adminRemoveInvite[2]!),request,env,access,true);
   const promote=url.pathname.match(/^\/api\/admin\/registrations\/([^/]+)\/promote$/);if(promote&&request.method==="POST")return adminPromote(decodeURIComponent(promote[1]!),request,env,access);
   const adjustment=url.pathname.match(/^\/api\/admin\/registrations\/([^/]+)\/adjustment$/);if(adjustment&&request.method==="POST")return adminAdjustment(decodeURIComponent(adjustment[1]!),request,env,access);
   return null;

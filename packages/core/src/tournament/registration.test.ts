@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ageOnDate, capacityDecision, compactWaitlistPositions, evaluateRegistrationEligibility, registrationPriceMinor, resolveRegistrationPricing } from "./registration";
+import { ageOnDate, capacityDecision, categoryLimitReached, compactWaitlistPositions, evaluateRegistrationEligibility, registrationPriceMinor, resolveRegistrationPricing } from "./registration";
 
 const base = {
   entryType: "individual" as const,
@@ -35,6 +35,13 @@ describe("Phase 6 registration acceptance", () => {
     const mixedPair = { ...base, entryType: "pair" as const, competitionGender: "mixed" as const };
     expect(evaluateRegistrationEligibility(female, { sportGender: "unspecified", birthDate: null }, "2026-11-15")).toMatchObject({ eligible: false, code: "SPORT_GENDER_REQUIRED" });
     expect(evaluateRegistrationEligibility(mixedPair, { sportGender: "unspecified", birthDate: null }, "2026-11-15")).toMatchObject({ eligible: false, code: "SPORT_GENDER_REQUIRED" });
+  });
+
+  it("enforces a tournament-wide max categories per player only after the limit is reached", () => {
+    expect(categoryLimitReached(null, 8)).toBe(false);
+    expect(categoryLimitReached(2, 1)).toBe(false);
+    expect(categoryLimitReached(2, 2)).toBe(true);
+    expect(categoryLimitReached(2, 3)).toBe(true);
   });
 
   it("REG-AT-005 sends overflow entries to waitlist and compacts positions", () => {

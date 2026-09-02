@@ -57,3 +57,17 @@ Included:
 Phase 7 — Payments / Mercado Pago + payments admin.
 
 Do not begin Phase 7 until Phase 6 is committed, preview-approved, staging-migrated and merged to `main`.
+
+## Phase 6 preview QA continuity — 2026-09-02
+
+Second QA hardening batch prepared after live preview testing:
+
+- persistent pair/team entry management in `Mis inscripciones`;
+- accepted invitees keep seeing the shared registration;
+- paid pair/team entries remain `awaiting_payment` until the payment phase confirms them;
+- organizer and player invitation management after initial entry creation;
+- tournament-wide `max_categories_per_player`;
+- Mi HUAU organization-card overflow fix;
+- migration `0006_phase6_registration_continuity.sql`.
+
+Next gate: local typecheck/lint/tests -> apply only `0006` to `huau-dev` -> Cloudflare `phase-6` preview -> focused QA. Staging remains untouched until preview acceptance.

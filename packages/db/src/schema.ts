@@ -723,6 +723,7 @@ export const tournamentSettings = sqliteTable("tournament_settings", {
   baseFeeMinor: integer("base_fee_minor"),
   extraCategoryFeeMinor: integer("extra_category_fee_minor"),
   registrationCloseAt: integer("registration_close_at"),
+  maxCategoriesPerPlayer: integer("max_categories_per_player"),
   minimumGroup: integer("minimum_group").notNull().default(3),
   preferredGroup: integer("preferred_group").notNull().default(4),
   maximumGroup: integer("maximum_group").notNull().default(4),
