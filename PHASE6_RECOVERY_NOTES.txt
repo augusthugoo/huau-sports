@@ -1,0 +1,12 @@
+HUAU Sports — Phase 6 Online Registration — FIXED v2
+
+This package supersedes the previous Phase 6 FIXED installer.
+It is safe to apply over:
+- a clean Phase 5C integration, or
+- the partially/mostly applied Phase 6 state produced by the earlier installer.
+
+v2 fixes the TournamentParityWorkspace registration-tab render anchor so the
+TournamentRegistrationAdmin component is actually rendered and ESLint does not
+report the import as unused.
+
+DO NOT run migration 0005 against D1 until typecheck, lint, and tests are green.

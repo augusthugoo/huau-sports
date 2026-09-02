@@ -11,6 +11,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { createAuth } from "./auth";
 import { handleTournamentAdminApi } from "./tournament-admin";
 import { handleTeamAdminApi } from "./team-admin";
+import { handleRegistrationApi } from "./registration";
 
 const json = (body: unknown, init: ResponseInit = {}) =>
   new Response(JSON.stringify(body), {
@@ -158,46 +159,16 @@ async function handleMe(request: Request, env: Env) {
 async function handleProfileUpdate(request: Request, env: Env) {
   const currentUser = await requireUser(request, env);
   if (!currentUser) return json({ ok: false, code: "UNAUTHENTICATED" }, { status: 401 });
-  const body = await readJson<{
-    firstName?: string;
-    lastName?: string;
-    phone?: string | null;
-    city?: string | null;
-    countryCode?: string | null;
-    preferredLocale?: string;
-  }>(request);
-  const firstName = body.firstName?.trim();
-  const lastName = body.lastName?.trim();
-  if (!firstName || !lastName) {
-    return json({ ok: false, code: "PROFILE_NAME_REQUIRED" }, { status: 400 });
-  }
+  const body = await readJson<{ firstName?: string; lastName?: string; phone?: string | null; birthDate?: string | null; sportGender?: string | null; city?: string | null; countryCode?: string | null; preferredLocale?: string }>(request);
+  const current = await env.HUAU_DB.prepare(`SELECT first_name as firstName,last_name as lastName,phone,birth_date as birthDate,sport_gender as sportGender,city,country_code as countryCode,preferred_locale as preferredLocale FROM user_profiles WHERE user_id=?`).bind(currentUser.id).first<{firstName:string;lastName:string;phone:string|null;birthDate:string|null;sportGender:string|null;city:string|null;countryCode:string|null;preferredLocale:string}>();
+  const firstName = body.firstName?.trim() || current?.firstName || currentUser.name.split(" ")[0] || "Player";
+  const lastName = body.lastName?.trim() ?? current?.lastName ?? currentUser.name.split(" ").slice(1).join(" ");
+  const sportGender = body.sportGender === undefined ? current?.sportGender ?? null : body.sportGender === "male" || body.sportGender === "female" ? body.sportGender : null;
+  const birthDate = body.birthDate === undefined ? current?.birthDate ?? null : body.birthDate || null;
+  if (birthDate && !/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) return json({ ok:false, code:"INVALID_BIRTH_DATE" }, { status:400 });
   const stamp = now();
   const db = createDb(env.HUAU_DB);
-  await db
-    .insert(userProfiles)
-    .values({
-      userId: currentUser.id,
-      firstName,
-      lastName,
-      phone: body.phone ?? null,
-      city: body.city ?? null,
-      countryCode: body.countryCode ?? null,
-      preferredLocale: body.preferredLocale ?? "es-UY",
-      createdAt: stamp,
-      updatedAt: stamp,
-    })
-    .onConflictDoUpdate({
-      target: userProfiles.userId,
-      set: {
-        firstName,
-        lastName,
-        phone: body.phone ?? null,
-        city: body.city ?? null,
-        countryCode: body.countryCode ?? null,
-        preferredLocale: body.preferredLocale ?? "es-UY",
-        updatedAt: stamp,
-      },
-    });
+  await db.insert(userProfiles).values({ userId:currentUser.id, firstName, lastName, phone:body.phone===undefined?current?.phone??null:body.phone, birthDate, sportGender, city:body.city===undefined?current?.city??null:body.city, countryCode:body.countryCode===undefined?current?.countryCode??null:body.countryCode, preferredLocale:body.preferredLocale??current?.preferredLocale??"es-UY", createdAt:stamp, updatedAt:stamp }).onConflictDoUpdate({ target:userProfiles.userId, set:{ firstName,lastName,phone:body.phone===undefined?current?.phone??null:body.phone,birthDate,sportGender,city:body.city===undefined?current?.city??null:body.city,countryCode:body.countryCode===undefined?current?.countryCode??null:body.countryCode,preferredLocale:body.preferredLocale??current?.preferredLocale??"es-UY",updatedAt:stamp } });
   return json({ ok: true });
 }
 
@@ -492,6 +463,9 @@ export default {
     if (url.pathname === "/api/platform/organizations" && request.method === "POST") {
       return handlePlatformCreateOrganization(request, env);
     }
+
+    const registrationResponse = await handleRegistrationApi(request, env, { requireUser, isOrgAdmin });
+    if (registrationResponse) return registrationResponse;
 
     const teamAdminResponse = await handleTeamAdminApi(request, env, url, {
       requireUser,

@@ -1,6 +1,6 @@
 {
   "name": "@huau/web",
-  "version": "0.6.2-phase5c-team-integration",
+  "version": "0.7.0-phase6-online-registration",
   "private": true,
   "type": "module",
   "scripts": {
