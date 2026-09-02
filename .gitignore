@@ -13,3 +13,4 @@ test-results/
 *.log
 __pycache__/
 *.py[cod]
+backups/
