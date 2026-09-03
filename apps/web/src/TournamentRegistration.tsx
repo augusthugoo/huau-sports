@@ -224,6 +224,7 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
   const [notice, setNotice] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [teamSelections, setTeamSelections] = useState<Record<string, TeamSelection>>({});
+  const [explanationCategoryId, setExplanationCategoryId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -234,6 +235,19 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
     }
   }, [slug]);
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (!explanationCategoryId) return;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setExplanationCategoryId(null);
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [explanationCategoryId]);
 
   const login = () => {
     sessionStorage.setItem("huau.afterAuth", `/tournaments/${slug}`);
@@ -324,6 +338,10 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
   if (!data) return <main className="public-tournament-page"><button className="back-link" onClick={() => go("/")}>← HUAU</button>{error ? <div className="registration-alert">{error}</div> : <div className="empty-state">{tr(locale, "Cargando torneo…", "Loading tournament…")}</div>}</main>;
 
   const profileNeededSomewhere = data.viewer.authenticated && data.categories.some((category) => !category.registrationBlockedCode && categoryNeedsProfile(category, data.viewer.profile));
+  const explanationCategory = explanationCategoryId ? data.categories.find((category) => category.id === explanationCategoryId) ?? null : null;
+  const modalExplanation = explanationCategory
+    ? explanationForPersistedFormat(explanationCategory.formatKind, explanationCategory.formatConfig, locale)
+    : null;
 
   return (
     <main className="public-tournament-page">
@@ -350,7 +368,7 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
                 <div className="category-registration-meta"><span>{category.competitionGender ?? "open"}</span>{category.minAge !== null && <span>+{category.minAge}</span>}{category.maxAge !== null && <span>≤ {category.maxAge}</span>}<span>{category.maxEntries === null ? tr(locale, "Sin cupo máximo", "No capacity limit") : `${category.occupiedEntries}/${category.maxEntries}`}</span>{category.waitlistCount > 0 && <span>{category.waitlistCount} waitlist</span>}</div>
                 {category.entryType === "pair" && <p className="muted">{tr(locale, "Te inscribís vos primero. La pareja se arma después entre jugadores ya inscriptos y libres.", "Register yourself first. Pairing happens later between registered free players.")}</p>}
                 {category.entryType === "team" && <p className="muted">{tr(locale, "Podés quedar libre o crear un equipo y convertirte en capitán.", "Stay free or create a team and become captain.")}</p>}
-                {explanation && <details className="public-format-explanation"><summary>{tr(locale, "Cómo se juega", "How it works")}</summary><FormatExplanationPanel explanation={explanation} locale={locale} compact title={tr(locale, "Formato oficial", "Official format")}/></details>}
+                {explanation && <button type="button" className="public-format-explanation-trigger" onClick={() => setExplanationCategoryId(category.id)}><span>{tr(locale, "Cómo se juega", "How it works")}</span><span aria-hidden="true">↗</span></button>}
                 {category.registrationBlockedCode ? <><button className="ghost full" disabled>{blockedButtonCopy(locale, category.registrationBlockedCode)}</button><p className="muted">{codeCopy(locale, category.registrationBlockedCode)}</p></> : !data.viewer.authenticated ? <button className="ghost full" onClick={login}>{tr(locale, "Ingresar para inscribirme", "Sign in to register")}</button> : <button className={isSelected ? "ghost full" : full ? "ghost full" : "light full"} disabled={needsProfile} onClick={() => toggle(category)}>{needsProfile ? tr(locale, "Completá tu perfil", "Complete your profile") : isSelected ? tr(locale, "Quitar", "Remove") : full ? tr(locale, "Agregar · puede ir a waitlist", "Add · may waitlist") : tr(locale, "Agregar", "Add")}</button>}
               </article>
             );
@@ -370,6 +388,45 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
           {limitAfterSelection !== null && data.maxCategoriesPerPlayer !== null && <small>{tr(locale, `${limitAfterSelection}/${data.maxCategoriesPerPlayer} categorías`, `${limitAfterSelection}/${data.maxCategoriesPerPlayer} categories`)}</small>}
         </aside>
       </section>
+
+      {explanationCategory && modalExplanation && (
+        <div
+          className="public-format-modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setExplanationCategoryId(null);
+          }}
+        >
+          <section
+            className="public-format-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="public-format-modal-title"
+          >
+            <header className="public-format-modal-header">
+              <div>
+                <div className="eyebrow">{tr(locale, "FORMATO DE COMPETENCIA", "COMPETITION FORMAT")}</div>
+                <h2 id="public-format-modal-title">{explanationCategory.name}</h2>
+                <p>{tr(locale, "Así se juega esta categoría según la configuración oficial del torneo.", "This is how the category is played according to the tournament's official configuration.")}</p>
+              </div>
+              <button
+                type="button"
+                className="public-format-modal-close"
+                aria-label={tr(locale, "Cerrar explicación", "Close explanation")}
+                onClick={() => setExplanationCategoryId(null)}
+              >
+                ×
+              </button>
+            </header>
+            <div className="public-format-modal-scroll">
+              <FormatExplanationPanel
+                explanation={modalExplanation}
+                locale={locale}
+                title={tr(locale, "Formato oficial", "Official format")}
+              />
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }
