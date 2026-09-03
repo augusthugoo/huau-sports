@@ -1275,10 +1275,14 @@ type TeamScheduleMatchRow = {
   stage: string;
   legNumber: number;
   groupName: string | null;
-  entryAId: string;
-  sideA: string;
-  entryBId: string;
-  sideB: string;
+  entryAId: string | null;
+  sideA: string | null;
+  entryBId: string | null;
+  sideB: string | null;
+  sourceEncounterAId: string | null;
+  sourceEncounterBId: string | null;
+  sourceLoserAId: string | null;
+  sourceLoserBId: string | null;
 };
 
 async function buildTeamScheduleStatements(
@@ -1313,13 +1317,15 @@ async function buildTeamScheduleStatements(
     const rows = await env.HUAU_DB.prepare(
       `SELECT m.id as matchId,m.encounter_id as encounterId,m.rubber_key as rubberKey,m.rubber_order as rubberOrder,m.best_of as bestOf,
               m.status as matchStatus,ce.stage,ce.leg_number as legNumber,g.name as groupName,
-              ce.entry_a_id as entryAId,ea.display_name as sideA,ce.entry_b_id as entryBId,eb.display_name as sideB
+              ce.entry_a_id as entryAId,ea.display_name as sideA,ce.entry_b_id as entryBId,eb.display_name as sideB,
+              ce.source_encounter_a_id as sourceEncounterAId,ce.source_encounter_b_id as sourceEncounterBId,
+              ce.source_loser_a_id as sourceLoserAId,ce.source_loser_b_id as sourceLoserBId
          FROM matches m
          JOIN competition_encounters ce ON ce.id=m.encounter_id
          JOIN competitions c ON c.id=ce.competition_id
          LEFT JOIN competition_groups g ON g.id=ce.group_id
-         JOIN tournament_entries ea ON ea.id=ce.entry_a_id
-         JOIN tournament_entries eb ON eb.id=ce.entry_b_id
+         LEFT JOIN tournament_entries ea ON ea.id=ce.entry_a_id
+         LEFT JOIN tournament_entries eb ON eb.id=ce.entry_b_id
         WHERE c.category_id=?
         ORDER BY COALESCE(g.sort_order,999),ce.leg_number,ce.round_number,ce.created_at,m.rubber_order,m.id`,
     ).bind(category.id).all<TeamScheduleMatchRow>();
@@ -1338,6 +1344,7 @@ async function buildTeamScheduleStatements(
     const categoryStart = Math.max(dayStart, dayCursor.get(category.scheduledDate) ?? 0);
     const courtAvailable = Array.from({ length: Math.max(1, tournament.courtCount) }, () => categoryStart);
     const nextEncounterAtByTeam = new Map<string, number>();
+    const encounterEndById = new Map<string, number>();
 
     for (const encounterId of encounterOrder) {
       const matchRows = encounters.get(encounterId) ?? [];
@@ -1346,10 +1353,13 @@ async function buildTeamScheduleStatements(
       let selectedCourt = 0;
       let selectedStart = Number.POSITIVE_INFINITY;
       for (let courtIndex = 0; courtIndex < courtAvailable.length; courtIndex += 1) {
+        const sourceIds = [first.sourceEncounterAId, first.sourceEncounterBId, first.sourceLoserAId, first.sourceLoserBId].filter((value): value is string => Boolean(value));
+        const dependencyReady = sourceIds.reduce((latest, sourceId) => Math.max(latest, (encounterEndById.get(sourceId) ?? categoryStart) + restSeconds), categoryStart);
         const earliest = Math.max(
           courtAvailable[courtIndex] ?? categoryStart,
-          nextEncounterAtByTeam.get(first.entryAId) ?? categoryStart,
-          nextEncounterAtByTeam.get(first.entryBId) ?? categoryStart,
+          dependencyReady,
+          first.entryAId ? nextEncounterAtByTeam.get(first.entryAId) ?? categoryStart : categoryStart,
+          first.entryBId ? nextEncounterAtByTeam.get(first.entryBId) ?? categoryStart : categoryStart,
         );
         if (earliest < selectedStart) {
           selectedStart = earliest;
@@ -1375,8 +1385,9 @@ async function buildTeamScheduleStatements(
         cursor = end;
       }
       courtAvailable[selectedCourt] = cursor;
-      nextEncounterAtByTeam.set(first.entryAId, cursor + restSeconds);
-      nextEncounterAtByTeam.set(first.entryBId, cursor + restSeconds);
+      encounterEndById.set(encounterId, cursor);
+      if (first.entryAId) nextEncounterAtByTeam.set(first.entryAId, cursor + restSeconds);
+      if (first.entryBId) nextEncounterAtByTeam.set(first.entryBId, cursor + restSeconds);
     }
     dayCursor.set(category.scheduledDate, Math.max(...courtAvailable, dayCursor.get(category.scheduledDate) ?? categoryStart));
   }

@@ -99,6 +99,9 @@ export function createMixedFiveRubberTeamFormat(mixedDoublesPlay: "always" | "if
     competition: {
       groupRounds: 1,
       playoffMode: "standard",
+      qualifiersPerGroup: 2,
+      wildcardQualifiers: 0,
+      bronzeMatch: false,
     },
     standings: {
       criteria: [...DEFAULT_TEAM_STANDINGS_CRITERIA],

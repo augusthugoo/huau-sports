@@ -45,7 +45,7 @@ function validateRubber(issues: TeamValidationIssue[], rubber: TeamRubberDefinit
 
 export function validateTeamFormat(format: TeamFormat): TeamValidationResult {
   const issues: TeamValidationIssue[] = [];
-  const { roster, encounter, standings } = format;
+  const { roster, encounter, competition, standings } = format;
 
   if (format.schemaVersion !== 1) {
     pushIssue(issues, "TEAM_FORMAT_SCHEMA_UNSUPPORTED", "schemaVersion", "Only TeamFormat schema version 1 is supported.");
@@ -110,6 +110,15 @@ export function validateTeamFormat(format: TeamFormat): TeamValidationResult {
   }
   if (new Set(standings.criteria).size !== standings.criteria.length) {
     pushIssue(issues, "STANDINGS_CRITERIA_DUPLICATE", "standings.criteria", "Team standings criteria cannot repeat.");
+  }
+
+  const qualifiersPerGroup = competition.qualifiersPerGroup ?? 2;
+  const wildcardQualifiers = competition.wildcardQualifiers ?? 0;
+  if (!positiveInteger(qualifiersPerGroup)) {
+    pushIssue(issues, "TEAM_QUALIFIERS_INVALID", "competition.qualifiersPerGroup", "Team qualifiers per group must be a positive integer.");
+  }
+  if (!nonNegativeInteger(wildcardQualifiers)) {
+    pushIssue(issues, "TEAM_WILDCARDS_INVALID", "competition.wildcardQualifiers", "Team wildcard qualifiers must be a non-negative integer.");
   }
 
   return result(issues);
@@ -348,6 +357,18 @@ export function parseTeamFormat(value: unknown): TeamFormat {
         ["standard", "top2_final", "top3_step", "top4_semis", "league_only"] as const,
         "competition.playoffMode",
       ),
+      qualifiersPerGroup:
+        competition.qualifiersPerGroup === undefined
+          ? 2
+          : asNumber(competition.qualifiersPerGroup, "competition.qualifiersPerGroup"),
+      wildcardQualifiers:
+        competition.wildcardQualifiers === undefined
+          ? 0
+          : asNumber(competition.wildcardQualifiers, "competition.wildcardQualifiers"),
+      bronzeMatch:
+        competition.bronzeMatch === undefined
+          ? false
+          : asBoolean(competition.bronzeMatch, "competition.bronzeMatch"),
     },
     standings: {
       criteria: standings.criteria.map((criterion, index) =>

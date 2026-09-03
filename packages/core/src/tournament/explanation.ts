@@ -457,9 +457,36 @@ export function explainTeamFormat(format: TeamFormat, locale: ExplanationLocale)
       : tr(locale, "Cuando la serie queda matemáticamente definida, los rubbers restantes pueden omitirse.", "Once the encounter is mathematically clinched, remaining rubbers may be skipped."),
   ];
 
+  const qualifiersPerGroup = Math.max(1, Math.trunc(format.competition.qualifiersPerGroup ?? 2));
+  const wildcardQualifiers = Math.max(0, Math.trunc(format.competition.wildcardQualifiers ?? 0));
+  const playoffCopy = (() => {
+    switch (format.competition.playoffMode) {
+      case "standard": {
+        const wildcardEs = wildcardQualifiers ? ` más ${wildcardQualifiers} wildcard${wildcardQualifiers === 1 ? "" : "s"}` : "";
+        const wildcardEn = wildcardQualifiers ? ` plus ${wildcardQualifiers} wildcard${wildcardQualifiers === 1 ? "" : "s"}` : "";
+        return tr(
+          locale,
+          `Clasifican ${qualifiersPerGroup} por grupo${wildcardEs} a un cuadro eliminatorio Team estándar.`,
+          `${qualifiersPerGroup} per group qualify${wildcardEn} for a standard Team knockout bracket.`,
+        );
+      }
+      case "top2_final":
+        return tr(locale, "En liga de grupo único, 1.º y 2.º disputan directamente la final.", "In a single-group league, 1st and 2nd advance directly to the final.");
+      case "top4_semis":
+        return tr(locale, "En grupo único, los cuatro primeros juegan semifinales: 1.º vs 4.º y 2.º vs 3.º.", "In a single group, the top four play semifinals: 1st vs 4th and 2nd vs 3rd.");
+      case "top3_step":
+        return tr(locale, "En grupo único, 2.º vs 3.º juegan una serie preliminar y el ganador enfrenta al 1.º en la final.", "In a single group, 2nd vs 3rd play a preliminary encounter and the winner faces 1st in the final.");
+      case "league_only":
+        return tr(locale, "La categoría se define por la tabla de un único grupo, sin fase eliminatoria.", "The category is decided by a single-group table with no knockout phase.");
+    }
+  })();
   const competitionItems = [
     format.competition.groupRounds === 2 ? tr(locale, "La fase de grupos se disputa a dos vueltas.", "The group stage is a double round robin.") : tr(locale, "La fase de grupos se disputa a una vuelta.", "The group stage is a single round robin."),
-    tr(locale, "La explicación oficial de Team describe únicamente reglas que el motor actual ejecuta; una fase posterior no se anuncia hasta estar generada por el motor.", "The official Team explanation describes only rules the current engine executes; a post-group phase is not announced until the engine can generate it."),
+    playoffCopy,
+    ...(format.competition.bronzeMatch && format.competition.playoffMode !== "league_only" && format.competition.playoffMode !== "top3_step"
+      ? [tr(locale, "La fase final incluye una serie por el tercer puesto.", "The final phase includes a third-place encounter.")]
+      : []),
+    tr(locale, "Cada cruce de fase final conserva la misma serie Team y sus rubbers configurados; el ganador avanza automáticamente al siguiente cruce.", "Every post-group matchup keeps the same configured Team encounter and rubbers; the winner automatically advances to the next matchup."),
   ];
 
   return {

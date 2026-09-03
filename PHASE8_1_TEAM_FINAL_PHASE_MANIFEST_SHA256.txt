@@ -1,0 +1,9 @@
+d9cfb3210d4db4b4f89bcc4464ce367bc74e943fdce07f72cb1c940ce9492a8f  ./PHASE8_1_TEAM_FINAL_PHASE_INSTALL.txt
+11e9d34f43b79c3a1b4753c77ad9dfb4abc780bbf0b3c89288d3acece7c3f824  ./docs/phase-8/PHASE_8_1_TEAM_FINAL_PHASE.md
+95b2c9a551224e6491904cf1049909880f1fcde087caed72e6df8a3e47b26736  ./packages/core/src/team/defaults.ts
+e612de10760d3e568b8cd1c1ca71ad0f02ca3e5d40a8d3096d058428211b6f9d  ./packages/core/src/team/index.ts
+22d2746409e41265eb6c70a88f1146913cf2b2cc7b96423135e7ead6c6fbca40  ./packages/core/src/team/playoffs.test.ts
+58b41f9801191aea669ed3ec30fa5d7c3f132b82f5d951b73243fbe39fce3dd4  ./packages/core/src/team/playoffs.ts
+fac864b41afbec1a09a066a9ed376b5824ae469230f1015dae4e5fe528b27131  ./packages/core/src/team/types.ts
+5a2ab045e284ac2e43e8f1de606c841ef43083bca7fa18acd053ca8430f5b176  ./packages/core/src/tournament/bracket-round-label.test.ts
+5916b174a7bd8a6b080c0737ee5a7d5a06fed298e2095d2a839c77724465146b  ./tools/apply_phase8_1.py

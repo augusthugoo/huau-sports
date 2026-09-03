@@ -70,6 +70,9 @@ type TeamLineup = {
 type TeamEncounter = {
   id: string;
   categoryId: string;
+  stage: "group" | "playoff" | "bronze" | "final";
+  roundLabel: string | null;
+  roundNumber: number | null;
   groupId: string | null;
   groupName: string | null;
   legNumber: number;
@@ -109,6 +112,7 @@ type TeamCategory = {
   scheduledDate: string | null;
   structureLocked: number;
   formatVersionId: string | null;
+  competitionStatus: string | null;
   entryCount: number;
   format: TeamFormat | null;
   entries: TeamEntry[];
@@ -444,6 +448,11 @@ function TeamFormatBuilder({
             <label><span>{tr(locale, "Vueltas de grupos", "Group rounds")}</span><select value={draft.competition.groupRounds} onChange={(event) => setDraft((current) => ({ ...current, competition: { ...current.competition, groupRounds: Number(event.target.value) as 1 | 2 } }))}><option value="1">1</option><option value="2">2</option></select></label>
             <label><span>Playoff</span><select value={draft.competition.playoffMode} onChange={(event) => setDraft((current) => ({ ...current, competition: { ...current.competition, playoffMode: event.target.value as TeamFormat["competition"]["playoffMode"] } }))}><option value="standard">Standard</option><option value="top2_final">Top 2 → Final</option><option value="top4_semis">Top 4 → Semis</option><option value="top3_step">Top 3 ladder</option><option value="league_only">League only</option></select></label>
           </div>
+          <div className="three">
+            <label><span>{tr(locale, "Clasificados/grupo", "Qualifiers/group")}</span><input type="number" min="1" disabled={draft.competition.playoffMode !== "standard"} value={draft.competition.qualifiersPerGroup ?? 2} onChange={(event) => setDraft((current) => ({ ...current, competition: { ...current.competition, qualifiersPerGroup: Math.max(1, Number(event.target.value) || 1) } }))} /></label>
+            <label><span>Wildcards</span><input type="number" min="0" disabled={draft.competition.playoffMode !== "standard"} value={draft.competition.wildcardQualifiers ?? 0} onChange={(event) => setDraft((current) => ({ ...current, competition: { ...current.competition, wildcardQualifiers: Math.max(0, Number(event.target.value) || 0) } }))} /></label>
+            <label className="check team-check"><input type="checkbox" disabled={draft.competition.playoffMode === "league_only" || draft.competition.playoffMode === "top3_step"} checked={Boolean(draft.competition.bronzeMatch)} onChange={(event) => setDraft((current) => ({ ...current, competition: { ...current.competition, bronzeMatch: event.target.checked } }))} /><span>{tr(locale, "Serie por bronce", "Third-place encounter")}</span></label>
+          </div>
           <label className="check team-check"><input type="checkbox" checked={draft.encounter.playRemainingAfterClinched} onChange={(event) => updateEncounter({ playRemainingAfterClinched: event.target.checked })} /><span>{tr(locale, "Jugar rubbers restantes aunque la serie ya esté definida", "Play remaining rubbers after the encounter is clinched")}</span></label>
         </section>
       </div>
@@ -613,11 +622,17 @@ function TeamStructure({
   busy: boolean;
   mutate: (fn: () => Promise<unknown>) => Promise<void>;
 }) {
-  const maxGroups = Math.max(1, Math.floor(category.entries.length / 2));
+  const maxGroups = category.format?.competition.playoffMode === "standard" ? Math.max(1, Math.floor(category.entries.length / 2)) : 1;
   const generate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     await mutate(() => impactApi(locale, `/api/admin/team-categories/${category.id}/generate`, "POST", { groupCount: Number(data.get("groupCount") || 1) }));
+  };
+  const groupEncounters = category.encounters.filter((encounter) => encounter.stage === "group");
+  const groupStageComplete = groupEncounters.length > 0 && groupEncounters.every((encounter) => encounter.status === "finished");
+  const finalPhaseExists = category.encounters.some((encounter) => encounter.stage !== "group") || category.competitionStatus === "completed";
+  const generateFinals = async () => {
+    await mutate(() => api(`/api/admin/team-categories/${category.id}/finals/generate`, { method: "POST", body: JSON.stringify({}) }));
   };
   const grouped = useMemo(() => {
     const map = new Map<string, { id: string; name: string; entries: string[] }>();
@@ -630,11 +645,12 @@ function TeamStructure({
   }, [category.groups]);
   return (
     <article className="panel team-structure">
-      <div className="panel-title"><div><div className="eyebrow">COMPETITION</div><h2>{tr(locale, "Grupos y series", "Groups & encounters")}</h2><p>{tr(locale, "La primera versión genera round-robin de grupos. El playoff Team se conecta en el siguiente bloque.", "This first version generates group round-robin. Team playoffs connect in the next block.")}</p></div><span>{category.encounters.length}</span></div>
+      <div className="panel-title"><div><div className="eyebrow">COMPETITION</div><h2>{tr(locale, "Grupos, series y fase final", "Groups, encounters & final phase")}</h2><p>{tr(locale, "Al terminar la última serie de grupos, HUAU genera la fase final configurada y propaga automáticamente cada ganador.", "When the last group encounter finishes, HUAU generates the configured final phase and automatically advances each winner.")}</p></div><span>{category.encounters.length}</span></div>
       <form className="inline-admin-form" onSubmit={generate}>
         <label><span>{tr(locale, "Cantidad de grupos", "Group count")}</span><input name="groupCount" type="number" min="1" max={maxGroups} defaultValue="1" /></label>
         <button className="light" disabled={busy || category.entries.length < 2}>{category.structureLocked ? tr(locale, "Regenerar estructura", "Regenerate structure") : tr(locale, "Generar estructura", "Generate structure")}</button>
       </form>
+      {groupStageComplete && !finalPhaseExists && <div className="form-actions"><button className="ghost small" type="button" disabled={busy} onClick={() => void generateFinals()}>{category.format?.competition.playoffMode === "league_only" ? tr(locale, "Cerrar liga por tabla", "Close league table") : tr(locale, "Generar fase final", "Generate final phase")}</button></div>}
       {grouped.length ? <div className="team-group-grid">{grouped.map((group) => <div className="team-group-card" key={group.id}><strong>{tr(locale, "Grupo", "Group")} {group.name}</strong>{group.entries.map((entry, index) => <span key={`${entry}-${index}`}>{index + 1}. {entry}</span>)}</div>)}</div> : null}
     </article>
   );
@@ -706,10 +722,13 @@ function TeamEncounterCard({
     .reduce((sum, match) => sum + (rubberByKey.get(match.rubberKey)?.weight ?? 1), 0);
   const lineupA = encounter.lineups.find((lineup) => lineup.entryId === entryA.id);
   const lineupB = encounter.lineups.find((lineup) => lineup.entryId === entryB.id);
+  const stageLabel = encounter.stage === "group"
+    ? `${tr(locale, "Grupo", "Group")} ${encounter.groupName ?? "—"} · V${encounter.legNumber}`
+    : encounter.roundLabel ?? tr(locale, "Fase final", "Final phase");
   return (
     <article className="team-encounter-card">
       <header>
-        <div><span>{tr(locale, "Grupo", "Group")} {encounter.groupName ?? "—"} · V{encounter.legNumber}</span><h3>{entryA.displayName} <em>{winsA} — {winsB}</em> {entryB.displayName}</h3></div>
+        <div><span>{stageLabel}</span><h3>{entryA.displayName} <em>{winsA} — {winsB}</em> {entryB.displayName}</h3></div>
         <span className={`pill team-status-${encounter.status}`}>{encounter.status}</span>
       </header>
       <details>
@@ -842,6 +861,20 @@ function useTeamSnapshot(tournamentId: string, pollMs = 0) {
 
 function encounterDisplayScore(category:TeamCategory,encounter:TeamEncounter){const weights=new Map<string,number>(category.format?.encounter.rubbers.map(rubber=>[rubber.key,rubber.weight] as const)??[]);return {a:encounter.matches.filter(match=>match.winnerSide==="A").reduce((sum,match)=>sum+(weights.get(match.rubberKey)??1),0),b:encounter.matches.filter(match=>match.winnerSide==="B").reduce((sum,match)=>sum+(weights.get(match.rubberKey)??1),0)};}
 
+function TeamFinalPhaseSummary({ category, locale }: { category: TeamCategory; locale: Locale }) {
+  const encounters = category.encounters.filter((encounter) => encounter.stage !== "group");
+  if (!encounters.length) {
+    if (category.competitionStatus === "completed" && category.format?.competition.playoffMode === "league_only") {
+      return <div className="team-competition-groups"><div className="team-competition-group"><h3>{tr(locale,"Fase final","Final phase")}</h3><div className="team-competition-series"><span>{tr(locale,"Liga completa","League complete")}</span><strong>{tr(locale,"Campeón por tabla","Table champion")}</strong><small>completed</small></div></div></div>;
+    }
+    return null;
+  }
+  return <div className="team-competition-groups"><div className="team-competition-group"><h3>{tr(locale,"Fase final","Final phase")}</h3>{encounters.map((encounter) => {
+    const score = encounterDisplayScore(category, encounter);
+    return <div className="team-competition-series" key={encounter.id}><span>{encounter.roundLabel ?? encounter.stage}</span><strong>{encounter.sideA || tr(locale,"Por definir","TBD")} {score.a} — {score.b} {encounter.sideB || tr(locale,"Por definir","TBD")}</strong><small>{encounter.status}</small></div>;
+  })}</div></div>;
+}
+
 export function TeamCompetitionPanel({ tournamentId, locale }: Props) {
   const { detail, error, loading } = useTeamSnapshot(tournamentId);
   if (loading) return <article className="panel"><p className="muted">{tr(locale, "Cargando competencia Team…", "Loading Team competition…")}</p></article>;
@@ -851,6 +884,7 @@ export function TeamCompetitionPanel({ tournamentId, locale }: Props) {
     {detail.categories.map((category) => <article className="panel" key={category.id}>
       <div className="panel-title"><div><div className="eyebrow">TEAM COMPETITION</div><h2>{category.name}</h2><p>{tr(locale,"Series y standings del Team Engine integrados a Competencia.","Team Engine encounters and standings integrated into Competition.")}</p></div><span>{category.encounters.length} {tr(locale,"series","encounters")}</span></div>
       <TeamStandings category={category} locale={locale}/>
+      <TeamFinalPhaseSummary category={category} locale={locale}/>
       {category.groups.length ? <div className="team-competition-groups">{[...new Map<string,{id:string;name:string}>(category.groups.map(row=>[row.id,{id:row.id,name:row.name}] as const)).values()].map(group=><div className="team-competition-group" key={group.id}><h3>{tr(locale,"Grupo","Group")} {group.name}</h3>{category.encounters.filter(encounter=>encounter.groupId===group.id).map(encounter=>{
         const score=encounterDisplayScore(category,encounter);
         return <div className="team-competition-series" key={encounter.id}><span>{encounter.sideA}</span><strong>{score.a} — {score.b}</strong><span>{encounter.sideB}</span><small>{encounter.status}</small></div>;
@@ -865,6 +899,7 @@ function teamResultItems(detail: TeamDetail): TeamResultItem[] {
   detail.categories.forEach(category => {
     const labelByKey = new Map<string,string>(category.format?.encounter.rubbers.map(rubber => [rubber.key, rubber.label] as const) ?? []);
     category.encounters.forEach(encounter => {
+      if (!encounter.entryAId || !encounter.entryBId || !encounter.sideA || !encounter.sideB) return;
       const lineupsLocked = encounter.lineups.filter(lineup => lineup.status === "locked").length >= 2;
       encounter.matches.forEach(match => items.push({ category, encounter, match, label: labelByKey.get(match.rubberKey) ?? match.rubberKey, lineupsLocked }));
     });
