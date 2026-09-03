@@ -1931,9 +1931,20 @@ export async function handleTournamentAdminApi(
       const affectedIds = [...new Set([...previousAssignments.map((row)=>row.categoryId),...teamCategoryIds])];
       const locked = await lockedCategoriesAmong(env,affectedIds);
       if ((locked.length || teamCategoryIds.length) && !body.confirmImpact) return json({ok:false,code:"STRUCTURE_CHANGE_CONFIRM_REQUIRED",impact:teamCategoryIds.length?"Eliminar este jugador también lo quita de los rosters Team donde esté asignado. Si hay estructuras generadas HUAU guardará snapshots y las invalidará primero.":"Eliminar este jugador invalida categorías ya sorteadas. HUAU guardará snapshots primero."},{status:409});
+      const financialHistory = await env.HUAU_DB.prepare(
+        `SELECT COUNT(*) as count FROM payment_orders po WHERE po.payer_profile_id=? AND (
+           po.status IN ('pending_review','paid','partially_refunded','refunded') OR EXISTS (
+             SELECT 1 FROM payment_attempts pa WHERE pa.order_id=po.id AND pa.status IN ('pending','submitted','approved','refunded')
+           )
+         )`,
+      ).bind(profileId).first<{count:number}>();
+      if (Number(financialHistory?.count ?? 0) > 0) return json({ok:false,code:"PLAYER_HAS_PAYMENT_HISTORY",message:"Este jugador ya tiene actividad financiera. Conservá su ficha para mantener la auditoría y gestioná el cobro/devolución desde Pagos."},{status:409});
       if (locked.length) await snapshotAndInvalidateCategories(env,accessResult.tournament,accessResult.user,locked,"Before deleting tournament player");
       if (teamCategoryIds.length) await removePersonFromTeamRosters(env,current.tournamentId,current.organizationPersonId);
-      await env.HUAU_DB.prepare(`DELETE FROM tournament_player_profiles WHERE id=?`).bind(profileId).run();
+      await env.HUAU_DB.batch([
+        env.HUAU_DB.prepare(`DELETE FROM payment_orders WHERE payer_profile_id=? AND status IN ('draft','awaiting_payment','cancelled')`).bind(profileId),
+        env.HUAU_DB.prepare(`DELETE FROM tournament_player_profiles WHERE id=?`).bind(profileId),
+      ]);
       await Promise.all(affectedIds.map((categoryId)=>syncDerivedEntriesForCategory(env,categoryId,accessResult.user.id)));
       await env.HUAU_DB.prepare(`UPDATE tournaments SET working_revision=working_revision+1,updated_at=? WHERE id=?`).bind(unixNow(),current.tournamentId).run();
       return json({ok:true});

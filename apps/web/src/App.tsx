@@ -5,6 +5,7 @@ import { detectLocale, t } from "./i18n";
 import type { Locale } from "./i18n";
 import { TournamentParityWorkspace } from "./TournamentParityWorkspace";
 import { MyTournamentRegistrations, PublicTournamentRegistration } from "./TournamentRegistration";
+import { MyTournamentPayments } from "./TournamentPayments";
 
 type Membership = {
   id: string;
@@ -137,7 +138,7 @@ export function App() {
     return <LoadingScreen />;
   }
 
-  if (path === "/app/registrations") return <Shell locale={locale} go={go} me={me}><MyTournamentRegistrations locale={locale} go={go} onProfileSaved={refreshMe} /></Shell>;
+  if (path === "/app/registrations") return <Shell locale={locale} go={go} me={me}><><MyTournamentPayments locale={locale}/><MyTournamentRegistrations locale={locale} go={go} onProfileSaved={refreshMe} /></></Shell>;
 
   const tournamentWorkspace = path.match(/^\/admin\/organizations\/([^/]+)\/tournaments\/([^/]+)$/);
   if (tournamentWorkspace) {

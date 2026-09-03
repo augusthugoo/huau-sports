@@ -12,6 +12,7 @@ import { createAuth } from "./auth";
 import { handleTournamentAdminApi } from "./tournament-admin";
 import { handleTeamAdminApi } from "./team-admin";
 import { handleRegistrationApi } from "./registration";
+import { handlePaymentApi } from "./payments";
 
 const json = (body: unknown, init: ResponseInit = {}) =>
   new Response(JSON.stringify(body), {
@@ -463,6 +464,9 @@ export default {
     if (url.pathname === "/api/platform/organizations" && request.method === "POST") {
       return handlePlatformCreateOrganization(request, env);
     }
+
+    const paymentResponse = await handlePaymentApi(request, env, { requireUser, isOrgAdmin });
+    if (paymentResponse) return paymentResponse;
 
     const registrationResponse = await handleRegistrationApi(request, env, { requireUser, isOrgAdmin });
     if (registrationResponse) return registrationResponse;

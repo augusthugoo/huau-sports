@@ -79,6 +79,8 @@ type RegistrationRow = {
   waitlistPosition: number | null;
   registrationNumber: number;
   coveredByRegistrationId: string | null;
+  paidAmountMinor: number;
+  refundedAmountMinor: number;
 };
 
 type TeamPaymentMode = "individual" | "team_full";
@@ -383,7 +385,8 @@ async function registrationById(env: Env, registrationId: string) {
   return env.HUAU_DB.prepare(
     `SELECT id,tournament_id as tournamentId,category_id as categoryId,entry_id as entryId,user_id as userId,status,participant_count as participantCount,
             price_scope as priceScope,base_amount_minor as baseAmountMinor,discount_minor as discountMinor,final_amount_minor as finalAmountMinor,
-            currency,waitlist_position as waitlistPosition,registration_number as registrationNumber,covered_by_registration_id as coveredByRegistrationId
+            currency,waitlist_position as waitlistPosition,registration_number as registrationNumber,covered_by_registration_id as coveredByRegistrationId,
+            paid_amount_minor as paidAmountMinor,refunded_amount_minor as refundedAmountMinor
        FROM tournament_registrations WHERE id=?`,
   ).bind(registrationId).first<RegistrationRow>();
 }
@@ -415,9 +418,10 @@ async function recalcPersonalRegistration(env: Env, registrationId: string) {
     scope = pricing.priceScope;
   }
   const final = Math.max(0, amount - reg.discountMinor);
+  const netPaid = Math.max(0, reg.paidAmountMinor - reg.refundedAmountMinor);
   const status = entryCaptain?.status === "waitlisted"
     ? "waitlisted"
-    : final > 0
+    : final > 0 && netPaid < final
       ? "awaiting_payment"
       : "confirmed";
   await env.HUAU_DB.prepare(
@@ -1167,8 +1171,30 @@ async function cancelRegistration(registrationId: string, request: Request, env:
   if (!reg) return json({ ok: false, code: "REGISTRATION_NOT_FOUND" }, { status: 404 });
   if (reg.userId !== user.id) return json({ ok: false, code: "FORBIDDEN" }, { status: 403 });
   if (reg.status === "cancelled") return json({ ok: true });
+  const netPaid = Math.max(0, reg.paidAmountMinor - reg.refundedAmountMinor);
+  if (netPaid > 0) {
+    const existing = await env.HUAU_DB.prepare(
+      `SELECT id FROM registration_cancellation_requests WHERE registration_id=? AND status='pending' LIMIT 1`,
+    ).bind(registrationId).first<{ id: string }>();
+    if (existing) return json({ ok: true, cancellationRequested: true, requestId: existing.id });
+    let body: { reason?: string } = {};
+    try { body = await readJson<{ reason?: string }>(request); } catch { body = {}; }
+    const requestId = uuid();
+    const stamp = now();
+    await env.HUAU_DB.prepare(
+      `INSERT INTO registration_cancellation_requests (id,registration_id,tournament_id,requested_by_user_id,status,reason,net_paid_minor,refund_amount_minor,admin_note,reviewed_by_user_id,reviewed_at,created_at,updated_at)
+       VALUES (?,?,?,?,'pending',?,?,0,NULL,NULL,NULL,?,?)`,
+    ).bind(requestId, registrationId, reg.tournamentId, user.id, body.reason?.trim() || null, netPaid, stamp, stamp).run();
+    return json({ ok: true, cancellationRequested: true, requestId });
+  }
   await cancelRegistrationInternal(env, registrationId, user.id);
-  return json({ ok: true });
+  return json({ ok: true, cancellationRequested: false });
+}
+
+export async function cancelRegistrationForPaymentAdmin(env: Env, registrationId: string) {
+  const reg = await registrationById(env, registrationId);
+  if (!reg) throw new Error("REGISTRATION_NOT_FOUND");
+  await cancelRegistrationInternal(env, registrationId, reg.userId, true);
 }
 
 type RegistrationViewerRow = {
@@ -1216,6 +1242,9 @@ async function registrationDetails(env: Env, row: RegistrationViewerRow) {
     ? await env.HUAU_DB.prepare(`SELECT captain_user_id as captainUserId FROM tournament_entries WHERE id=?`).bind(row.entryId).first<{ captainUserId: string | null }>()
     : null;
   const teamPricing = row.entryType === "team" ? await pricingSettingsForTournament(env, row.tournamentId) : null;
+  const pendingCancellation = row.isOwner === 1
+    ? await env.HUAU_DB.prepare(`SELECT id,reason,net_paid_minor as netPaidMinor,created_at as createdAt FROM registration_cancellation_requests WHERE registration_id=? AND status='pending' LIMIT 1`).bind(row.id).first<{ id: string; reason: string | null; netPaidMinor: number; createdAt: number }>()
+    : null;
   const groupingState = row.entryType === "individual"
     ? "ready"
     : row.entryType === "pair"
@@ -1235,6 +1264,7 @@ async function registrationDetails(env: Env, row: RegistrationViewerRow) {
     teamFullFeeMinor: teamPricing?.teamFullFeeMinor ?? null,
     canSearch: row.isOwner === 1 && row.entryType === "pair" ? !row.entryId : row.isOwner === 1 && row.entryType === "team" ? Boolean(row.entryId && teamCaptain?.captainUserId) : false,
     covered: Boolean(row.coveredByRegistrationId),
+    pendingCancellationRequest: pendingCancellation ?? null,
   };
 }
 

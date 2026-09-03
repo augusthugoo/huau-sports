@@ -24,7 +24,7 @@
   ],
   "vars": {
     "APP_ENV": "development",
-    "APP_VERSION": "0.7.0-phase6-online-registration",
+    "APP_VERSION": "0.8.0-phase7-payments",
     "BETTER_AUTH_URL": "http://localhost:5173",
     "PLATFORM_ADMIN_EMAILS": ""
   },
@@ -47,7 +47,7 @@
       ],
       "vars": {
         "APP_ENV": "staging",
-        "APP_VERSION": "0.7.0-phase6-online-registration",
+        "APP_VERSION": "0.8.0-phase7-payments",
         "BETTER_AUTH_URL": "https://huau-sports-staging.augusthugoo.workers.dev",
         "PLATFORM_ADMIN_EMAILS": ""
       }
