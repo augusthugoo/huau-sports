@@ -224,6 +224,7 @@ type PlayerProfileRow = {
   id: string;
   tournamentId: string;
   organizationPersonId: string | null;
+  userId: string | null;
   displayName: string;
   club: string;
   contact: string;
@@ -286,7 +287,7 @@ async function loadPlayerAssignments(env: Env, tournamentId: string): Promise<Pl
 
 async function loadPlayerProfile(env: Env, profileId: string): Promise<PlayerProfileRow | null> {
   return env.HUAU_DB.prepare(
-    `SELECT p.id,p.tournament_id as tournamentId,p.organization_person_id as organizationPersonId,p.display_name as displayName,p.club,p.contact,
+    `SELECT p.id,p.tournament_id as tournamentId,p.organization_person_id as organizationPersonId,op.user_id as userId,p.display_name as displayName,p.club,p.contact,
             p.dupr_singles as duprSingles,p.dupr_doubles as duprDoubles,p.payment_status as paymentStatus,p.player_status as playerStatus,
             COALESCE(op.sport_gender,'unspecified') as sportGender,p.notes,p.sort_order as sortOrder
        FROM tournament_player_profiles p LEFT JOIN organization_people op ON op.id=p.organization_person_id WHERE p.id=?`,
@@ -604,6 +605,69 @@ async function createOrUpdateOrganizationPerson(
      VALUES (?,?,NULL,?,?,NULL,?,?,'manual','active',?,?)`,
   ).bind(personId, tournament.organizerOrganizationId, parts.firstName, parts.lastName, contact || null, sportGender === "unspecified" ? null : sportGender, stamp, stamp).run();
   return personId;
+}
+
+
+async function sourceUserIdentityForTournament(
+  env: Env,
+  tournament: TournamentRow,
+  sourceUserId: string,
+): Promise<{ personId: string; displayName: string; contact: string; sportGender: "male" | "female" | "unspecified" } | null> {
+  const source = await env.HUAU_DB.prepare(
+    `SELECT u.name,u.email,up.first_name as firstName,up.last_name as lastName,up.phone,up.birth_date as birthDate,COALESCE(up.sport_gender,'unspecified') as sportGender
+       FROM user u LEFT JOIN user_profiles up ON up.user_id=u.id
+      WHERE u.id=? AND EXISTS (
+        SELECT 1 FROM tournament_registrations tr
+         WHERE tr.tournament_id=? AND tr.user_id=u.id AND tr.status NOT IN ('cancelled','rejected')
+      )`,
+  ).bind(sourceUserId, tournament.id).first<{ name: string; email: string; firstName: string | null; lastName: string | null; phone: string | null; birthDate: string | null; sportGender: string }>();
+  if (!source) return null;
+  const firstName = source.firstName?.trim() || splitDisplayName(source.name).firstName;
+  const lastName = source.lastName?.trim() || splitDisplayName(source.name).lastName;
+  const displayName = `${firstName} ${lastName}`.trim() || source.name;
+  const sportGender = normalizedSportGender(source.sportGender);
+  const stamp = unixNow();
+  const existing = await env.HUAU_DB.prepare(
+    `SELECT id FROM organization_people WHERE organization_id=? AND user_id=?`,
+  ).bind(tournament.organizerOrganizationId, sourceUserId).first<{ id: string }>();
+  if (existing) {
+    await env.HUAU_DB.prepare(
+      `UPDATE organization_people SET first_name=?,last_name=?,email=?,phone=?,birth_date=?,sport_gender=?,source='user',status='active',updated_at=? WHERE id=?`,
+    ).bind(firstName,lastName,source.email,source.phone,source.birthDate,sportGender === "unspecified" ? null : sportGender,stamp,existing.id).run();
+    return { personId: existing.id, displayName, contact: source.phone || source.email, sportGender };
+  }
+  const personId = uuid();
+  await env.HUAU_DB.prepare(
+    `INSERT INTO organization_people (id,organization_id,user_id,first_name,last_name,email,phone,birth_date,sport_gender,source,status,created_at,updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?, 'user','active',?,?)`,
+  ).bind(personId,tournament.organizerOrganizationId,sourceUserId,firstName,lastName,source.email,source.phone,source.birthDate,sportGender === "unspecified" ? null : sportGender,stamp,stamp).run();
+  return { personId, displayName, contact: source.phone || source.email, sportGender };
+}
+
+async function restorePartnerLinksForSourceAssignments(
+  env: Env,
+  tournamentId: string,
+  sourceUserId: string,
+  assignments: PlayerAssignmentInput[],
+): Promise<PlayerAssignmentInput[]> {
+  const hydrated: PlayerAssignmentInput[] = [];
+  for (const assignment of assignments) {
+    if (assignment.partnerProfileId) { hydrated.push(assignment); continue; }
+    const category = await env.HUAU_DB.prepare(`SELECT entry_type as entryType FROM tournament_categories WHERE id=? AND tournament_id=?`).bind(assignment.categoryId,tournamentId).first<{ entryType: string }>();
+    if (category?.entryType !== "pair") { hydrated.push(assignment); continue; }
+    const partner = await env.HUAU_DB.prepare(
+      `SELECT pp.id as partnerProfileId
+         FROM tournament_registrations tr
+         JOIN entry_members em ON em.entry_id=tr.entry_id AND em.status IN ('accepted','manual')
+         JOIN organization_people op ON op.id=em.organization_person_id
+         JOIN tournament_player_profiles pp ON pp.organization_person_id=op.id AND pp.tournament_id=tr.tournament_id
+        WHERE tr.tournament_id=? AND tr.category_id=? AND tr.user_id=? AND tr.status NOT IN ('cancelled','rejected')
+          AND op.user_id IS NOT NULL AND op.user_id<>?
+        LIMIT 1`,
+    ).bind(tournamentId,assignment.categoryId,sourceUserId,sourceUserId).first<{ partnerProfileId: string }>();
+    hydrated.push({ categoryId: assignment.categoryId, partnerProfileId: partner?.partnerProfileId ?? null });
+  }
+  return hydrated;
 }
 
 function parseSavedConfig(raw: string | null | undefined): Record<string, unknown> {
@@ -1521,7 +1585,7 @@ async function tournamentDetail(env: Env, tournamentId: string) {
         WHERE s.tournament_id=? ORDER BY s.created_at DESC LIMIT 50`,
     ).bind(tournamentId).all(),
     env.HUAU_DB.prepare(
-      `SELECT p.id,p.tournament_id as tournamentId,p.organization_person_id as organizationPersonId,p.display_name as displayName,p.club,p.contact,
+      `SELECT p.id,p.tournament_id as tournamentId,p.organization_person_id as organizationPersonId,op.user_id as userId,p.display_name as displayName,p.club,p.contact,
               p.dupr_singles as duprSingles,p.dupr_doubles as duprDoubles,p.payment_status as paymentStatus,p.player_status as playerStatus,
               COALESCE(op.sport_gender,'unspecified') as sportGender,p.notes,p.sort_order as sortOrder,p.created_at as createdAt,p.updated_at as updatedAt
          FROM tournament_player_profiles p LEFT JOIN organization_people op ON op.id=p.organization_person_id
@@ -1893,24 +1957,33 @@ export async function handleTournamentAdminApi(
     const tournamentId = decodeURIComponent(tournamentPlayers[1]!);
     const accessResult = await tournamentForAccess(tournamentId,request,env,access);
     if (accessResult instanceof Response) return accessResult;
-    const body = await readJson<{displayName?:string;club?:string;contact?:string;sportGender?:string;duprSingles?:number;duprDoubles?:number;paymentStatus?:string;playerStatus?:string;notes?:string;assignments?:PlayerAssignmentInput[];confirmImpact?:boolean}>(request);
-    const displayName = body.displayName?.trim();
+    const body = await readJson<{sourceUserId?:string;displayName?:string;club?:string;contact?:string;sportGender?:string;duprSingles?:number;duprDoubles?:number;paymentStatus?:string;playerStatus?:string;notes?:string;assignments?:PlayerAssignmentInput[];confirmImpact?:boolean}>(request);
+    const sourceUserId = body.sourceUserId?.trim() || null;
+    const sourceIdentity = sourceUserId ? await sourceUserIdentityForTournament(env,accessResult.tournament,sourceUserId) : null;
+    if (sourceUserId && !sourceIdentity) return json({ok:false,code:"SOURCE_USER_NOT_ACTIVE_IN_TOURNAMENT"},{status:409});
+    if (sourceIdentity) {
+      const existingProfile = await env.HUAU_DB.prepare(`SELECT id FROM tournament_player_profiles WHERE tournament_id=? AND organization_person_id=?`).bind(tournamentId,sourceIdentity.personId).first();
+      if (existingProfile) return json({ok:false,code:"DUPLICATE_PLAYER"},{status:409});
+    }
+    const displayName = body.displayName?.trim() || sourceIdentity?.displayName || "";
     if (!displayName) return json({ok:false,code:"PLAYER_NAME_REQUIRED"},{status:400});
     const duplicate = await env.HUAU_DB.prepare(`SELECT id FROM tournament_player_profiles WHERE tournament_id=? AND lower(display_name)=lower(?)`).bind(tournamentId,displayName).first();
     if (duplicate) return json({ok:false,code:"DUPLICATE_PLAYER"},{status:409});
-    const assignments = (body.assignments ?? []).filter((value) => value.categoryId);
+    let assignments = (body.assignments ?? []).filter((value) => value.categoryId);
+    if (sourceUserId) assignments = await restorePartnerLinksForSourceAssignments(env,tournamentId,sourceUserId,assignments);
     const affectedIds = [...new Set(assignments.map((value)=>value.categoryId))];
     const locked = await lockedCategoriesAmong(env,affectedIds);
     if (locked.length && !body.confirmImpact) return json({ok:false,code:"STRUCTURE_CHANGE_CONFIRM_REQUIRED",impact:"Agregar este jugador modifica categorías ya sorteadas. HUAU guardará snapshots e invalidará sólo esas categorías."},{status:409});
     if (locked.length) await snapshotAndInvalidateCategories(env,accessResult.tournament,accessResult.user,locked,"Before adding tournament player");
-    const sportGender = normalizedSportGender(body.sportGender);
-    const profileId = uuid(); const personId = await createOrUpdateOrganizationPerson(env,accessResult.tournament,null,displayName,body.contact?.trim() ?? "",sportGender);
+    const sportGender = sourceIdentity?.sportGender ?? normalizedSportGender(body.sportGender);
+    const contact = body.contact?.trim() || sourceIdentity?.contact || "";
+    const profileId = uuid(); const personId = sourceIdentity?.personId ?? await createOrUpdateOrganizationPerson(env,accessResult.tournament,null,displayName,contact,sportGender);
     const sort = await env.HUAU_DB.prepare(`SELECT COALESCE(MAX(sort_order),-1)+1 as nextSort FROM tournament_player_profiles WHERE tournament_id=?`).bind(tournamentId).first<{nextSort:number}>();
     const stamp=unixNow();
     await env.HUAU_DB.prepare(
       `INSERT INTO tournament_player_profiles (id,tournament_id,organization_person_id,display_name,club,contact,dupr_singles,dupr_doubles,payment_status,player_status,notes,sort_order,created_at,updated_at,version)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`,
-    ).bind(profileId,tournamentId,personId,displayName,body.club?.trim()??"",body.contact?.trim()??"",Number(body.duprSingles??0),Number(body.duprDoubles??0),normalizedPaymentStatus(body.paymentStatus),normalizedPlayerStatus(body.playerStatus),body.notes?.trim()??"",sort?.nextSort??0,stamp,stamp).run();
+    ).bind(profileId,tournamentId,personId,displayName,body.club?.trim()??"",contact,Number(body.duprSingles??0),Number(body.duprDoubles??0),normalizedPaymentStatus(body.paymentStatus),normalizedPlayerStatus(body.playerStatus),body.notes?.trim()??"",sort?.nextSort??0,stamp,stamp).run();
     try { await replacePlayerAssignments(env,profileId,assignments); } catch(error) { await env.HUAU_DB.prepare(`DELETE FROM tournament_player_profiles WHERE id=?`).bind(profileId).run(); return json({ok:false,code:error instanceof Error?error.message:"PLAYER_ASSIGNMENT_FAILED"},{status:409}); }
     await Promise.all(affectedIds.map((categoryId)=>syncDerivedEntriesForCategory(env,categoryId,accessResult.user.id)));
     await env.HUAU_DB.prepare(`UPDATE tournaments SET working_revision=working_revision+1,updated_at=? WHERE id=?`).bind(stamp,tournamentId).run();

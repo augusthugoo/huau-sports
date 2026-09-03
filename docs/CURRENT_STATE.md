@@ -4,7 +4,7 @@ Updated: 2026-09-03
 
 ## Current phase
 
-Phase 7 — Tournament Payments (manual-payment acceptance closed; Mercado Pago deferred)
+Phase 7.1 — Participant Admin Consolidation (Phase 7 manual-payment acceptance closed; Mercado Pago deferred)
 
 Version: `0.8.0-phase7-payments`
 
@@ -112,7 +112,15 @@ The first event can run without Mercado Pago:
 
 Mercado Pago can remain disabled until the Cloudflare secrets and receiver account are configured. No Phase 7 schema change is required to turn it on later.
 
-## Next after Phase 7 acceptance
+## Phase 7.1 participant administration
+
+Before merging Phase 7, organizer QA identified that one person was being managed through three separate tabs: competitive `Jugadores`, online `Inscripciones`, and `Pagos`. The domain separation remains correct, but the UI exposed too much internal architecture.
+
+Phase 7.1 consolidates `Jugadores` + `Inscripciones` into **Participantes**, a person-centric admin workspace that shows registration, competition and payment state together. `Pagos` remains separate as the financial batch/review queue. No migration is required.
+
+Phase 7.1 must pass repository gates and preview acceptance before Phase 7 is merged to `main`.
+
+## Next after Phase 7.1 acceptance
 
 Phase 8 — Explanation Engine / ES-EN.
 

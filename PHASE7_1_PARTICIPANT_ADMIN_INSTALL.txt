@@ -1,0 +1,29 @@
+HUAU Sports — Phase 7.1 Participant Admin Consolidation
+
+Built against public branch phase-7 at commit:
+  719ae6f597a0cfee10371cf23ad31a1e0ab48400
+  fix: align my payments with registrations layout
+
+Apply on top of the current phase-7 branch after the Phase 7 closeout/alignment hotfixes.
+
+1. From the repository root, extract this ZIP.
+2. Run:
+   pnpm typecheck && pnpm lint && pnpm test
+3. No D1 migration is required. DO NOT rerun 0008.
+4. Commit/push only after all gates are green.
+
+Suggested commit:
+  git add -A
+  git commit -m "feat: consolidate tournament participant administration"
+  git push
+
+Preview QA:
+- Participantes replaces Jugadores + Inscripciones in Tournament admin.
+- An online player appears once with Registration / Competition / Payment states.
+- A manual player can be added and assigned categories.
+- Registration courtesy/discount/waitlist actions still work.
+- Competitive profile edit and Quitar del armado work with impact safeguards.
+- Removing competitive profile does not remove registration/payment history.
+- Online player with missing competitive profile can Recrear ficha desde HUAU.
+- Cancelling an online standard registration no longer leaves a stale competitive assignment.
+- Pagos remains a separate batch financial workspace.

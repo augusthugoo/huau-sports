@@ -1139,6 +1139,29 @@ async function leaveGroup(registrationId: string, request: Request, env: Env, ac
   return json({ ok: true });
 }
 
+async function removeCancelledRegistrationFromCompetitiveProfile(env: Env, reg: RegistrationRow, category: CategoryRow) {
+  if (category.entryType === "team") return;
+  const linked = await env.HUAU_DB.prepare(
+    `SELECT p.id as profileId,p.organization_person_id as personId
+       FROM tournament_player_profiles p JOIN organization_people op ON op.id=p.organization_person_id
+      WHERE p.tournament_id=? AND op.user_id=? LIMIT 1`,
+  ).bind(reg.tournamentId,reg.userId).first<{ profileId: string; personId: string }>();
+  if (!linked) return;
+  const stamp = now();
+  await env.HUAU_DB.batch([
+    env.HUAU_DB.prepare(`UPDATE tournament_player_categories SET partner_profile_id=NULL,updated_at=? WHERE category_id=? AND partner_profile_id=?`).bind(stamp,category.id,linked.profileId),
+    env.HUAU_DB.prepare(`DELETE FROM tournament_player_categories WHERE player_profile_id=? AND category_id=?`).bind(linked.profileId,category.id),
+  ]);
+  if (!category.structureLocked) {
+    await env.HUAU_DB.prepare(
+      `DELETE FROM tournament_entries
+        WHERE category_id=? AND source_kind IN ('legacy_player','legacy_pair') AND id IN (
+          SELECT em.entry_id FROM entry_members em WHERE em.organization_person_id=?
+        )`,
+    ).bind(category.id,linked.personId).run();
+  }
+}
+
 async function cancelRegistrationInternal(env: Env, registrationId: string, userId: string, force = false) {
   const reg = await registrationById(env, registrationId);
   if (!reg || (!force && reg.userId !== userId)) return;
@@ -1156,6 +1179,7 @@ async function cancelRegistrationInternal(env: Env, registrationId: string, user
       ]);
     }
   }
+  if (category) await removeCancelledRegistrationFromCompetitiveProfile(env, reg, category);
   const stamp = now();
   await env.HUAU_DB.batch([
     env.HUAU_DB.prepare(`UPDATE tournament_registrations SET status='cancelled',entry_id=NULL,covered_by_registration_id=NULL,waitlist_position=NULL,updated_at=?,version=version+1 WHERE id=?`).bind(stamp, registrationId),
@@ -1232,6 +1256,7 @@ export async function cancelRegistrationForPaymentAdmin(env: Env, registrationId
 
 type RegistrationViewerRow = {
   id: string;
+  userId?: string | null;
   registrationNumber: number;
   status: string;
   participantCount: number;
@@ -1358,7 +1383,7 @@ async function adminRegistrations(tournamentId: string, request: Request, env: E
   const allowed = await adminAccess(tournamentId, request, env, access);
   if ("response" in allowed) return allowed.response;
   const rows = await env.HUAU_DB.prepare(
-    `SELECT tr.id,tr.registration_number as registrationNumber,tr.status,tr.participant_count as participantCount,tr.price_scope as priceScope,
+    `SELECT tr.id,tr.user_id as userId,tr.registration_number as registrationNumber,tr.status,tr.participant_count as participantCount,tr.price_scope as priceScope,
             tr.base_amount_minor as baseAmountMinor,tr.discount_minor as discountMinor,tr.final_amount_minor as finalAmountMinor,tr.currency,
             tr.waitlist_position as waitlistPosition,tr.created_at as createdAt,tr.covered_by_registration_id as coveredByRegistrationId,
             t.id as tournamentId,t.name as tournamentName,t.slug,tc.id as categoryId,tc.name as categoryName,tc.entry_type as entryType,
