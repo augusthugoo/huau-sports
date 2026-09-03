@@ -195,6 +195,39 @@ async function audit(
     .run();
 }
 
+async function bumpTournamentAndAudit(
+  env: Env,
+  tournament: TournamentRow,
+  userId: string,
+  action: string,
+  summary: string,
+  entityType: string,
+  entityId: string,
+  metadata?: unknown,
+) {
+  const stamp = unixNow();
+  await env.HUAU_DB.batch([
+    env.HUAU_DB.prepare(`UPDATE tournaments SET working_revision=working_revision+1,updated_at=? WHERE id=?`)
+      .bind(stamp, tournament.id),
+    env.HUAU_DB.prepare(
+      `INSERT INTO critical_audit_events
+       (id,organization_id,tournament_id,actor_user_id,actor_type,action,entity_type,entity_id,summary,metadata_json,created_at)
+       VALUES (?,?,?,?, 'user', ?,?,?,?,?,?)`,
+    ).bind(
+      uuid(),
+      tournament.organizerOrganizationId,
+      tournament.id,
+      userId,
+      action,
+      entityType,
+      entityId,
+      summary,
+      metadata ? JSON.stringify(metadata) : null,
+      stamp,
+    ),
+  ]);
+}
+
 async function saveTeamFormatVersion(env: Env, categoryId: string, userId: string, format: TeamFormat): Promise<string> {
   const version = await env.HUAU_DB.prepare(
     `SELECT COALESCE(MAX(version_number),0)+1 as nextVersion FROM competition_format_versions WHERE category_id=?`,
@@ -1040,24 +1073,6 @@ async function saveLineup(
   return json({ ok: true, lineupId, status: body.lock ? "locked" : "draft" });
 }
 
-async function copyMatchSideMembersFromLineups(env: Env, encounterId: string, matchId: string, rubberKey: string, entryAId: string, entryBId: string) {
-  const rows = await env.HUAU_DB.prepare(
-    `SELECT tl.entry_id as entryId,tla.organization_person_id as personId,tla.position
-       FROM team_encounter_lineups tl JOIN team_lineup_assignments tla ON tla.lineup_id=tl.id
-      WHERE tl.encounter_id=? AND tl.status='locked' AND tla.rubber_key=?
-      ORDER BY tl.entry_id,tla.position`,
-  )
-    .bind(encounterId, rubberKey)
-    .all<{ entryId: string; personId: string; position: number }>();
-  const sideA = rows.results.filter((row) => row.entryId === entryAId);
-  const sideB = rows.results.filter((row) => row.entryId === entryBId);
-  if (!sideA.length || !sideB.length) throw new Error("TEAM_MATCH_LINEUPS_NOT_LOCKED");
-  const statements: D1PreparedStatement[] = [env.HUAU_DB.prepare(`DELETE FROM match_side_members WHERE match_id=?`).bind(matchId)];
-  sideA.forEach((row) => statements.push(env.HUAU_DB.prepare(`INSERT INTO match_side_members (match_id,side,organization_person_id,position) VALUES (?,'A',?,?)`).bind(matchId, row.personId, row.position)));
-  sideB.forEach((row) => statements.push(env.HUAU_DB.prepare(`INSERT INTO match_side_members (match_id,side,organization_person_id,position) VALUES (?,'B',?,?)`).bind(matchId, row.personId, row.position)));
-  await runBatches(env.HUAU_DB, statements);
-}
-
 async function saveTeamMatchResult(
   request: Request,
   env: Env,
@@ -1066,9 +1081,13 @@ async function saveTeamMatchResult(
 ): Promise<Response> {
   const match = await env.HUAU_DB.prepare(
     `SELECT m.id,m.encounter_id as encounterId,m.rubber_key as rubberKey,m.rubber_order as rubberOrder,m.best_of as bestOf,m.status,
-            ce.entry_a_id as entryAId,ce.entry_b_id as entryBId,ce.stage,c.id as competitionId,c.category_id as categoryId,tc.tournament_id as tournamentId
-       FROM matches m JOIN competition_encounters ce ON ce.id=m.encounter_id JOIN competitions c ON c.id=ce.competition_id
+            ce.entry_a_id as entryAId,ce.entry_b_id as entryBId,ce.stage,c.id as competitionId,c.category_id as categoryId,
+            tc.tournament_id as tournamentId,f.config_json as configJson
+       FROM matches m
+       JOIN competition_encounters ce ON ce.id=m.encounter_id
+       JOIN competitions c ON c.id=ce.competition_id
        JOIN tournament_categories tc ON tc.id=c.category_id
+       JOIN competition_format_versions f ON f.id=c.format_version_id AND f.format_kind='team'
       WHERE m.id=? AND tc.entry_type='team'`,
   )
     .bind(matchId)
@@ -1085,10 +1104,13 @@ async function saveTeamMatchResult(
       competitionId: string;
       categoryId: string;
       tournamentId: string;
+      configJson: string;
     }>();
   if (!match || !match.rubberKey) return json({ ok: false, code: "TEAM_MATCH_NOT_FOUND" }, { status: 404 });
+
   const accessResult = await tournamentForAccess(match.tournamentId, request, env, access);
   if (accessResult instanceof Response) return accessResult;
+
   const body = await readJson<{ sets?: ResultSetInput[] }>(request);
   let outcome: { winnerSide: "A" | "B"; pointsA: number; pointsB: number };
   try {
@@ -1096,50 +1118,136 @@ async function saveTeamMatchResult(
   } catch (error) {
     return json({ ok: false, code: error instanceof Error ? error.message : "TEAM_RESULT_INVALID" }, { status: 400 });
   }
-  const lineups = await env.HUAU_DB.prepare(
-    `SELECT entry_id as entryId,status FROM team_encounter_lineups WHERE encounter_id=?`,
-  )
-    .bind(match.encounterId)
-    .all<{ entryId: string; status: string }>();
-  const locked = new Set(lineups.results.filter((lineup) => lineup.status === "locked").map((lineup) => lineup.entryId));
-  if (!locked.has(match.entryAId) || !locked.has(match.entryBId)) {
+
+  const [guards, previousEncounterResults] = await Promise.all([
+    env.HUAU_DB.prepare(
+      `SELECT
+         (SELECT COUNT(DISTINCT tl.entry_id)
+            FROM team_encounter_lineups tl
+           WHERE tl.encounter_id=? AND tl.status='locked' AND tl.entry_id IN (?,?)) as lockedCount,
+         EXISTS(
+           SELECT 1 FROM matches lm JOIN match_results lmr ON lmr.match_id=lm.id
+            WHERE lm.encounter_id=? AND lm.rubber_order>? AND lmr.result_status IN ('final','corrected')
+         ) as laterResult,
+         EXISTS(
+           SELECT 1 FROM match_results emr
+            WHERE emr.match_id=? AND emr.result_status IN ('final','corrected')
+         ) as existingResult,
+         (SELECT COUNT(*)
+            FROM match_results pmr
+            JOIN matches pm ON pm.id=pmr.match_id
+            JOIN competition_encounters pce ON pce.id=pm.encounter_id
+            JOIN competitions pc ON pc.id=pce.competition_id
+           WHERE pc.category_id=? AND pmr.result_status IN ('final','corrected')) as previousResultCount`,
+    )
+      .bind(
+        match.encounterId,
+        match.entryAId,
+        match.entryBId,
+        match.encounterId,
+        match.rubberOrder,
+        matchId,
+        match.categoryId,
+      )
+      .first<{ lockedCount: number; laterResult: number; existingResult: number; previousResultCount: number }>(),
+    env.HUAU_DB.prepare(
+      `SELECT m.id as matchId,m.rubber_key as rubberKey,m.winner_side as winnerSide,
+              mr.score_a as pointsA,mr.score_b as pointsB
+         FROM matches m JOIN match_results mr ON mr.match_id=m.id
+        WHERE m.encounter_id=? AND mr.result_status IN ('final','corrected')
+        ORDER BY m.rubber_order`,
+    )
+      .bind(match.encounterId)
+      .all<{ matchId: string; rubberKey: string; winnerSide: "A" | "B"; pointsA: number; pointsB: number }>(),
+  ]);
+
+  if (Number(guards?.lockedCount ?? 0) < 2) {
     return json({ ok: false, code: "TEAM_MATCH_LINEUPS_NOT_LOCKED" }, { status: 409 });
   }
-  const [laterResult, existingResult, previousResults] = await Promise.all([
-    env.HUAU_DB.prepare(
-      `SELECT mr.match_id as matchId FROM matches m JOIN match_results mr ON mr.match_id=m.id
-        WHERE m.encounter_id=? AND m.rubber_order>? AND mr.result_status IN ('final','corrected') LIMIT 1`,
-    )
-      .bind(match.encounterId, match.rubberOrder)
-      .first(),
-    env.HUAU_DB.prepare(`SELECT match_id as matchId FROM match_results WHERE match_id=? AND result_status IN ('final','corrected')`)
-      .bind(matchId)
-      .first(),
-    env.HUAU_DB.prepare(
-      `SELECT COUNT(*) as count FROM match_results mr JOIN matches m ON m.id=mr.match_id JOIN competition_encounters ce ON ce.id=m.encounter_id
-        JOIN competitions c ON c.id=ce.competition_id WHERE c.category_id=? AND mr.result_status IN ('final','corrected')`,
-    )
-      .bind(match.categoryId)
-      .first<{ count: number }>(),
-  ]);
+
+  const existingResult = Boolean(Number(guards?.existingResult ?? 0));
+  const laterResult = Boolean(Number(guards?.laterResult ?? 0));
+
   if (!existingResult && match.status !== "ready") {
     return json({ ok: false, code: "TEAM_MATCH_NOT_READY" }, { status: 409 });
   }
+
   if (existingResult && (laterResult || await downstreamTeamResultExists(env, match.encounterId))) {
     return json({ ok: false, code: "TEAM_RESULT_CORRECTION_BLOCKED_BY_LATER_RESULT" }, { status: 409 });
   }
+
   if (existingResult) {
-    await snapshotCategoryByIdForAdmin(env, accessResult.tournament.id, match.categoryId, accessResult.user.id, "Before Team result correction");
-  } else if (Number(previousResults?.count ?? 0) === 0) {
-    await snapshotCategoryByIdForAdmin(env, accessResult.tournament.id, match.categoryId, accessResult.user.id, "Before first Team result");
+    await snapshotCategoryByIdForAdmin(
+      env,
+      accessResult.tournament.id,
+      match.categoryId,
+      accessResult.user.id,
+      "Before Team result correction",
+    );
+  } else if (Number(guards?.previousResultCount ?? 0) === 0) {
+    await snapshotCategoryByIdForAdmin(
+      env,
+      accessResult.tournament.id,
+      match.categoryId,
+      accessResult.user.id,
+      "Before first Team result",
+    );
   }
+
+  let format: TeamFormat;
   try {
-    await copyMatchSideMembersFromLineups(env, match.encounterId, match.id, match.rubberKey, match.entryAId, match.entryBId);
-  } catch (error) {
-    return json({ ok: false, code: error instanceof Error ? error.message : "TEAM_MATCH_LINEUP_ERROR" }, { status: 409 });
+    format = parseTeamFormat(JSON.parse(match.configJson) as unknown);
+  } catch {
+    return json({ ok: false, code: "TEAM_FORMAT_NOT_FOUND" }, { status: 409 });
   }
+
+  const scoringResults: TeamRubberResult[] = previousEncounterResults.results
+    .filter((row) => row.matchId !== match.id)
+    .map((row) => ({
+      rubberKey: row.rubberKey,
+      winnerSide: row.winnerSide,
+      pointsA: Number(row.pointsA),
+      pointsB: Number(row.pointsB),
+    }));
+
+  scoringResults.push({
+    rubberKey: match.rubberKey,
+    winnerSide: outcome.winnerSide,
+    pointsA: outcome.pointsA,
+    pointsB: outcome.pointsB,
+  });
+
+  let score;
+  try {
+    score = scoreTeamEncounter({
+      format,
+      entryAId: match.entryAId,
+      entryBId: match.entryBId,
+      results: scoringResults,
+    });
+  } catch (error) {
+    return json({ ok: false, code: error instanceof Error ? error.message : "TEAM_ENCOUNTER_SCORE_INVALID" }, { status: 409 });
+  }
+
   const stamp = unixNow();
   const statements: D1PreparedStatement[] = [
+    env.HUAU_DB.prepare(`DELETE FROM match_side_members WHERE match_id=?`).bind(matchId),
+    env.HUAU_DB.prepare(
+      `INSERT INTO match_side_members (match_id,side,organization_person_id,position)
+       SELECT ?,'A',tla.organization_person_id,tla.position
+         FROM team_encounter_lineups tl
+         JOIN team_lineup_assignments tla ON tla.lineup_id=tl.id
+        WHERE tl.encounter_id=? AND tl.entry_id=? AND tl.status='locked' AND tla.rubber_key=?
+        ORDER BY tla.position`,
+    ).bind(matchId, match.encounterId, match.entryAId, match.rubberKey),
+    env.HUAU_DB.prepare(
+      `INSERT INTO match_side_members (match_id,side,organization_person_id,position)
+       SELECT ?,'B',tla.organization_person_id,tla.position
+         FROM team_encounter_lineups tl
+         JOIN team_lineup_assignments tla ON tla.lineup_id=tl.id
+        WHERE tl.encounter_id=? AND tl.entry_id=? AND tl.status='locked' AND tla.rubber_key=?
+        ORDER BY tla.position`,
+    ).bind(matchId, match.encounterId, match.entryBId, match.rubberKey),
     env.HUAU_DB.prepare(`DELETE FROM match_sets WHERE match_id=?`).bind(matchId),
     env.HUAU_DB.prepare(
       `INSERT INTO match_results (match_id,score_a,score_b,winner_side,result_status,entered_by_user_id,entered_at,corrected_at,updated_at)
@@ -1157,12 +1265,17 @@ async function saveTeamMatchResult(
       existingResult ? stamp : null,
       stamp,
     ),
-    env.HUAU_DB.prepare(`UPDATE matches SET status='finished',winner_side=?,updated_at=?,version=version+1 WHERE id=?`).bind(outcome.winnerSide, stamp, matchId),
-    env.HUAU_DB.prepare(`UPDATE schedule_items SET status='completed',updated_at=?,version=version+1 WHERE match_id=?`).bind(stamp, matchId),
+    env.HUAU_DB.prepare(`UPDATE matches SET status='finished',winner_side=?,updated_at=?,version=version+1 WHERE id=?`)
+      .bind(outcome.winnerSide, stamp, matchId),
+    env.HUAU_DB.prepare(`UPDATE schedule_items SET status='completed',updated_at=?,version=version+1 WHERE match_id=?`)
+      .bind(stamp, matchId),
   ];
+
   (body.sets ?? []).forEach((set, index) => {
     statements.push(
-      env.HUAU_DB.prepare(`INSERT INTO match_sets (id,match_id,set_number,score_a,score_b,winner_side) VALUES (?,?,?,?,?,?)`).bind(
+      env.HUAU_DB.prepare(
+        `INSERT INTO match_sets (id,match_id,set_number,score_a,score_b,winner_side) VALUES (?,?,?,?,?,?)`,
+      ).bind(
         uuid(),
         matchId,
         index + 1,
@@ -1172,65 +1285,58 @@ async function saveTeamMatchResult(
       ),
     );
   });
-  await runBatches(env.HUAU_DB, statements);
 
-  const [format, resultRows] = await Promise.all([
-    formatForCategory(env, match.categoryId),
-    env.HUAU_DB.prepare(
-      `SELECT m.rubber_key as rubberKey,m.winner_side as winnerSide,mr.score_a as pointsA,mr.score_b as pointsB
-         FROM matches m JOIN match_results mr ON mr.match_id=m.id
-        WHERE m.encounter_id=? AND mr.result_status IN ('final','corrected') ORDER BY m.rubber_order`,
-    )
-      .bind(match.encounterId)
-      .all<{ rubberKey: string; winnerSide: "A" | "B"; pointsA: number; pointsB: number }>(),
-  ]);
-  let score;
-  try {
-    score = scoreTeamEncounter({
-      format,
-      entryAId: match.entryAId,
-      entryBId: match.entryBId,
-      results: resultRows.results.map<TeamRubberResult>((row) => ({
-        rubberKey: row.rubberKey,
-        winnerSide: row.winnerSide,
-        pointsA: Number(row.pointsA),
-        pointsB: Number(row.pointsB),
-      })),
-    });
-  } catch (error) {
-    return json({ ok: false, code: error instanceof Error ? error.message : "TEAM_ENCOUNTER_SCORE_INVALID" }, { status: 409 });
-  }
-  const stateStatements: D1PreparedStatement[] = [];
   score.rubbers.forEach((rubber) => {
     if (rubber.status === "finished") return;
-    stateStatements.push(
-      env.HUAU_DB.prepare(`UPDATE matches SET status=?,winner_side=NULL,updated_at=?,version=version+1 WHERE encounter_id=? AND rubber_key=?`).bind(
-        rubber.status,
+    statements.push(
+      env.HUAU_DB.prepare(
+        `UPDATE matches SET status=?,winner_side=NULL,updated_at=?,version=version+1
+          WHERE encounter_id=? AND rubber_key=?`,
+      ).bind(rubber.status, stamp, match.encounterId, rubber.definition.key),
+      env.HUAU_DB.prepare(
+        `UPDATE schedule_items SET status=?,updated_at=?,version=version+1
+          WHERE match_id=(SELECT id FROM matches WHERE encounter_id=? AND rubber_key=? LIMIT 1)`,
+      ).bind(
+        rubber.status === "skipped" ? "cancelled" : "bound",
         stamp,
         match.encounterId,
         rubber.definition.key,
       ),
-      env.HUAU_DB.prepare(
-        `UPDATE schedule_items SET status=?,updated_at=?,version=version+1
-          WHERE match_id=(SELECT id FROM matches WHERE encounter_id=? AND rubber_key=? LIMIT 1)`,
-      ).bind(rubber.status === "skipped" ? "cancelled" : "bound", stamp, match.encounterId, rubber.definition.key),
     );
   });
-  stateStatements.push(
-    env.HUAU_DB.prepare(`UPDATE competition_encounters SET status=?,winner_entry_id=?,updated_at=?,version=version+1 WHERE id=?`).bind(
+
+  statements.push(
+    env.HUAU_DB.prepare(
+      `UPDATE competition_encounters SET status=?,winner_entry_id=?,updated_at=?,version=version+1 WHERE id=?`,
+    ).bind(
       score.complete ? "finished" : "in_progress",
       score.winnerEntryId,
       stamp,
       match.encounterId,
     ),
   );
-  await runBatches(env.HUAU_DB, stateStatements);
+
+  await runBatches(env.HUAU_DB, statements);
+
   if (score.complete) {
-    if (match.stage === "group") await ensureTeamFinalPhase(env, accessResult.tournament, match.categoryId, accessResult.user.id);
-    else await progressTeamFinalPhase(env, match.competitionId);
+    if (match.stage === "group") {
+      await ensureTeamFinalPhase(env, accessResult.tournament, match.categoryId, accessResult.user.id);
+    } else {
+      await progressTeamFinalPhase(env, match.competitionId);
+    }
   }
-  await bumpTournament(env, accessResult.tournament.id);
-  await audit(env, accessResult.tournament, accessResult.user.id, existingResult ? "team.result.correct" : "team.result.save", `${existingResult ? "Corrected" : "Saved"} Team rubber result`, "match", matchId, { encounterId: match.encounterId, rubberKey: match.rubberKey });
+
+  await bumpTournamentAndAudit(
+    env,
+    accessResult.tournament,
+    accessResult.user.id,
+    existingResult ? "team.result.correct" : "team.result.save",
+    `${existingResult ? "Corrected" : "Saved"} Team rubber result`,
+    "match",
+    matchId,
+    { encounterId: match.encounterId, rubberKey: match.rubberKey },
+  );
+
   return json({ ok: true, score });
 }
 
