@@ -1,0 +1,17 @@
+HUAU Sports — Phase 6 QA Hardening
+
+Apply from the repository root:
+
+  cd /Users/augusto/Desktop/HUAU_Sports_Phase_0_Foundation
+  unzip -o ~/Downloads/HUAU_Sports_Phase_6_QA_Hardening.zip -d .
+  pnpm typecheck && pnpm lint && pnpm test
+
+No D1 migration is included or required by this patch.
+
+If all checks are green:
+
+  git add -A
+  git commit -m "fix: harden phase 6 registration QA"
+  git push
+
+Then test the new Cloudflare preview before merging phase-6 into main.

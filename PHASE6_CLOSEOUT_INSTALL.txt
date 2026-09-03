@@ -1,0 +1,19 @@
+HUAU Sports — Phase 6 Closeout
+2026-09-03
+
+Apply this overlay on top of the current phase-6 branch after Registration Redesign + Runtime Hotfix.
+
+1) unzip -o ~/Downloads/HUAU_Sports_Phase_6_Closeout.zip -d .
+2) pnpm typecheck && pnpm lint && pnpm test
+
+NO D1 MIGRATION IS REQUIRED.
+
+If green:
+  git add -A
+  git commit -m "fix: close phase 6 registration operations"
+  git push
+
+Final preview checks:
+- Mi HUAU separates current registrations from cancellations/history.
+- Tournament Admin > Inscripciones separates Effective / In progress / History.
+- Dissolved/cancelled Team entries no longer appear in operational Team rosters.

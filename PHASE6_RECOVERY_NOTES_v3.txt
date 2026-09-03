@@ -1,0 +1,11 @@
+HUAU Sports Phase 6 Online Registration — FIXED v3
+
+Additional recovery fix:
+- Updates packages/core/src/index.test.ts to expect 0.7.0-phase6-online-registration.
+- Safe to apply on top of the current FIXED v2 state after the single stale foundationIdentity test failure.
+- Installer remains idempotent for already-applied Phase 6 changes.
+
+Required validation after apply:
+  pnpm typecheck && pnpm lint && pnpm test
+
+Do not migrate D1 until all three checks are green.

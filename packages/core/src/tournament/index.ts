@@ -10,3 +10,5 @@ export * from "./safety";
 export * from "./admin";
 export * from "./parity";
 export * from "./persistence";
+
+export * from "./registration";

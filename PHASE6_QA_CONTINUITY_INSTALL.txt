@@ -1,0 +1,28 @@
+HUAU SPORTS — PHASE 6 QA CONTINUITY
+
+1) Apply this ZIP over the existing phase-6 branch.
+
+2) Run local gates:
+   pnpm typecheck && pnpm lint && pnpm test
+
+3) If all gates are green, apply ONLY migration 0006 to huau-dev:
+
+   pnpm --filter @huau/web exec wrangler d1 execute HUAU_DB \
+     --remote \
+     --file=../../packages/db/drizzle/0006_phase6_registration_continuity.sql
+
+4) Verify:
+
+   pnpm --filter @huau/web exec wrangler d1 execute HUAU_DB --remote --command \
+   "SELECT value FROM app_meta WHERE key='schema_version';"
+
+   Expected: phase6-registration-continuity
+
+   pnpm --filter @huau/web exec wrangler d1 execute HUAU_DB --remote --command \
+   "SELECT name FROM pragma_table_info('tournament_settings') WHERE name='max_categories_per_player';"
+
+   Expected: max_categories_per_player
+
+5) Commit and push phase-6, let Cloudflare create the preview, then run the focused QA checklist in docs/phase-6/PHASE_6_QA_CONTINUITY.md.
+
+Do NOT migrate huau-staging and do NOT merge to main until preview QA is green.

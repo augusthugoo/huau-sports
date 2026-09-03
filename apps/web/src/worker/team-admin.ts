@@ -986,14 +986,14 @@ async function teamDetail(
     env.HUAU_DB.prepare(
       `SELECT e.id,e.category_id as categoryId,e.display_name as displayName,e.status,e.created_at as createdAt
          FROM tournament_entries e JOIN tournament_categories tc ON tc.id=e.category_id
-        WHERE tc.tournament_id=? AND e.entry_type='team' ORDER BY e.created_at,e.display_name`,
+        WHERE tc.tournament_id=? AND e.entry_type='team' AND e.status NOT IN ('withdrawn','rejected') ORDER BY e.created_at,e.display_name`,
     ).bind(tournamentId).all(),
     env.HUAU_DB.prepare(
       `SELECT em.entry_id as entryId,em.organization_person_id as personId,em.member_role as role,em.roster_slot as rosterSlot,
               TRIM(op.first_name || ' ' || op.last_name) as name,COALESCE(op.sport_gender,'unspecified') as sportGender
          FROM entry_members em JOIN tournament_entries e ON e.id=em.entry_id JOIN tournament_categories tc ON tc.id=e.category_id
          JOIN organization_people op ON op.id=em.organization_person_id
-        WHERE tc.tournament_id=? AND e.entry_type='team' AND em.status IN ('accepted','manual')
+        WHERE tc.tournament_id=? AND e.entry_type='team' AND e.status NOT IN ('withdrawn','rejected') AND em.status IN ('accepted','manual')
         ORDER BY e.created_at,CAST(COALESCE(em.roster_slot,'999') AS INTEGER),em.created_at`,
     ).bind(tournamentId).all(),
     env.HUAU_DB.prepare(

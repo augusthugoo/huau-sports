@@ -1,0 +1,28 @@
+HUAU Sports — Phase 6 Online Registration — FIXED installer
+
+This package is an idempotent safe overlay for the real Phase 5C integrated tree.
+It also recovers safely from the partial Phase 6 state produced by the original installer
+when it stopped with: "Phase 6 patch anchor not found: workspace import".
+
+IMPORTANT
+- Do NOT run `git checkout phase-6`; this installer does not assume that branch exists.
+- Do NOT apply migration 0005 to D1 until typecheck + lint + tests are all green.
+- Run from the repository root currently containing the Phase 5C/partial Phase 6 tree.
+
+Recovery / install:
+1. Unzip this package over the repository.
+2. Run:
+   python3 tools/apply_phase6.py
+3. Verify that it prints:
+   Phase 6 patches applied successfully.
+4. Run:
+   pnpm typecheck && pnpm lint && pnpm test
+5. Only after all three gates are green, apply migration 0005 to huau-dev.
+
+Version after install: 0.7.0-phase6-online-registration
+Migration: packages/db/drizzle/0005_phase6_online_registration.sql
+
+Fix in this package:
+- The TournamentParityWorkspace import patch now recognizes the actual Phase 5C integrated
+  TeamTournamentPanel import, instead of requiring the older single-import form.
+- The installer remains safe to re-run after the original partial install.

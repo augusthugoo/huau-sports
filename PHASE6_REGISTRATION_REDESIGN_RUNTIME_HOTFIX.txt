@@ -1,0 +1,10 @@
+HUAU Sports — Phase 6 Registration Redesign runtime hotfix
+
+Fixes the D1 runtime error:
+  D1_ERROR: 19 values for 18 columns: SQLITE_ERROR
+
+Cause: the standalone personal-registration INSERT (used by pair/free-team registrations)
+had one extra SQL placeholder in the VALUES list.
+
+Apply on top of the current Phase 6 Registration Redesign checkout.
+No database migration is required.

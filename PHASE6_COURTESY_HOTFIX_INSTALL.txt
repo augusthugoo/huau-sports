@@ -1,0 +1,11 @@
+HUAU Sports — Phase 6 Courtesy/Adjustment Hotfix
+
+Fixes:
+- Clicking Cancel in the courtesy reason prompt now aborts the action.
+- Registrations with a courtesy/discount expose "Restaurar cobro" in admin.
+- Restoring the charge writes a compensating fixed_total adjustment (audit history is preserved) and recalculates the registration, returning it to awaiting_payment when money is still due.
+
+No D1 migration.
+
+Install over the current phase-6 branch, then run:
+  pnpm typecheck && pnpm lint && pnpm test
