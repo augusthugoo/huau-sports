@@ -1346,49 +1346,76 @@ async function buildTeamScheduleStatements(
     const nextEncounterAtByTeam = new Map<string, number>();
     const encounterEndById = new Map<string, number>();
 
-    for (const encounterId of encounterOrder) {
-      const matchRows = encounters.get(encounterId) ?? [];
-      const first = matchRows[0];
-      if (!first) continue;
-      let selectedCourt = 0;
-      let selectedStart = Number.POSITIVE_INFINITY;
-      for (let courtIndex = 0; courtIndex < courtAvailable.length; courtIndex += 1) {
-        const sourceIds = [first.sourceEncounterAId, first.sourceEncounterBId, first.sourceLoserAId, first.sourceLoserBId].filter((value): value is string => Boolean(value));
-        const dependencyReady = sourceIds.reduce((latest, sourceId) => Math.max(latest, (encounterEndById.get(sourceId) ?? categoryStart) + restSeconds), categoryStart);
-        const earliest = Math.max(
-          courtAvailable[courtIndex] ?? categoryStart,
-          dependencyReady,
-          first.entryAId ? nextEncounterAtByTeam.get(first.entryAId) ?? categoryStart : categoryStart,
-          first.entryBId ? nextEncounterAtByTeam.get(first.entryBId) ?? categoryStart : categoryStart,
-        );
-        if (earliest < selectedStart) {
-          selectedStart = earliest;
-          selectedCourt = courtIndex;
+    const schedulableEncounterIds = new Set(encounterOrder);
+    const scheduleEncounterPool = (poolIds: string[]) => {
+      const remaining = new Set(poolIds);
+      while (remaining.size) {
+        let selected: { encounterId: string; matchRows: TeamScheduleMatchRow[]; first: TeamScheduleMatchRow; court: number; start: number } | null = null;
+        for (const encounterId of remaining) {
+          const matchRows = encounters.get(encounterId) ?? [];
+          const first = matchRows[0];
+          if (!first) {
+            remaining.delete(encounterId);
+            continue;
+          }
+          const sourceIds = [first.sourceEncounterAId, first.sourceEncounterBId, first.sourceLoserAId, first.sourceLoserBId].filter((value): value is string => Boolean(value));
+          const unresolvedDependency = sourceIds.some((sourceId) => schedulableEncounterIds.has(sourceId) && !encounterEndById.has(sourceId));
+          if (unresolvedDependency) continue;
+          const dependencyReady = sourceIds.reduce((latest, sourceId) => {
+            const sourceEnd = encounterEndById.get(sourceId);
+            return sourceEnd === undefined ? latest : Math.max(latest, sourceEnd + restSeconds);
+          }, categoryStart);
+          for (let courtIndex = 0; courtIndex < courtAvailable.length; courtIndex += 1) {
+            const earliest = Math.max(
+              courtAvailable[courtIndex] ?? categoryStart,
+              dependencyReady,
+              first.entryAId ? nextEncounterAtByTeam.get(first.entryAId) ?? categoryStart : categoryStart,
+              first.entryBId ? nextEncounterAtByTeam.get(first.entryBId) ?? categoryStart : categoryStart,
+            );
+            if (!selected || earliest < selected.start) {
+              selected = { encounterId, matchRows, first, court: courtIndex, start: earliest };
+            }
+          }
         }
+        if (!selected) throw new Error("TEAM_SCHEDULE_DEPENDENCY_CYCLE");
+
+        let cursor = selected.start;
+        for (const match of selected.matchRows) {
+          const definition = rubberByKey.get(match.rubberKey);
+          const durationMinutes = Math.max(5, baseDuration * (Number(match.bestOf) === 3 ? 2 : 1));
+          const end = cursor + durationMinutes * 60;
+          const scheduleStatus = match.matchStatus === "finished" ? "completed" : match.matchStatus === "skipped" ? "cancelled" : "bound";
+          statements.push(
+            env.HUAU_DB.prepare(
+              `INSERT INTO schedule_items
+               (id,tournament_id,category_id,encounter_id,match_id,placeholder_key,stage,round_label,court_label,start_at,end_at,status,created_at,updated_at,version)
+               VALUES (?,?,?,?,?,NULL,?,?,?,?,?,?,?,?,1)`,
+            ).bind(
+              uuid(), tournament.id, category.id, match.encounterId, match.matchId,
+              match.stage, definition?.label ?? match.rubberKey, `Court ${selected.court + 1}`, cursor, end, scheduleStatus, unixNow(), unixNow(),
+            ),
+          );
+          cursor = end;
+        }
+        courtAvailable[selected.court] = cursor;
+        encounterEndById.set(selected.encounterId, cursor);
+        if (selected.first.entryAId) nextEncounterAtByTeam.set(selected.first.entryAId, cursor + restSeconds);
+        if (selected.first.entryBId) nextEncounterAtByTeam.set(selected.first.entryBId, cursor + restSeconds);
+        remaining.delete(selected.encounterId);
       }
-      let cursor = selectedStart;
-      for (const match of matchRows) {
-        const definition = rubberByKey.get(match.rubberKey);
-        const durationMinutes = Math.max(5, baseDuration * (Number(match.bestOf) === 3 ? 2 : 1));
-        const end = cursor + durationMinutes * 60;
-        const scheduleStatus = match.matchStatus === "finished" ? "completed" : match.matchStatus === "skipped" ? "cancelled" : "bound";
-        statements.push(
-          env.HUAU_DB.prepare(
-            `INSERT INTO schedule_items
-             (id,tournament_id,category_id,encounter_id,match_id,placeholder_key,stage,round_label,court_label,start_at,end_at,status,created_at,updated_at,version)
-             VALUES (?,?,?,?,?,NULL,?,?,?,?,?,?,?,?,1)`,
-          ).bind(
-            uuid(), tournament.id, category.id, match.encounterId, match.matchId,
-            match.stage, definition?.label ?? match.rubberKey, `Court ${selectedCourt + 1}`, cursor, end, scheduleStatus, unixNow(), unixNow(),
-          ),
-        );
-        cursor = end;
-      }
-      courtAvailable[selectedCourt] = cursor;
-      encounterEndById.set(encounterId, cursor);
-      if (first.entryAId) nextEncounterAtByTeam.set(first.entryAId, cursor + restSeconds);
-      if (first.entryBId) nextEncounterAtByTeam.set(first.entryBId, cursor + restSeconds);
+    };
+
+    const groupLegs = [...new Set(encounterOrder
+      .map((encounterId) => encounters.get(encounterId)?.[0])
+      .filter((encounter): encounter is TeamScheduleMatchRow => encounter !== undefined && encounter.stage === "group")
+      .map((encounter) => encounter.legNumber))].sort((a, b) => a - b);
+    for (const legNumber of groupLegs) {
+      scheduleEncounterPool(encounterOrder.filter((encounterId) => {
+        const first = encounters.get(encounterId)?.[0];
+        return first?.stage === "group" && first.legNumber === legNumber;
+      }));
     }
+    scheduleEncounterPool(encounterOrder.filter((encounterId) => encounters.get(encounterId)?.[0]?.stage !== "group"));
     dayCursor.set(category.scheduledDate, Math.max(...courtAvailable, dayCursor.get(category.scheduledDate) ?? categoryStart));
   }
   return statements;

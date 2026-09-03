@@ -193,15 +193,17 @@ export function TeamTournamentPanel({ tournamentId, locale }: Props) {
   const mutate = async (fn: () => Promise<unknown>) => {
     setBusy(true);
     setError("");
+    let refresh = false;
     try {
       await fn();
-      await load();
+      refresh = true;
     } catch (mutationError) {
       if (mutationError instanceof ApiError && mutationError.code === "STRUCTURE_CHANGE_CONFIRM_REQUIRED") return;
       setError(mutationError instanceof Error ? mutationError.message : "TEAM_MUTATION_FAILED");
     } finally {
       setBusy(false);
     }
+    if (refresh) void load();
   };
 
   if (!detail) return <section className="panel team-loading">{error || "Loading Team Engine…"}</section>;
@@ -685,11 +687,23 @@ function TeamEncounters({
 }) {
   if (!category.encounters.length) return null;
   const entryById = new Map(category.entries.map((entry) => [entry.id, entry] as const));
+  const latestLineupByEntry = new Map<string, TeamLineup>();
+  const inheritedLineupsByEncounter = new Map<string, Map<string, TeamLineup>>();
+  for (const encounter of category.encounters) {
+    const inherited = new Map<string, TeamLineup>();
+    for (const entryId of [encounter.entryAId, encounter.entryBId]) {
+      if (!entryId || encounter.lineups.some((lineup) => lineup.entryId === entryId)) continue;
+      const previous = latestLineupByEntry.get(entryId);
+      if (previous) inherited.set(entryId, previous);
+    }
+    inheritedLineupsByEncounter.set(encounter.id, inherited);
+    encounter.lineups.forEach((lineup) => latestLineupByEntry.set(lineup.entryId, lineup));
+  }
   return (
     <article className="panel team-encounters">
       <div className="panel-title"><div><div className="eyebrow">LINEUP DESK</div><h2>{tr(locale, "Series y alineaciones", "Encounters & lineups")}</h2><p>{tr(locale, "La operación de resultados vive ahora en Resultados y respeta el cronograma global.", "Result operation now lives in Results and follows the global schedule.")}</p></div><span>{category.encounters.length}</span></div>
       <div className="team-encounter-list">
-        {category.encounters.map((encounter) => <TeamEncounterCard key={encounter.id} encounter={encounter} format={category.format} entryA={entryById.get(encounter.entryAId)} entryB={entryById.get(encounter.entryBId)} locale={locale} busy={busy} mutate={mutate} />)}
+        {category.encounters.map((encounter) => <TeamEncounterCard key={encounter.id} encounter={encounter} format={category.format} entryA={entryById.get(encounter.entryAId)} entryB={entryById.get(encounter.entryBId)} inheritedLineupA={inheritedLineupsByEncounter.get(encounter.id)?.get(encounter.entryAId)} inheritedLineupB={inheritedLineupsByEncounter.get(encounter.id)?.get(encounter.entryBId)} locale={locale} busy={busy} mutate={mutate} />)}
       </div>
     </article>
   );
@@ -700,6 +714,8 @@ function TeamEncounterCard({
   format,
   entryA,
   entryB,
+  inheritedLineupA,
+  inheritedLineupB,
   locale,
   busy,
   mutate,
@@ -708,6 +724,8 @@ function TeamEncounterCard({
   format: TeamFormat | null;
   entryA: TeamEntry | undefined;
   entryB: TeamEntry | undefined;
+  inheritedLineupA: TeamLineup | undefined;
+  inheritedLineupB: TeamLineup | undefined;
   locale: Locale;
   busy: boolean;
   mutate: (fn: () => Promise<unknown>) => Promise<void>;
@@ -734,8 +752,8 @@ function TeamEncounterCard({
       <details>
         <summary>{tr(locale, "Alineaciones", "Lineups")} · {lineupA?.status ?? "draft"} / {lineupB?.status ?? "draft"}</summary>
         <div className="team-lineup-grid">
-          <TeamLineupEditor encounter={encounter} entry={entryA} lineup={lineupA} format={format} locale={locale} busy={busy} mutate={mutate} />
-          <TeamLineupEditor encounter={encounter} entry={entryB} lineup={lineupB} format={format} locale={locale} busy={busy} mutate={mutate} />
+          <TeamLineupEditor encounter={encounter} entry={entryA} lineup={lineupA} inheritedLineup={inheritedLineupA} format={format} locale={locale} busy={busy} mutate={mutate} />
+          <TeamLineupEditor encounter={encounter} entry={entryB} lineup={lineupB} inheritedLineup={inheritedLineupB} format={format} locale={locale} busy={busy} mutate={mutate} />
         </div>
       </details>
 
@@ -749,6 +767,7 @@ function TeamLineupEditor({
   encounter,
   entry,
   lineup,
+  inheritedLineup,
   format,
   locale,
   busy,
@@ -757,6 +776,7 @@ function TeamLineupEditor({
   encounter: TeamEncounter;
   entry: TeamEntry;
   lineup: TeamLineup | undefined;
+  inheritedLineup: TeamLineup | undefined;
   format: TeamFormat;
   locale: Locale;
   busy: boolean;
@@ -778,14 +798,16 @@ function TeamLineupEditor({
     }));
   };
   const assignmentMap = new Map<string, string[]>();
-  lineup?.assignments.forEach((assignment) => {
+  const assignmentSource = lineup ?? inheritedLineup;
+  assignmentSource?.assignments.forEach((assignment) => {
     const list = assignmentMap.get(assignment.rubberKey) ?? [];
     list[assignment.position - 1] = assignment.personId;
     assignmentMap.set(assignment.rubberKey, list);
   });
   return (
     <form className="team-lineup-editor" onSubmit={(event) => void save(event)}>
-      <div className="team-lineup-title"><strong>{entry.displayName}</strong><span className="pill">{lineup?.status ?? "draft"}</span></div>
+      <div className="team-lineup-title"><strong>{entry.displayName}</strong><span className="pill">{lineup?.status ?? (inheritedLineup ? tr(locale, "heredada", "inherited") : "draft")}</span></div>
+      {!lineup && inheritedLineup ? <small className="muted">{tr(locale, "Última alineación precargada; podés cambiarla antes de guardar.", "Last lineup prefilled; you can change it before saving.")}</small> : null}
       {format.encounter.rubbers.slice().sort((a, b) => a.order - b.order).map((rubber) => {
         const current = assignmentMap.get(rubber.key) ?? [];
         const slots = rubber.mode === "singles" ? 1 : 2;
@@ -921,7 +943,7 @@ export function TeamResultsPanel({ tournamentId, locale }: Props) {
   const items=teamResultItems(detail);
   const active=items.filter(item=>item.match.status!=="finished"&&item.match.status!=="skipped"&&item.match.scheduleStatus!=="cancelled");
   const completed=items.filter(item=>item.match.status==="finished");
-  const mutate=async(fn:()=>Promise<unknown>)=>{setBusy(true);setMutationError("");try{await fn();await reload();}catch(e){setMutationError(e instanceof Error?e.message:"TEAM_RESULT_FAILED");}finally{setBusy(false);}};
+  const mutate=async(fn:()=>Promise<unknown>)=>{setBusy(true);setMutationError("");let refresh=false;try{await fn();refresh=true;}catch(e){setMutationError(e instanceof Error?e.message:"TEAM_RESULT_FAILED");}finally{setBusy(false);}if(refresh)void reload();};
   const row=(item:TeamResultItem,next=false)=><article className={`team-global-result ${next?"is-next":""}`} key={item.match.id}><div className="team-global-result-context"><span className="pill">TEAM · {item.category.name}</span><strong>{item.encounter.sideA} — {item.encounter.sideB}</strong><small>{item.match.scheduleStart?`${new Date(item.match.scheduleStart*1000).toLocaleString("es-UY",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})} · ${item.match.courtLabel??"—"}`:tr(locale,"Sin horario","Unscheduled")} · {tr(locale,"Grupo","Group")} {item.encounter.groupName??"—"}</small></div><TeamRubberResultEditor match={item.match} rubberLabel={item.label} sideA={item.encounter.sideA} sideB={item.encounter.sideB} lineupsLocked={item.lineupsLocked} locale={locale} busy={busy} mutate={mutate}/></article>;
   return <section className="tpw-stack team-global-results"><article className="panel"><div className="panel-title"><div><div className="eyebrow">TEAM RESULTS</div><h2>{tr(locale,"Resultados Team por cronograma","Team results by schedule")}</h2><p>{tr(locale,"Los rubbers aparecen en el orden real del cronograma global y actualizan automáticamente la serie y los standings.","Rubbers follow the global schedule order and automatically update encounter score and standings.")}</p></div><span>{completed.length}/{items.filter(item=>item.match.status!=="skipped").length}</span></div>{mutationError&&<div className="tpw-alert">{mutationError}</div>}<div className="results-section"><h3>{tr(locale,"Pendientes","Pending")}</h3>{active.length?active.map((item,index)=>row(item,index===0)):<div className="empty-state">{tr(locale,"No quedan rubbers Team pendientes.","No pending Team rubbers.")}</div>}</div>{completed.length>0&&<details className="completed-results"><summary>{tr(locale,"Resultados Team cargados","Completed Team results")} · {completed.length}</summary>{completed.slice().sort((a,b)=>(b.match.scheduleStart??0)-(a.match.scheduleStart??0)).map(item=>row(item))}</details>}</article></section>;
 }
