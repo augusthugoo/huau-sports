@@ -607,7 +607,7 @@ async function createPersonalRegistration(
 
   await env.HUAU_DB.prepare(
     `INSERT INTO tournament_registrations (id,tournament_id,category_id,entry_id,user_id,registration_number,status,participant_count,price_scope,base_amount_minor,discount_minor,final_amount_minor,currency,waitlist_position,created_at,updated_at,version,covered_by_registration_id)
-     VALUES (?,?,?,NULL,?,?,?,?,?,?,?,0,?,?,NULL,?,?,1,NULL)`,
+     VALUES (?,?,?,NULL,?,?,?,?,?,?,0,?,?,NULL,?,?,1,NULL)`,
   ).bind(registrationId, tournament.id, category.id, user.id, number, status, 1, pricing.priceScope, amount, amount, category.currency ?? "UYU", stamp, stamp).run();
   if (category.entryType === "pair") await syncLegacyAssignment(env, identity.playerProfileId, category.id, null);
   return { registrationId, entryId: null, status, waitlistPosition: null };
