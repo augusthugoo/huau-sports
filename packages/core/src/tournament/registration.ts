@@ -138,3 +138,27 @@ export function compactWaitlistPositions<T extends { waitlistPosition: number | 
     .sort((a, b) => Number(a.waitlistPosition ?? Number.MAX_SAFE_INTEGER) - Number(b.waitlistPosition ?? Number.MAX_SAFE_INTEGER))
     .map((row, index) => ({ ...row, waitlistPosition: index + 1 }));
 }
+
+export type TeamAdditionalParticipationMode = "full" | "extra" | "free";
+
+export function resolveTeamIndividualPrice(input: {
+  individualFeeMinor: number | null;
+  additionalMode: TeamAdditionalParticipationMode;
+  additionalFeeMinor: number | null;
+  priorTeamRegistrationCount: number;
+}): number {
+  const full = Math.max(0, Math.trunc(input.individualFeeMinor ?? 0));
+  const prior = Math.max(0, Math.trunc(input.priorTeamRegistrationCount));
+  if (prior === 0) return full;
+  if (input.additionalMode === "free") return 0;
+  if (input.additionalMode === "extra") return Math.max(0, Math.trunc(input.additionalFeeMinor ?? 0));
+  return full;
+}
+
+export function teamAgeDivisionOverlapBlocked(input: {
+  allowOverlap: boolean;
+  priorAgeDivisionCount: number;
+  categoryHasAgeRule: boolean;
+}): boolean {
+  return !input.allowOverlap && input.categoryHasAgeRule && Math.max(0, Math.trunc(input.priorAgeDivisionCount)) > 0;
+}

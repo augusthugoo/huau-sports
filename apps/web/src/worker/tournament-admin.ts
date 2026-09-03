@@ -98,6 +98,7 @@ type CategorySnapshotPayload = {
   matchSideMembers?: SqlRow[];
   registrations?: SqlRow[];
   entryInvitations?: SqlRow[];
+  registrationMatchInvitations?: SqlRow[];
   registrationAdjustments?: SqlRow[];
 };
 
@@ -206,6 +207,11 @@ type TournamentSettingsRow = {
   extraCategoryFeeMinor: number | null;
   registrationCloseAt: number | null;
   maxCategoriesPerPlayer: number | null;
+  teamIndividualFeeMinor: number | null;
+  teamFullFeeMinor: number | null;
+  teamAdditionalParticipationMode: "full" | "extra" | "free";
+  teamAdditionalFeeMinor: number | null;
+  allowTeamAgeDivisionOverlap: number;
   minimumGroup: number;
   preferredGroup: number;
   maximumGroup: number;
@@ -252,7 +258,9 @@ async function settingsForTournament(env: Env, tournamentId: string): Promise<To
     `SELECT tournament_id as tournamentId,club,city,location,description,contact,daily_start as dailyStart,daily_end as dailyEnd,
             default_match_minutes as defaultMatchMinutes,payment_type as paymentType,entry_fee_minor as entryFeeMinor,
             base_fee_minor as baseFeeMinor,extra_category_fee_minor as extraCategoryFeeMinor,registration_close_at as registrationCloseAt,
-            max_categories_per_player as maxCategoriesPerPlayer,minimum_group as minimumGroup,preferred_group as preferredGroup,maximum_group as maximumGroup,
+            max_categories_per_player as maxCategoriesPerPlayer,team_individual_fee_minor as teamIndividualFeeMinor,team_full_fee_minor as teamFullFeeMinor,
+            COALESCE(team_additional_participation_mode,'full') as teamAdditionalParticipationMode,team_additional_fee_minor as teamAdditionalFeeMinor,
+            COALESCE(allow_team_age_division_overlap,1) as allowTeamAgeDivisionOverlap,minimum_group as minimumGroup,preferred_group as preferredGroup,maximum_group as maximumGroup,
             suggested_qualifiers_per_group as suggestedQualifiersPerGroup,seeding_method as seedingMethod,
             minimum_rest_slots as minimumRestSlots
        FROM tournament_settings WHERE tournament_id=?`,
@@ -968,6 +976,7 @@ async function snapshotCategory(
     matchSideMembers,
     registrations,
     entryInvitations,
+    registrationMatchInvitations,
     registrationAdjustments,
   ] = await Promise.all([
     env.HUAU_DB.prepare(`SELECT * FROM tournament_categories WHERE id=?`).bind(category.id).first(),
@@ -990,10 +999,11 @@ async function snapshotCategory(
     env.HUAU_DB.prepare(`SELECT msm.* FROM match_side_members msm JOIN matches m ON m.id=msm.match_id JOIN competition_encounters ce ON ce.id=m.encounter_id JOIN competitions c ON c.id=ce.competition_id WHERE c.category_id=? ORDER BY msm.match_id,msm.side,msm.position`).bind(category.id).all(),
     env.HUAU_DB.prepare(`SELECT * FROM tournament_registrations WHERE category_id=? ORDER BY created_at,id`).bind(category.id).all(),
     env.HUAU_DB.prepare(`SELECT * FROM entry_invitations WHERE category_id=? ORDER BY created_at,id`).bind(category.id).all(),
+    env.HUAU_DB.prepare(`SELECT * FROM registration_match_invitations WHERE category_id=? ORDER BY created_at,id`).bind(category.id).all(),
     env.HUAU_DB.prepare(`SELECT ra.* FROM registration_adjustments ra JOIN tournament_registrations tr ON tr.id=ra.registration_id WHERE tr.category_id=? ORDER BY ra.created_at,ra.id`).bind(category.id).all(),
   ]);
   const payload: CategorySnapshotPayload = {
-    snapshotVersion: 4,
+    snapshotVersion: 5,
     category: (categoryFull ?? {}) as SqlRow,
     entries: entries.results as SqlRow[],
     entryMembers: entryMembers.results as SqlRow[],
@@ -1014,6 +1024,7 @@ async function snapshotCategory(
     matchSideMembers: matchSideMembers.results as SqlRow[],
     registrations: registrations.results as SqlRow[],
     entryInvitations: entryInvitations.results as SqlRow[],
+    registrationMatchInvitations: registrationMatchInvitations.results as SqlRow[],
     registrationAdjustments: registrationAdjustments.results as SqlRow[],
   };
   const snapshotId = uuid();
@@ -1626,18 +1637,18 @@ async function restoreSnapshot(
     statements.push(env.HUAU_DB.prepare(`DELETE FROM tournament_categories WHERE id=?`).bind(snapshot.scopeId));
     statements.push(env.HUAU_DB.prepare(
       `INSERT INTO tournament_categories
-       (id,tournament_id,name,entry_type,competition_gender,max_entries,registration_status,price_scope,price_minor,currency,format_version_id,scheduled_date,sort_order,structure_locked,created_at,updated_at,version)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       (id,tournament_id,name,entry_type,competition_gender,min_age,max_age,max_entries,registration_status,price_scope,price_minor,currency,format_version_id,scheduled_date,sort_order,structure_locked,created_at,updated_at,version)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ).bind(
-      category.id, category.tournament_id, category.name, category.entry_type, category.competition_gender, category.max_entries,
+      category.id, category.tournament_id, category.name, category.entry_type, category.competition_gender, category.min_age ?? null, category.max_age ?? null, category.max_entries,
       category.registration_status, category.price_scope, category.price_minor, category.currency, null,
       category.scheduled_date, category.sort_order, category.structure_locked, category.created_at, unixNow(), category.version,
     ));
     for (const row of payload.entries ?? []) statements.push(env.HUAU_DB.prepare(
       `INSERT INTO tournament_entries
-       (id,category_id,entry_type,display_name,captain_user_id,status,waitlist_position,seed_rating,created_by_user_id,created_by_admin,source_kind,source_key,created_at,updated_at,version)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    ).bind(row.id,row.category_id,row.entry_type,row.display_name,row.captain_user_id,row.status,row.waitlist_position,row.seed_rating,row.created_by_user_id,row.created_by_admin,row.source_kind ?? null,row.source_key ?? null,row.created_at,row.updated_at,row.version));
+       (id,category_id,entry_type,display_name,captain_user_id,status,waitlist_position,seed_rating,created_by_user_id,created_by_admin,source_kind,source_key,created_at,updated_at,version,team_payment_mode)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ).bind(row.id,row.category_id,row.entry_type,row.display_name,row.captain_user_id,row.status,row.waitlist_position,row.seed_rating,row.created_by_user_id,row.created_by_admin,row.source_kind ?? null,row.source_key ?? null,row.created_at,row.updated_at,row.version,row.team_payment_mode ?? null));
     for (const row of payload.entryMembers ?? []) statements.push(env.HUAU_DB.prepare(
       `INSERT INTO entry_members (id,entry_id,organization_person_id,member_role,roster_slot,status,invited_user_id,accepted_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
     ).bind(row.id,row.entry_id,row.organization_person_id,row.member_role,row.roster_slot,row.status,row.invited_user_id,row.accepted_at,row.created_at,row.updated_at));
@@ -1708,8 +1719,10 @@ async function restoreSnapshot(
     ).bind(row.category_id,row.status,row.state_json,row.created_by_user_id,row.created_at,row.updated_at));
   }
   statements.push(env.HUAU_DB.prepare(`UPDATE tournaments SET working_revision=working_revision+1,updated_at=? WHERE id=?`).bind(unixNow(), snapshot.tournamentId));
-  for (const row of payload.registrations ?? []) statements.push(env.HUAU_DB.prepare(`INSERT OR REPLACE INTO tournament_registrations (id,tournament_id,category_id,entry_id,user_id,registration_number,status,participant_count,price_scope,base_amount_minor,discount_minor,final_amount_minor,currency,waitlist_position,created_at,updated_at,version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(row.id,row.tournament_id,row.category_id,row.entry_id,row.user_id,row.registration_number,row.status,row.participant_count,row.price_scope,row.base_amount_minor,row.discount_minor,row.final_amount_minor,row.currency,row.waitlist_position,row.created_at,row.updated_at,row.version));
+  for (const row of payload.registrations ?? []) statements.push(env.HUAU_DB.prepare(`INSERT OR REPLACE INTO tournament_registrations (id,tournament_id,category_id,entry_id,user_id,registration_number,status,participant_count,price_scope,base_amount_minor,discount_minor,final_amount_minor,currency,waitlist_position,created_at,updated_at,version,covered_by_registration_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)`).bind(row.id,row.tournament_id,row.category_id,row.entry_id,row.user_id,row.registration_number,row.status,row.participant_count,row.price_scope,row.base_amount_minor,row.discount_minor,row.final_amount_minor,row.currency,row.waitlist_position,row.created_at,row.updated_at,row.version));
+  for (const row of payload.registrations ?? []) if (row.covered_by_registration_id) statements.push(env.HUAU_DB.prepare(`UPDATE tournament_registrations SET covered_by_registration_id=? WHERE id=?`).bind(row.covered_by_registration_id,row.id));
   for (const row of payload.entryInvitations ?? []) statements.push(env.HUAU_DB.prepare(`INSERT OR REPLACE INTO entry_invitations (id,registration_id,entry_id,tournament_id,category_id,inviter_user_id,invitee_email,invitee_user_id,member_role,status,token,expires_at,responded_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(row.id,row.registration_id,row.entry_id,row.tournament_id,row.category_id,row.inviter_user_id,row.invitee_email,row.invitee_user_id,row.member_role,row.status,row.token,row.expires_at,row.responded_at,row.created_at,row.updated_at));
+  for (const row of payload.registrationMatchInvitations ?? []) statements.push(env.HUAU_DB.prepare(`INSERT OR REPLACE INTO registration_match_invitations (id,tournament_id,category_id,kind,inviter_registration_id,invitee_registration_id,inviter_user_id,invitee_user_id,team_entry_id,status,expires_at,responded_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(row.id,row.tournament_id,row.category_id,row.kind,row.inviter_registration_id,row.invitee_registration_id,row.inviter_user_id,row.invitee_user_id,row.team_entry_id,row.status,row.expires_at,row.responded_at,row.created_at,row.updated_at));
   for (const row of payload.registrationAdjustments ?? []) statements.push(env.HUAU_DB.prepare(`INSERT OR REPLACE INTO registration_adjustments (id,registration_id,kind,amount_minor,note,created_by_user_id,created_at) VALUES (?,?,?,?,?,?,?)`).bind(row.id,row.registration_id,row.kind,row.amount_minor,row.note,row.created_by_user_id,row.created_at));
   await runBatches(env.HUAU_DB, statements);
   await audit(env, accessResult.tournament, accessResult.user.id, "snapshot.restore", "Restored category snapshot", "category", snapshot.scopeId, { snapshotId, snapshotVersion: payload.snapshotVersion ?? 1 });
@@ -1849,7 +1862,7 @@ export async function handleTournamentAdminApi(
     const stamp = unixNow();
     await env.HUAU_DB.batch([
       env.HUAU_DB.prepare(
-        `UPDATE tournament_settings SET club=?,city=?,location=?,description=?,contact=?,daily_start=?,daily_end=?,default_match_minutes=?,payment_type=?,entry_fee_minor=?,base_fee_minor=?,extra_category_fee_minor=?,registration_close_at=?,max_categories_per_player=?,minimum_group=?,preferred_group=?,maximum_group=?,suggested_qualifiers_per_group=?,seeding_method=?,minimum_rest_slots=?,updated_at=? WHERE tournament_id=?`,
+        `UPDATE tournament_settings SET club=?,city=?,location=?,description=?,contact=?,daily_start=?,daily_end=?,default_match_minutes=?,payment_type=?,entry_fee_minor=?,base_fee_minor=?,extra_category_fee_minor=?,registration_close_at=?,max_categories_per_player=?,team_individual_fee_minor=?,team_full_fee_minor=?,team_additional_participation_mode=?,team_additional_fee_minor=?,allow_team_age_division_overlap=?,minimum_group=?,preferred_group=?,maximum_group=?,suggested_qualifiers_per_group=?,seeding_method=?,minimum_rest_slots=?,updated_at=? WHERE tournament_id=?`,
       ).bind(body.club ?? current.club,body.city ?? current.city,body.location ?? current.location,body.description ?? current.description,body.contact ?? current.contact,dailyStart,dailyEnd,
         Math.max(5,Math.trunc(Number(body.defaultMatchMinutes ?? current.defaultMatchMinutes))),body.paymentType ?? current.paymentType,
         Object.prototype.hasOwnProperty.call(body,"entryFeeMinor") ? body.entryFeeMinor ?? null : current.entryFeeMinor,
@@ -1857,6 +1870,11 @@ export async function handleTournamentAdminApi(
         Object.prototype.hasOwnProperty.call(body,"extraCategoryFeeMinor") ? body.extraCategoryFeeMinor ?? null : current.extraCategoryFeeMinor,
         Object.prototype.hasOwnProperty.call(body,"registrationCloseAt") ? body.registrationCloseAt ?? null : current.registrationCloseAt,
         Object.prototype.hasOwnProperty.call(body,"maxCategoriesPerPlayer") ? (body.maxCategoriesPerPlayer === null ? null : Math.max(1,Math.trunc(Number(body.maxCategoriesPerPlayer)))) : current.maxCategoriesPerPlayer,
+        Object.prototype.hasOwnProperty.call(body,"teamIndividualFeeMinor") ? body.teamIndividualFeeMinor ?? null : current.teamIndividualFeeMinor,
+        Object.prototype.hasOwnProperty.call(body,"teamFullFeeMinor") ? body.teamFullFeeMinor ?? null : current.teamFullFeeMinor,
+        body.teamAdditionalParticipationMode ?? current.teamAdditionalParticipationMode,
+        Object.prototype.hasOwnProperty.call(body,"teamAdditionalFeeMinor") ? body.teamAdditionalFeeMinor ?? null : current.teamAdditionalFeeMinor,
+        Object.prototype.hasOwnProperty.call(body,"allowTeamAgeDivisionOverlap") ? (Number(body.allowTeamAgeDivisionOverlap) ? 1 : 0) : current.allowTeamAgeDivisionOverlap,
         minimumGroup,preferredGroup,maximumGroup,
         Math.max(0,Math.min(2,Math.trunc(Number(body.suggestedQualifiersPerGroup ?? current.suggestedQualifiersPerGroup)))),safeLegacySeeding(body.seedingMethod ?? current.seedingMethod),
         Math.max(0,Math.min(4,Math.trunc(Number(body.minimumRestSlots ?? current.minimumRestSlots)))),stamp,tournamentId),

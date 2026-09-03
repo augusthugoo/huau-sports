@@ -1,0 +1,58 @@
+HUAU Sports — Phase 6 Registration Redesign
+============================================
+
+BASE EXPECTED
+- Branch: phase-6
+- Phase 6 QA Continuity + TS Hotfix already applied
+- huau-dev already at schema marker phase6-registration-continuity
+
+1) Overlay ZIP at repository root
+
+cd /Users/augusto/Desktop/HUAU_Sports_Phase_0_Foundation
+unzip -o ~/Downloads/HUAU_Sports_Phase_6_Registration_Redesign.zip -d .
+
+2) Run project gates BEFORE any DB change
+
+pnpm typecheck && pnpm lint && pnpm test
+
+STOP if any gate is red. Do not apply 0007 yet.
+
+3) If all gates are green, back up huau-dev
+
+mkdir -p backups
+pnpm --filter @huau/web exec wrangler d1 export HUAU_DB \
+  --remote \
+  --output=../../backups/huau-dev-before-phase6-registration-redesign.sql
+
+4) Apply ONLY migration 0007
+
+pnpm --filter @huau/web exec wrangler d1 execute HUAU_DB \
+  --remote \
+  --file=../../packages/db/drizzle/0007_phase6_registration_redesign.sql
+
+DO NOT run `wrangler d1 migrations apply` because this project's historical D1 migration ledger is incomplete.
+
+5) Verify
+
+pnpm --filter @huau/web exec wrangler d1 execute HUAU_DB --remote --command \
+"SELECT value FROM app_meta WHERE key='schema_version';"
+
+Expected:
+phase6-registration-redesign
+
+pnpm --filter @huau/web exec wrangler d1 execute HUAU_DB --remote --command \
+"SELECT name FROM sqlite_master WHERE type='table' AND name='registration_match_invitations';"
+
+Expected:
+registration_match_invitations
+
+pnpm --filter @huau/web exec wrangler d1 execute HUAU_DB --remote --command \
+"SELECT name FROM pragma_table_info('tournament_settings') WHERE name IN ('team_individual_fee_minor','team_full_fee_minor','team_additional_participation_mode','team_additional_fee_minor','allow_team_age_division_overlap') ORDER BY name;"
+
+6) Commit + push
+
+git add -A
+git commit -m "feat: redesign phase 6 registration matching"
+git push
+
+7) Dev preview QA only. Do not touch staging/main until accepted.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ageOnDate, capacityDecision, categoryLimitReached, compactWaitlistPositions, evaluateRegistrationEligibility, registrationPriceMinor, resolveRegistrationPricing } from "./registration";
+import { ageOnDate, capacityDecision, categoryLimitReached, compactWaitlistPositions, evaluateRegistrationEligibility, registrationPriceMinor, resolveRegistrationPricing, resolveTeamIndividualPrice, teamAgeDivisionOverlapBlocked } from "./registration";
 
 const base = {
   entryType: "individual" as const,
@@ -76,6 +76,19 @@ describe("Phase 6 registration acceptance", () => {
     };
     expect(resolveRegistrationPricing({ ...common, priorActiveRegistrationCount: 0 }).priceMinor).toBe(90000);
     expect(resolveRegistrationPricing({ ...common, priorActiveRegistrationCount: 1 }).priceMinor).toBe(30000);
+  });
+
+  it("prices additional team divisions with full, extra or free policies", () => {
+    expect(resolveTeamIndividualPrice({ individualFeeMinor: 150000, additionalMode: "full", additionalFeeMinor: 50000, priorTeamRegistrationCount: 0 })).toBe(150000);
+    expect(resolveTeamIndividualPrice({ individualFeeMinor: 150000, additionalMode: "full", additionalFeeMinor: 50000, priorTeamRegistrationCount: 1 })).toBe(150000);
+    expect(resolveTeamIndividualPrice({ individualFeeMinor: 150000, additionalMode: "extra", additionalFeeMinor: 50000, priorTeamRegistrationCount: 1 })).toBe(50000);
+    expect(resolveTeamIndividualPrice({ individualFeeMinor: 150000, additionalMode: "free", additionalFeeMinor: 50000, priorTeamRegistrationCount: 1 })).toBe(0);
+  });
+
+  it("can disable a second age-division team participation without blocking non-age team categories", () => {
+    expect(teamAgeDivisionOverlapBlocked({ allowOverlap: false, priorAgeDivisionCount: 1, categoryHasAgeRule: true })).toBe(true);
+    expect(teamAgeDivisionOverlapBlocked({ allowOverlap: true, priorAgeDivisionCount: 1, categoryHasAgeRule: true })).toBe(false);
+    expect(teamAgeDivisionOverlapBlocked({ allowOverlap: false, priorAgeDivisionCount: 1, categoryHasAgeRule: false })).toBe(false);
   });
 
   it("ageOnDate handles birthday boundary", () => {

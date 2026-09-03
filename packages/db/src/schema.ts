@@ -357,6 +357,7 @@ export const tournamentEntries = sqliteTable(
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
     version: integer("version").notNull().default(1),
+    teamPaymentMode: text("team_payment_mode", { enum: ["individual", "team_full"] }),
   },
   (table) => [index("tournament_entries_category_idx").on(table.categoryId, table.status)],
 );
@@ -724,6 +725,11 @@ export const tournamentSettings = sqliteTable("tournament_settings", {
   extraCategoryFeeMinor: integer("extra_category_fee_minor"),
   registrationCloseAt: integer("registration_close_at"),
   maxCategoriesPerPlayer: integer("max_categories_per_player"),
+  teamIndividualFeeMinor: integer("team_individual_fee_minor"),
+  teamFullFeeMinor: integer("team_full_fee_minor"),
+  teamAdditionalParticipationMode: text("team_additional_participation_mode", { enum: ["full", "extra", "free"] }).notNull().default("full"),
+  teamAdditionalFeeMinor: integer("team_additional_fee_minor"),
+  allowTeamAgeDivisionOverlap: integer("allow_team_age_division_overlap", { mode: "boolean" }).notNull().default(true),
   minimumGroup: integer("minimum_group").notNull().default(3),
   preferredGroup: integer("preferred_group").notNull().default(4),
   maximumGroup: integer("maximum_group").notNull().default(4),
@@ -804,12 +810,38 @@ export const tournamentRegistrations = sqliteTable(
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
     version: integer("version").notNull().default(1),
+    coveredByRegistrationId: text("covered_by_registration_id"),
   },
   (table) => [
     uniqueIndex("tournament_registrations_tournament_number_uq").on(table.tournamentId, table.registrationNumber),
     index("tournament_registrations_tournament_idx").on(table.tournamentId, table.status, table.createdAt),
     index("tournament_registrations_category_idx").on(table.categoryId, table.status, table.waitlistPosition),
     index("tournament_registrations_user_idx").on(table.userId, table.status, table.createdAt),
+  ],
+);
+
+
+export const registrationMatchInvitations = sqliteTable(
+  "registration_match_invitations",
+  {
+    id: text("id").primaryKey(),
+    tournamentId: text("tournament_id").notNull().references(() => tournaments.id, { onDelete: "cascade" }),
+    categoryId: text("category_id").notNull().references(() => tournamentCategories.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["pair", "team"] }).notNull(),
+    inviterRegistrationId: text("inviter_registration_id").notNull().references(() => tournamentRegistrations.id, { onDelete: "cascade" }),
+    inviteeRegistrationId: text("invitee_registration_id").notNull().references(() => tournamentRegistrations.id, { onDelete: "cascade" }),
+    inviterUserId: text("inviter_user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+    inviteeUserId: text("invitee_user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+    teamEntryId: text("team_entry_id").references(() => tournamentEntries.id, { onDelete: "cascade" }),
+    status: text("status", { enum: ["pending", "accepted", "declined", "cancelled", "expired"] }).notNull(),
+    expiresAt: integer("expires_at").notNull(),
+    respondedAt: integer("responded_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("registration_match_invitee_idx").on(table.inviteeUserId, table.status, table.createdAt),
+    index("registration_match_inviter_idx").on(table.inviterRegistrationId, table.status, table.createdAt),
   ],
 );
 
