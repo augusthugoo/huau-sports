@@ -736,3 +736,13 @@ textarea { resize:vertical; }
 .registration-cancel-all-list span,.player-removal-note{color:var(--muted,#888);font-size:.86rem}
 .player-removal-note{margin:0}
 @media(max-width:700px){.payment-bank-data{grid-template-columns:1fr}.registration-cancel-all-list>div{align-items:flex-start;flex-direction:column}}
+
+/* Phase 7 closeout v2: keep My payments aligned with the My HUAU content column. */
+.payments-user-section{
+  width:min(1180px,92vw);
+  margin-left:auto;
+  margin-right:auto;
+}
+.payments-user-section + .my-registrations-page{
+  padding-top:34px;
+}
