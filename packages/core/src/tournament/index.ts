@@ -12,3 +12,4 @@ export * from "./parity";
 export * from "./persistence";
 
 export * from "./registration";
+export * from "./payment";

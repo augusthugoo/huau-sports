@@ -1,0 +1,30 @@
+HUAU SPORTS — PHASE 7 CLOSEOUT HOTFIX
+
+Purpose
+- Compact My Payments and transfer UX
+- Show proof max size (8 MB)
+- Add Cancel all registrations per tournament in My HUAU
+- Clarify Players removal vs online registration/payment cancellation
+- Document Mercado Pago as deferred acceptance
+
+INSTALL
+1. Apply over the existing phase-7 branch:
+   unzip -o HUAU_Sports_Phase_7_Closeout_Hotfix.zip -d .
+
+2. Run gates:
+   pnpm typecheck && pnpm lint && pnpm test
+
+3. NO D1 migration. Do not re-run 0008.
+
+4. Commit/push:
+   git add -A
+   git commit -m "fix: close out phase 7 manual payment UX"
+   git push
+
+QA
+- My Payments card is compact until View details is opened.
+- Transfer proof label says Max 8 MB.
+- Cancel all creates refund-review requests for paid categories and immediately cancels unpaid categories.
+- Remove from setup warns that online registrations/payments are preserved.
+
+Mercado Pago remains implemented but acceptance/configuration is deferred.

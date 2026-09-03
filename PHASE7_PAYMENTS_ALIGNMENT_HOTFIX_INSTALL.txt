@@ -1,0 +1,13 @@
+HUAU Sports — Phase 7 Payments alignment hotfix
+
+Purpose:
+- Align "Mis pagos" with the same centered content width used by "Mis inscripciones".
+- Reduce the excessive vertical gap between the payments block and registrations.
+
+No D1 migration.
+
+Apply from repository root:
+  unzip -o ~/Downloads/HUAU_Sports_Phase_7_Payments_Alignment_Hotfix.zip -d .
+  pnpm typecheck && pnpm lint && pnpm test
+
+Then commit/push on phase-7 if green.

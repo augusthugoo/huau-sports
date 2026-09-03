@@ -811,6 +811,8 @@ export const tournamentRegistrations = sqliteTable(
     updatedAt: integer("updated_at").notNull(),
     version: integer("version").notNull().default(1),
     coveredByRegistrationId: text("covered_by_registration_id"),
+    paidAmountMinor: integer("paid_amount_minor").notNull().default(0),
+    refundedAmountMinor: integer("refunded_amount_minor").notNull().default(0),
   },
   (table) => [
     uniqueIndex("tournament_registrations_tournament_number_uq").on(table.tournamentId, table.registrationNumber),
@@ -879,5 +881,224 @@ export const registrationAdjustments = sqliteTable(
     createdAt: integer("created_at").notNull(),
   },
   (table) => [index("registration_adjustments_registration_idx").on(table.registrationId, table.createdAt)],
+);
+
+// Phase 7: Tournament payments and financial audit.
+export const paymentAccounts = sqliteTable(
+  "payment_accounts",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    provider: text("provider", { enum: ["mercado_pago"] }).notNull(),
+    label: text("label").notNull(),
+    status: text("status", { enum: ["active", "expired", "revoked", "error"] }).notNull(),
+    externalAccountId: text("external_account_id"),
+    publicKey: text("public_key"),
+    accessTokenEncrypted: text("access_token_encrypted").notNull(),
+    refreshTokenEncrypted: text("refresh_token_encrypted"),
+    tokenExpiresAt: integer("token_expires_at"),
+    liveMode: integer("live_mode", { mode: "boolean" }).notNull().default(false),
+    createdByUserId: text("created_by_user_id").notNull().references(() => user.id),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("payment_accounts_org_idx").on(table.organizationId, table.provider, table.status),
+    uniqueIndex("payment_accounts_provider_external_uq").on(table.provider, table.externalAccountId),
+  ],
+);
+
+export const tournamentPaymentSettings = sqliteTable("tournament_payment_settings", {
+  tournamentId: text("tournament_id").primaryKey().references(() => tournaments.id, { onDelete: "cascade" }),
+  bankTransferEnabled: integer("bank_transfer_enabled", { mode: "boolean" }).notNull().default(true),
+  cashEnabled: integer("cash_enabled", { mode: "boolean" }).notNull().default(false),
+  mercadoPagoEnabled: integer("mercado_pago_enabled", { mode: "boolean" }).notNull().default(false),
+  mercadoPagoAccountId: text("mercado_pago_account_id").references(() => paymentAccounts.id, { onDelete: "set null" }),
+  bankName: text("bank_name"),
+  bankAccountHolder: text("bank_account_holder"),
+  bankAccountNumber: text("bank_account_number"),
+  bankAccountAlias: text("bank_account_alias"),
+  bankCurrency: text("bank_currency").notNull().default("UYU"),
+  bankInstructions: text("bank_instructions"),
+  transferProofRequired: integer("transfer_proof_required", { mode: "boolean" }).notNull().default(true),
+  cashInstructions: text("cash_instructions"),
+  paymentDueAt: integer("payment_due_at"),
+  refundPolicy: text("refund_policy", { enum: ["manual", "none", "full_before_deadline"] }).notNull().default("manual"),
+  refundDeadlineAt: integer("refund_deadline_at"),
+  cancellationPolicyText: text("cancellation_policy_text"),
+  updatedByUserId: text("updated_by_user_id").references(() => user.id, { onDelete: "set null" }),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export const paymentOrders = sqliteTable(
+  "payment_orders",
+  {
+    id: text("id").primaryKey(),
+    tournamentId: text("tournament_id").notNull().references(() => tournaments.id, { onDelete: "cascade" }),
+    payerKind: text("payer_kind", { enum: ["user", "manual_profile"] }).notNull(),
+    payerUserId: text("payer_user_id").references(() => user.id, { onDelete: "restrict" }),
+    payerProfileId: text("payer_profile_id").references(() => tournamentPlayerProfiles.id, { onDelete: "restrict" }),
+    payerName: text("payer_name").notNull(),
+    payerEmail: text("payer_email"),
+    currency: text("currency").notNull().default("UYU"),
+    subtotalMinor: integer("subtotal_minor").notNull().default(0),
+    discountMinor: integer("discount_minor").notNull().default(0),
+    totalAmountMinor: integer("total_amount_minor").notNull().default(0),
+    amountPaidMinor: integer("amount_paid_minor").notNull().default(0),
+    amountRefundedMinor: integer("amount_refunded_minor").notNull().default(0),
+    status: text("status", { enum: ["draft", "awaiting_payment", "pending_review", "paid", "cancelled", "partially_refunded", "refunded"] }).notNull(),
+    selectedMethod: text("selected_method", { enum: ["mercado_pago", "bank_transfer", "cash"] }),
+    dueAt: integer("due_at"),
+    paidAt: integer("paid_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+    version: integer("version").notNull().default(1),
+  },
+  (table) => [
+    index("payment_orders_tournament_idx").on(table.tournamentId, table.status, table.updatedAt),
+    index("payment_orders_user_idx").on(table.payerUserId, table.tournamentId, table.status),
+    index("payment_orders_profile_idx").on(table.payerProfileId, table.tournamentId, table.status),
+  ],
+);
+
+export const paymentOrderItems = sqliteTable(
+  "payment_order_items",
+  {
+    id: text("id").primaryKey(),
+    orderId: text("order_id").notNull().references(() => paymentOrders.id, { onDelete: "cascade" }),
+    registrationId: text("registration_id").references(() => tournamentRegistrations.id, { onDelete: "set null" }),
+    playerProfileId: text("player_profile_id").references(() => tournamentPlayerProfiles.id, { onDelete: "set null" }),
+    categoryId: text("category_id").references(() => tournamentCategories.id, { onDelete: "set null" }),
+    label: text("label").notNull(),
+    amountMinor: integer("amount_minor").notNull().default(0),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    index("payment_order_items_order_idx").on(table.orderId),
+    index("payment_order_items_registration_idx").on(table.registrationId),
+    index("payment_order_items_profile_idx").on(table.playerProfileId, table.categoryId),
+  ],
+);
+
+export const paymentAttempts = sqliteTable(
+  "payment_attempts",
+  {
+    id: text("id").primaryKey(),
+    orderId: text("order_id").notNull().references(() => paymentOrders.id, { onDelete: "cascade" }),
+    method: text("method", { enum: ["mercado_pago", "bank_transfer", "cash"] }).notNull(),
+    status: text("status", { enum: ["created", "pending", "submitted", "approved", "rejected", "cancelled", "refunded"] }).notNull(),
+    amountMinor: integer("amount_minor").notNull(),
+    externalId: text("external_id"),
+    externalStatus: text("external_status"),
+    externalReference: text("external_reference"),
+    idempotencyKey: text("idempotency_key"),
+    note: text("note"),
+    submittedByUserId: text("submitted_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    reviewedByUserId: text("reviewed_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    submittedAt: integer("submitted_at"),
+    reviewedAt: integer("reviewed_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("payment_attempts_order_idx").on(table.orderId, table.createdAt),
+    index("payment_attempts_external_idx").on(table.method, table.externalId),
+    uniqueIndex("payment_attempts_idempotency_uq").on(table.idempotencyKey),
+  ],
+);
+
+export const paymentProofs = sqliteTable(
+  "payment_proofs",
+  {
+    id: text("id").primaryKey(),
+    attemptId: text("attempt_id").notNull().references(() => paymentAttempts.id, { onDelete: "cascade" }),
+    objectKey: text("object_key").notNull().unique(),
+    originalName: text("original_name").notNull(),
+    contentType: text("content_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    uploadedByUserId: text("uploaded_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    uploadedAt: integer("uploaded_at").notNull(),
+  },
+  (table) => [index("payment_proofs_attempt_idx").on(table.attemptId, table.uploadedAt)],
+);
+
+export const paymentEvents = sqliteTable(
+  "payment_events",
+  {
+    id: text("id").primaryKey(),
+    tournamentId: text("tournament_id").notNull().references(() => tournaments.id, { onDelete: "cascade" }),
+    orderId: text("order_id").references(() => paymentOrders.id, { onDelete: "set null" }),
+    attemptId: text("attempt_id").references(() => paymentAttempts.id, { onDelete: "set null" }),
+    eventType: text("event_type").notNull(),
+    providerEventId: text("provider_event_id"),
+    actorUserId: text("actor_user_id").references(() => user.id, { onDelete: "set null" }),
+    summary: text("summary").notNull(),
+    metadataJson: text("metadata_json"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    index("payment_events_tournament_idx").on(table.tournamentId, table.createdAt),
+    index("payment_events_order_idx").on(table.orderId, table.createdAt),
+  ],
+);
+
+export const paymentOauthStates = sqliteTable(
+  "payment_oauth_states",
+  {
+    id: text("id").primaryKey(),
+    state: text("state").notNull().unique(),
+    organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    tournamentId: text("tournament_id").notNull().references(() => tournaments.id, { onDelete: "cascade" }),
+    initiatedByUserId: text("initiated_by_user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+    codeVerifier: text("code_verifier").notNull(),
+    expiresAt: integer("expires_at").notNull(),
+    consumedAt: integer("consumed_at"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [index("payment_oauth_states_expiry_idx").on(table.expiresAt, table.consumedAt)],
+);
+
+export const registrationCancellationRequests = sqliteTable(
+  "registration_cancellation_requests",
+  {
+    id: text("id").primaryKey(),
+    registrationId: text("registration_id").notNull().references(() => tournamentRegistrations.id, { onDelete: "cascade" }),
+    tournamentId: text("tournament_id").notNull().references(() => tournaments.id, { onDelete: "cascade" }),
+    requestedByUserId: text("requested_by_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+    status: text("status", { enum: ["pending", "approved", "rejected", "cancelled"] }).notNull(),
+    reason: text("reason"),
+    netPaidMinor: integer("net_paid_minor").notNull().default(0),
+    refundAmountMinor: integer("refund_amount_minor").notNull().default(0),
+    adminNote: text("admin_note"),
+    reviewedByUserId: text("reviewed_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    reviewedAt: integer("reviewed_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [index("registration_cancellation_requests_tournament_idx").on(table.tournamentId, table.status, table.createdAt)],
+);
+
+export const paymentRefunds = sqliteTable(
+  "payment_refunds",
+  {
+    id: text("id").primaryKey(),
+    orderId: text("order_id").notNull().references(() => paymentOrders.id, { onDelete: "cascade" }),
+    registrationId: text("registration_id").references(() => tournamentRegistrations.id, { onDelete: "set null" }),
+    amountMinor: integer("amount_minor").notNull(),
+    method: text("method", { enum: ["mercado_pago", "bank_transfer", "cash", "other"] }).notNull(),
+    status: text("status", { enum: ["pending", "completed", "rejected"] }).notNull(),
+    externalId: text("external_id"),
+    note: text("note"),
+    createdByUserId: text("created_by_user_id").notNull().references(() => user.id),
+    completedByUserId: text("completed_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    createdAt: integer("created_at").notNull(),
+    completedAt: integer("completed_at"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("payment_refunds_order_idx").on(table.orderId, table.status, table.createdAt),
+    index("payment_refunds_registration_idx").on(table.registrationId, table.status, table.createdAt),
+  ],
 );
 

@@ -1,0 +1,101 @@
+HUAU Sports — Phase 7 Payments 7A–7D
+=====================================
+
+BASE REQUIRED
+- main already contains accepted Phase 6.
+- huau-dev already has migrations 0005, 0006 and 0007.
+- Do NOT rerun old migrations.
+- Do NOT use blanket `wrangler d1 migrations apply` on remote dev/staging because the historical ledger is incomplete.
+
+1) CREATE PHASE 7 BRANCH + APPLY OVERLAY
+
+cd /Users/augusto/Desktop/HUAU_Sports_Phase_0_Foundation
+
+git checkout main
+git pull origin main
+git checkout -b phase-7
+
+unzip -o ~/Downloads/HUAU_Sports_Phase_7_Payments_A_to_D.zip -d .
+
+pnpm typecheck && pnpm lint && pnpm test
+
+STOP if any gate is red. Do not migrate D1 yet.
+
+2) BACK UP DEV D1
+
+mkdir -p backups
+pnpm --filter @huau/web exec wrangler d1 export HUAU_DB \
+  --remote \
+  --output=../../backups/huau-dev-before-phase7-payments.sql
+
+3) APPLY ONLY MIGRATION 0008
+
+pnpm --filter @huau/web exec wrangler d1 execute HUAU_DB \
+  --remote \
+  --file=../../packages/db/drizzle/0008_phase7_payments.sql
+
+4) VERIFY
+
+pnpm --filter @huau/web exec wrangler d1 execute HUAU_DB --remote --command \
+"SELECT value FROM app_meta WHERE key='schema_version';"
+
+Expected: phase7-payments
+
+pnpm --filter @huau/web exec wrangler d1 execute HUAU_DB --remote --command \
+"SELECT name FROM sqlite_master WHERE type='table' AND name IN ('payment_orders','payment_attempts','payment_proofs','payment_events','registration_cancellation_requests','payment_refunds') ORDER BY name;"
+
+Expected six rows:
+payment_attempts
+payment_events
+payment_orders
+payment_proofs
+payment_refunds
+registration_cancellation_requests
+
+pnpm --filter @huau/web exec wrangler d1 execute HUAU_DB --remote --command \
+"SELECT name FROM pragma_table_info('tournament_registrations') WHERE name IN ('paid_amount_minor','refunded_amount_minor') ORDER BY name;"
+
+Expected:
+paid_amount_minor
+refunded_amount_minor
+
+5) COMMIT / PUSH
+
+git add -A
+git commit -m "feat: phase 7 tournament payments"
+git push -u origin phase-7
+
+6) FIRST QA — NO MERCADO PAGO REQUIRED
+
+Keep Mercado Pago disabled initially.
+Use tournament Payments to test the real first-event flow:
+- manual players + multiple categories;
+- transfer details;
+- admin/player proof upload;
+- approve/reject/resubmit;
+- cash manual confirmation;
+- reverse mistaken manual payment;
+- paid cancellation request + refund policy.
+
+7) MERCADO PAGO CONFIGURATION (WHEN READY)
+
+Real credentials/secrets are NEVER committed to the repository.
+Set these in the Cloudflare Worker environment:
+- MERCADO_PAGO_CLIENT_ID
+- MERCADO_PAGO_CLIENT_SECRET
+- MERCADO_PAGO_WEBHOOK_SECRET
+- MERCADO_PAGO_REDIRECT_URI
+- PAYMENT_ENCRYPTION_KEY
+
+Generate an encryption key locally, for example:
+openssl rand -base64 32
+
+Dev redirect URI:
+https://huau-sports-dev.augusthugoo.workers.dev/api/payments/mercado-pago/oauth/callback
+
+Dev webhook URL:
+https://huau-sports-dev.augusthugoo.workers.dev/api/payments/mercado-pago/webhook
+
+After configuring secrets, connect the recipient account from Tournament > Payments and enable Mercado Pago.
+
+DO NOT TOUCH huau-staging until dev QA is accepted.

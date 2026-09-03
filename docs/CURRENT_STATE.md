@@ -4,124 +4,124 @@ Updated: 2026-09-03
 
 ## Current phase
 
-Phase 6 — Online Registration
+Phase 7.1 — Participant Admin Consolidation (Phase 7 manual-payment acceptance closed; Mercado Pago deferred)
 
-Version: `0.7.0-phase6-online-registration`
+Version: `0.8.0-phase7-payments`
 
-Validation branch: `phase-6`
+Validation branch: `phase-7`
 
-## Completed before Phase 6
+## Accepted foundation
 
-- Phase 0–3 platform, identity/org and Tournament persistence foundations.
-- Phase 4 Tournament legacy parity and performance recovery.
-- Phase 5 Team Competition Engine + Team Tournament integration.
-- Standard and Team Tournament competition flows are operationally approved; large-dataset hardening remains later work.
+- Phase 0 — Foundation: complete.
+- Phase 1 — Account/Auth: complete.
+- Phase 2 — Organizations: complete.
+- Phase 3 — Tournament Core/Migration: complete.
+- Phase 4 — Tournament legacy parity: complete.
+- Phase 5 — Team Competition Engine: complete.
+- Phase 6 — Online Registration: complete, QA accepted and merged to `main`.
 
-## Phase 6 accepted foundation
+Phase 6 established the personal-registration-first model, multi-category basket, doubles matching, Team free/captain flows, team pricing, capacity/waitlist, admin registration operations, cancellation history and reversible courtesy adjustments.
 
-Already integrated and QA-hardened before this redesign:
+## Phase 7 scope
 
-- public Tournament registration route;
-- global HUAU profile eligibility using birth date + sport gender;
-- explicit category min/max age;
-- capacity + waitlist + admin promotion;
-- free/per-entry/per-person pricing and tournament pricing inheritance;
-- tournament `base + extra category` pricing;
-- `awaiting_payment` boundary without fake payment confirmation;
-- admin courtesy/discount/fixed-total adjustments;
-- `Mis inscripciones` and Tournament admin `Inscripciones` workspace;
-- tournament-wide `max_categories_per_player`;
-- Phase 6 snapshot/restore persistence;
-- migrations `0005_phase6_online_registration.sql` and `0006_phase6_registration_continuity.sql`.
+Phase 7 is delivered as one integrated 7A–7D validation package:
 
-## Phase 6 registration redesign
+### 7A — Payment Core
 
-The final registration model is **personal registration first, grouping second**.
+- financial state separated from participation state;
+- one payment order can cover multiple category registrations;
+- online users and manually-entered tournament players are both supported;
+- bank transfer and cash manual-payment flows;
+- tournament-level payment settings and recipient configuration;
+- Payments admin workspace with expected/paid/pending/review/refunded KPIs.
 
-### Multi-category registration
+### 7B — Transfer proofs
 
-- Categories are selected instantly in the public page without creating a registration on every click.
-- A side tray shows the selected categories, pricing breakdown and estimated total.
-- One confirmation sends the selection to the server in a single batch request.
-- Server-side validation remains authoritative for eligibility, duplicates, category limit, age-division overlap, capacity and pricing.
+- private R2 upload for JPG/PNG/WEBP/PDF proofs;
+- upload by player or admin;
+- approve/reject/resubmit flow;
+- financial audit events;
+- no public proof URL.
 
-### Doubles
+### 7C — Mercado Pago
 
-- Each player owns a personal registration in the doubles category.
-- A free player can search only other active registrations in the same category that are not already assigned to a pair.
-- A pair invitation links two existing personal registrations; it never creates the invited player's registration.
-- Decline/cancel leaves both registrations free.
-- Unlinking or cancelling one player's registration makes the other player free again.
-- A pair becomes a competitive `tournament_entry` only when the invitation is accepted.
+- OAuth Authorization Code + PKCE connection per organizer Organization;
+- encrypted access/refresh tokens;
+- tournament chooses the connected payment receiver;
+- Orders API checkout with idempotency;
+- signed webhook + server-side order lookup before approval;
+- active checkout reuse to prevent duplicate payable orders;
+- explicit external checkout cancellation before switching methods.
 
-### Team tournaments
+### 7D — Cancellation/refunds/hardening
 
-- A player registers personally and may remain `free` or create a team.
-- The creator becomes captain.
-- Captains invite only players who already hold a free personal registration in that same category.
-- Accepting links the existing personal registration to the team roster.
-- Leaving a team preserves the player's personal registration and returns them to `free`.
-- Dissolving a team returns all active members to `free` unless their own registration is separately cancelled.
-
-### Team pricing
-
-Tournament settings now support:
-
-- individual team participation fee;
-- full-team fee paid by the captain;
-- additional team participation policy: full price / extra fee / free;
-- additional participation amount when `extra` is selected;
-- allow/disallow multiple eligible team age divisions.
-
-A captain can choose:
-
-- `individual`: every roster member is responsible for their own personal participation fee;
-- `team_full`: the captain carries the full-team charge and accepted members are marked as covered by that captain registration.
-
-A player eligible for multiple age divisions (for example +50 also playing +40) may do so only when the tournament allows age-division overlap and the tournament-wide maximum-category limit is not exceeded.
-
-### Payments boundary
-
-Phase 6 models price responsibility and keeps paid registrations in `awaiting_payment` until a payment is actually approved. Phase 7 will connect Mercado Pago/manual payment confirmation to these states. Pair/team matching is available in Phase 6 so the grouping model can be QA-tested before payment execution exists; Phase 7 can tighten payment gates without changing the registration/grouping data model.
-
-## Phase 6 closeout
-
-Dev preview QA passed for:
-
-- multi-category registration tray and one-shot confirmation;
-- tournament base/extra pricing and category limits;
-- doubles free-player matching, invitations, linking and unlinking;
-- Team free/captain flows, invitations and roster linking;
-- Tournament admin visibility of correct pair/team assignments;
-- organization card/button layout.
-
-Final closeout hardening separates current participation from cancellation history and hides withdrawn/rejected Team entries from operational rosters without deleting audit history.
+- paid online registration creates a cancellation request rather than destructive immediate cancellation;
+- policies: manual / no refund / full before deadline;
+- manual refund ledger with pending/completed state;
+- reversible manually-approved transfer/cash payments;
+- manual player deletion is blocked once meaningful financial history exists.
 
 ## Database state
 
-- `huau-dev`: migrations `0005`, `0006`, and `0007_phase6_registration_redesign.sql` have been applied and preview-tested.
-- This closeout patch requires **no new migration**.
-- `huau-staging`: remains untouched until the controlled Phase 6 promotion step.
-- Wrangler's historical migration ledger is incomplete/empty, so do **not** run a blanket `wrangler d1 migrations apply`; execute only the required migration file after taking a backup.
+Before Phase 7 migration:
 
-`0007_phase6_registration_redesign.sql` adds:
+- `huau-dev` is through `0007_phase6_registration_redesign.sql`.
+- `huau-staging` remains untouched for Phase 7.
 
-- Team pricing-policy columns on `tournament_settings`;
-- `team_payment_mode` on `tournament_entries`;
-- `covered_by_registration_id` on `tournament_registrations`;
-- `registration_match_invitations` for registration-to-registration pair/team matching;
-- schema marker `phase6-registration-redesign`.
+Phase 7 adds only:
 
-## Immediate next actions
+- `0008_phase7_payments.sql`
+- schema marker: `phase7-payments`.
 
-1. Apply the Phase 6 closeout overlay on branch `phase-6`.
-2. Run `pnpm typecheck && pnpm lint && pnpm test`.
-3. No D1 migration is required.
-4. Commit/push and do one final preview check: current vs history registration sections and absence of withdrawn teams in operational rosters.
-5. If green, Phase 6 is accepted for merge to `main` and controlled staging promotion.
+Because the historical Wrangler migration ledger is incomplete/empty, remote environments must not use a blanket `wrangler d1 migrations apply`. Back up the database and apply only the intended migration file.
 
-## Next planned phase
+## Preview acceptance completed
 
-Phase 7 — Payments / Mercado Pago + payments admin.
+Validated interactively in the Phase 7 preview:
 
-Phase 7 starts after this Phase 6 closeout is merged and promoted through the controlled staging flow.
+- manual player -> expected balance and correct per-player amount;
+- bank transfer -> proof upload -> review -> open proof -> approve;
+- rejected proof returns the player to a payable state and allows resubmission;
+- cash -> mark paid -> reverse manual collection;
+- paid registration -> cancellation request -> admin review -> manual refund;
+- financial history survives competitive-player removal;
+- closeout adds compact payment UI, explicit 8 MB proof limit, cancel-all-per-tournament, and clearer competitive-profile removal wording.
+
+Mercado Pago code remains present but its credentials, OAuth connection and sandbox end-to-end acceptance are deferred. It must stay disabled until that QA is performed. This does not block moving product development to Phase 8 for the first tournament scope.
+
+## Validation completed before packaging
+
+- TypeScript semantic checks: core, DB, web app, web node and worker: green.
+- static D1 SQL placeholder/bind scan across worker source: green.
+- clean SQLite migration chain `0000` through `0008`: green.
+- `PRAGMA foreign_key_check`: green.
+- Phase 7 payment-domain smoke checks: green.
+
+The user's real repository remains the definitive gate with `pnpm typecheck && pnpm lint && pnpm test` before remote migration.
+
+## First real tournament path
+
+The first event can run without Mercado Pago:
+
+1. organizer/admin enters players manually;
+2. assigns their categories;
+3. Payments synchronizes one outstanding order per player;
+4. all payments use bank transfer;
+5. proof can be uploaded by admin if received externally;
+6. admin approves/rejects proof and HUAU maintains the financial ledger.
+
+Mercado Pago can remain disabled until the Cloudflare secrets and receiver account are configured. No Phase 7 schema change is required to turn it on later.
+
+## Phase 7.1 participant administration
+
+Before merging Phase 7, organizer QA identified that one person was being managed through three separate tabs: competitive `Jugadores`, online `Inscripciones`, and `Pagos`. The domain separation remains correct, but the UI exposed too much internal architecture.
+
+Phase 7.1 consolidates `Jugadores` + `Inscripciones` into **Participantes**, a person-centric admin workspace that shows registration, competition and payment state together. `Pagos` remains separate as the financial batch/review queue. No migration is required.
+
+Phase 7.1 must pass repository gates and preview acceptance before Phase 7 is merged to `main`.
+
+## Next after Phase 7.1 acceptance
+
+Phase 8 — Explanation Engine / ES-EN.
+
+Then Phase 9 — public HUAU Live / TV, followed by Phase 10 — PWA/offline/sync.
