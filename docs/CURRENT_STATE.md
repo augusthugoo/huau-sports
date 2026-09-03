@@ -1,6 +1,6 @@
 # HUAU Sports — Current State
 
-Updated: 2026-09-02
+Updated: 2026-09-03
 
 ## Current phase
 
@@ -84,10 +84,24 @@ A player eligible for multiple age divisions (for example +50 also playing +40) 
 
 Phase 6 models price responsibility and keeps paid registrations in `awaiting_payment` until a payment is actually approved. Phase 7 will connect Mercado Pago/manual payment confirmation to these states. Pair/team matching is available in Phase 6 so the grouping model can be QA-tested before payment execution exists; Phase 7 can tighten payment gates without changing the registration/grouping data model.
 
+## Phase 6 closeout
+
+Dev preview QA passed for:
+
+- multi-category registration tray and one-shot confirmation;
+- tournament base/extra pricing and category limits;
+- doubles free-player matching, invitations, linking and unlinking;
+- Team free/captain flows, invitations and roster linking;
+- Tournament admin visibility of correct pair/team assignments;
+- organization card/button layout.
+
+Final closeout hardening separates current participation from cancellation history and hides withdrawn/rejected Team entries from operational rosters without deleting audit history.
+
 ## Database state
 
-- `huau-dev`: migrations `0005` and `0006` have already been applied manually; `0007_phase6_registration_redesign.sql` is pending until local gates pass.
-- `huau-staging`: remains untouched for the Phase 6 redesign until dev preview QA passes.
+- `huau-dev`: migrations `0005`, `0006`, and `0007_phase6_registration_redesign.sql` have been applied and preview-tested.
+- This closeout patch requires **no new migration**.
+- `huau-staging`: remains untouched until the controlled Phase 6 promotion step.
 - Wrangler's historical migration ledger is incomplete/empty, so do **not** run a blanket `wrangler d1 migrations apply`; execute only the required migration file after taking a backup.
 
 `0007_phase6_registration_redesign.sql` adds:
@@ -100,16 +114,14 @@ Phase 6 models price responsibility and keeps paid registrations in `awaiting_pa
 
 ## Immediate next actions
 
-1. Apply the Phase 6 Registration Redesign overlay on branch `phase-6`.
+1. Apply the Phase 6 closeout overlay on branch `phase-6`.
 2. Run `pnpm typecheck && pnpm lint && pnpm test`.
-3. If green, back up `huau-dev` and execute **only** `0007_phase6_registration_redesign.sql`.
-4. Verify `schema_version = phase6-registration-redesign` and the new matching table/settings columns.
-5. Commit/push `phase-6` and let Cloudflare build the dev preview.
-6. Focused preview QA: multi-category tray, base/extra pricing, doubles matching/unlink/cancel, Team free/captain/invite/leave, full-team coverage, age-division overlap, max categories, waitlist promotion and organization button polish.
-7. Only after preview acceptance: prepare staging migration/backup, then merge Phase 6 to `main`.
+3. No D1 migration is required.
+4. Commit/push and do one final preview check: current vs history registration sections and absence of withdrawn teams in operational rosters.
+5. If green, Phase 6 is accepted for merge to `main` and controlled staging promotion.
 
 ## Next planned phase
 
 Phase 7 — Payments / Mercado Pago + payments admin.
 
-Do not begin Phase 7 until the redesigned Phase 6 registration model is preview-approved and merged.
+Phase 7 starts after this Phase 6 closeout is merged and promoted through the controlled staging flow.
