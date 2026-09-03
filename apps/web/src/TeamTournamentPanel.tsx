@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
-import { createMixedFiveRubberTeamFormat, type TeamFormat } from "@huau/core";
+import { createMixedFiveRubberTeamFormat, explainTeamFormat, type TeamFormat } from "@huau/core";
 import type { Locale } from "./i18n";
+import { FormatExplanationPanel } from "./FormatExplanationPanel";
 
 type Profile = {
   profileId: string;
@@ -344,6 +345,7 @@ function TeamFormatBuilder({
 }) {
   const [draft, setDraft] = useState<TeamFormat>(() => cloneFormat(category.format ?? createMixedFiveRubberTeamFormat()));
   useEffect(() => setDraft(cloneFormat(category.format ?? createMixedFiveRubberTeamFormat())), [category.id, category.formatVersionId]);
+  const explanation = useMemo(() => explainTeamFormat(draft, locale), [draft, locale]);
 
   const updateRoster = (patch: Partial<TeamFormat["roster"]>) => setDraft((current) => ({ ...current, roster: { ...current.roster, ...patch } }));
   const updateRules = (patch: Partial<TeamFormat["roster"]["rules"]>) =>
@@ -468,6 +470,8 @@ function TeamFormatBuilder({
           ))}
         </div>
       </section>
+
+      <FormatExplanationPanel explanation={explanation} locale={locale} title={tr(locale, "Vista previa de la explicación oficial", "Official explanation preview")} />
 
       <div className="form-actions team-format-actions">
         <button className="ghost" type="button" onClick={() => setDraft(createMixedFiveRubberTeamFormat("always"))}>{tr(locale, "Preset 5 partidos", "5-rubber preset")}</button>

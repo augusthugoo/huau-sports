@@ -771,3 +771,32 @@ textarea { resize:vertical; }
 .participant-payment-numbers{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.participant-payment-numbers>div{display:grid;gap:4px;border:1px solid #252525;border-radius:10px;padding:10px}.participant-payment-numbers span{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:#777}.participant-payment-numbers strong{font-size:16px}.participant-order-list{display:grid;gap:6px}.participant-order-list>div{display:grid;grid-template-columns:auto auto minmax(0,1fr);gap:9px;align-items:center;border-top:1px solid #202020;padding-top:7px}.participant-order-list small{color:#777;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.participant-order-status{border:1px solid #303030;border-radius:999px;padding:4px 7px;font-size:9px;text-transform:uppercase}.participant-order-status.strong{background:#ededeb;color:#111}.participant-order-status.pending{border-color:#665f50}.participant-order-status.history{opacity:.65}
 @media(max-width:1050px){.participant-form-grid.four{grid-template-columns:repeat(2,minmax(0,1fr))}.participant-card-head{display:grid}.participant-state-grid{width:100%}}
 @media(max-width:760px){.participant-admin-title,.participant-registration-row,.participant-empty-action{align-items:flex-start;flex-direction:column}.participant-admin-title{display:flex}.participant-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.participant-state-grid{grid-template-columns:1fr}.participant-form-grid.four,.participant-form-grid.three,.participant-assignments>div{grid-template-columns:1fr}.participant-assignment{grid-template-columns:1fr}.participant-registration-row .form-actions{justify-content:flex-start}.participant-order-list>div{grid-template-columns:1fr}.participant-order-list small{white-space:normal}.participant-payment-numbers{grid-template-columns:1fr}}
+
+/* Phase 8 — Format Explanation Engine. */
+.official-format-explanation{display:grid;gap:14px;border:1px solid #30302d;border-radius:16px;padding:17px;background:linear-gradient(145deg,#10100e,#090909)}
+.official-format-explanation.compact{gap:10px;border-radius:13px;padding:13px;background:#0c0c0b}
+.official-format-explanation-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
+.official-format-explanation-head .eyebrow{margin-bottom:6px}
+.official-format-explanation-head h3{margin:0;font-size:18px;letter-spacing:-.02em}
+.official-format-explanation.compact .official-format-explanation-head h3{font-size:15px}
+.official-format-explanation-summary{display:grid;gap:8px}
+.official-format-explanation-summary p{margin:0;color:#b4b4ae;font-size:13px;line-height:1.62}
+.official-format-explanation.compact .official-format-explanation-summary p{font-size:12px;line-height:1.55}
+.official-format-explanation-details{border-top:1px solid #262623;padding-top:10px}
+.official-format-explanation-details>summary{cursor:pointer;color:#a9a9a2;font-size:12px;list-style:none}
+.official-format-explanation-details>summary::-webkit-details-marker{display:none}
+.official-format-explanation-details[open]>summary{margin-bottom:12px}
+.official-format-explanation-sections{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:9px}
+.official-format-explanation-sections article{border:1px solid #262626;border-radius:12px;padding:12px;background:#080808}
+.official-format-explanation-sections h4{margin:0 0 8px;font-size:12px;color:#ecece8}
+.official-format-explanation-sections p,.official-format-explanation-sections li{color:#989892;font-size:11px;line-height:1.55}
+.official-format-explanation-sections p{margin:0 0 7px}
+.official-format-explanation-sections ol{display:grid;gap:5px;margin:8px 0 0;padding-left:20px}
+.official-format-explanation-integrity{color:#6f6f69;font-size:10px;line-height:1.45}
+.public-format-explanation,.registration-format-explanation{border-top:1px solid #242424;padding-top:9px}
+.public-format-explanation>summary,.registration-format-explanation>summary{cursor:pointer;color:#a5a59f;font-size:11px;font-weight:700;letter-spacing:.02em;list-style:none}
+.public-format-explanation>summary::-webkit-details-marker,.registration-format-explanation>summary::-webkit-details-marker{display:none}
+.public-format-explanation[open]>summary,.registration-format-explanation[open]>summary{margin-bottom:9px}
+.format-simulator>.official-format-explanation{margin-top:14px}
+.team-format-builder>.official-format-explanation{margin-top:4px}
+@media(max-width:700px){.official-format-explanation-head{display:grid}.official-format-explanation-head .pill{width:max-content}.official-format-explanation-sections{grid-template-columns:1fr}}

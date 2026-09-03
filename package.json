@@ -1,6 +1,6 @@
 {
   "name": "huau-sports",
-  "version": "0.8.0-phase7-payments",
+  "version": "0.9.0-phase8-explanation",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.24.0",

@@ -1,0 +1,25 @@
+HUAU Sports — Phase 8 Format Explanation Engine
+=================================================
+
+Base branch:
+  phase-8
+
+Expected base commit when this package was prepared:
+  5a4a9d5044356111ff599c0826b5a7c99ba0b0ef
+
+Install from repository root:
+  unzip -o ~/Downloads/HUAU_Sports_Phase_8_Explanation_Engine.zip -d .
+
+Then run:
+  pnpm typecheck && pnpm lint && pnpm test
+
+If green:
+  git add -A
+  git commit -m "feat: add phase 8 format explanation engine"
+  git push
+
+Database:
+  NO migration is included.
+  DO NOT rerun 0008_phase7_payments.sql.
+
+Phase 8 acceptance continues in the Cloudflare preview after push.
