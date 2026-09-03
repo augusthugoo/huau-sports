@@ -1164,31 +1164,64 @@ async function cancelRegistrationInternal(env: Env, registrationId: string, user
   if (reg.waitlistPosition) await compactWaitlist(env, reg.categoryId);
 }
 
+async function cancelOrRequestRegistration(env: Env, reg: RegistrationRow, requestedByUserId: string, reason: string | null) {
+  if (["cancelled", "rejected"].includes(reg.status)) return { outcome: "already_cancelled" as const };
+  const netPaid = Math.max(0, reg.paidAmountMinor - reg.refundedAmountMinor);
+  if (netPaid > 0) {
+    const existing = await env.HUAU_DB.prepare(
+      `SELECT id FROM registration_cancellation_requests WHERE registration_id=? AND status='pending' LIMIT 1`,
+    ).bind(reg.id).first<{ id: string }>();
+    if (existing) return { outcome: "already_pending" as const, requestId: existing.id };
+    const requestId = uuid();
+    const stamp = now();
+    await env.HUAU_DB.prepare(
+      `INSERT INTO registration_cancellation_requests (id,registration_id,tournament_id,requested_by_user_id,status,reason,net_paid_minor,refund_amount_minor,admin_note,reviewed_by_user_id,reviewed_at,created_at,updated_at)
+       VALUES (?,?,?,?,'pending',?,?,0,NULL,NULL,NULL,?,?)`,
+    ).bind(requestId, reg.id, reg.tournamentId, requestedByUserId, reason, netPaid, stamp, stamp).run();
+    return { outcome: "requested" as const, requestId };
+  }
+  await cancelRegistrationInternal(env, reg.id, reg.userId);
+  return { outcome: "cancelled" as const };
+}
+
 async function cancelRegistration(registrationId: string, request: Request, env: Env, access: AccessHelpers) {
   const user = await access.requireUser(request, env);
   if (!user) return json({ ok: false, code: "UNAUTHENTICATED" }, { status: 401 });
   const reg = await registrationById(env, registrationId);
   if (!reg) return json({ ok: false, code: "REGISTRATION_NOT_FOUND" }, { status: 404 });
   if (reg.userId !== user.id) return json({ ok: false, code: "FORBIDDEN" }, { status: 403 });
-  if (reg.status === "cancelled") return json({ ok: true });
-  const netPaid = Math.max(0, reg.paidAmountMinor - reg.refundedAmountMinor);
-  if (netPaid > 0) {
-    const existing = await env.HUAU_DB.prepare(
-      `SELECT id FROM registration_cancellation_requests WHERE registration_id=? AND status='pending' LIMIT 1`,
-    ).bind(registrationId).first<{ id: string }>();
-    if (existing) return json({ ok: true, cancellationRequested: true, requestId: existing.id });
-    let body: { reason?: string } = {};
-    try { body = await readJson<{ reason?: string }>(request); } catch { body = {}; }
-    const requestId = uuid();
-    const stamp = now();
-    await env.HUAU_DB.prepare(
-      `INSERT INTO registration_cancellation_requests (id,registration_id,tournament_id,requested_by_user_id,status,reason,net_paid_minor,refund_amount_minor,admin_note,reviewed_by_user_id,reviewed_at,created_at,updated_at)
-       VALUES (?,?,?,?,'pending',?,?,0,NULL,NULL,NULL,?,?)`,
-    ).bind(requestId, registrationId, reg.tournamentId, user.id, body.reason?.trim() || null, netPaid, stamp, stamp).run();
-    return json({ ok: true, cancellationRequested: true, requestId });
+  let body: { reason?: string } = {};
+  try { body = await readJson<{ reason?: string }>(request); } catch { body = {}; }
+  const result = await cancelOrRequestRegistration(env, reg, user.id, body.reason?.trim() || null);
+  return json({
+    ok: true,
+    cancellationRequested: result.outcome === "requested" || result.outcome === "already_pending",
+    requestId: "requestId" in result ? result.requestId : undefined,
+  });
+}
+
+async function cancelAllTournamentRegistrations(tournamentId: string, request: Request, env: Env, access: AccessHelpers) {
+  const user = await access.requireUser(request, env);
+  if (!user) return json({ ok: false, code: "UNAUTHENTICATED" }, { status: 401 });
+  const tournament = await env.HUAU_DB.prepare(`SELECT id FROM tournaments WHERE id=?`).bind(tournamentId).first<{ id: string }>();
+  if (!tournament) return json({ ok: false, code: "TOURNAMENT_NOT_FOUND" }, { status: 404 });
+  let body: { reason?: string } = {};
+  try { body = await readJson<{ reason?: string }>(request); } catch { body = {}; }
+  const rows = await env.HUAU_DB.prepare(
+    `SELECT id FROM tournament_registrations WHERE tournament_id=? AND user_id=? AND status NOT IN ('cancelled','rejected') ORDER BY registration_number`,
+  ).bind(tournamentId, user.id).all<{ id: string }>();
+  let cancelledNow = 0;
+  let requestsCreated = 0;
+  let requestsAlreadyPending = 0;
+  for (const row of rows.results) {
+    const reg = await registrationById(env, row.id);
+    if (!reg) continue;
+    const result = await cancelOrRequestRegistration(env, reg, user.id, body.reason?.trim() || null);
+    if (result.outcome === "cancelled") cancelledNow += 1;
+    else if (result.outcome === "requested") requestsCreated += 1;
+    else if (result.outcome === "already_pending") requestsAlreadyPending += 1;
   }
-  await cancelRegistrationInternal(env, registrationId, user.id);
-  return json({ ok: true, cancellationRequested: false });
+  return json({ ok: true, total: rows.results.length, cancelledNow, requestsCreated, requestsAlreadyPending });
 }
 
 export async function cancelRegistrationForPaymentAdmin(env: Env, registrationId: string) {
@@ -1423,6 +1456,9 @@ export async function handleRegistrationApi(request: Request, env: Env, access: 
 
   const leave = url.pathname.match(/^\/api\/tournament-registrations\/([^/]+)\/leave-group$/);
   if (leave && request.method === "POST") return leaveGroup(decodeURIComponent(leave[1]!), request, env, access);
+
+  const cancelAll = url.pathname.match(/^\/api\/tournaments\/([^/]+)\/registrations\/cancel-all$/);
+  if (cancelAll && request.method === "POST") return cancelAllTournamentRegistrations(decodeURIComponent(cancelAll[1]!), request, env, access);
 
   const cancel = url.pathname.match(/^\/api\/tournament-registrations\/([^/]+)\/cancel$/);
   if (cancel && request.method === "POST") return cancelRegistration(decodeURIComponent(cancel[1]!), request, env, access);

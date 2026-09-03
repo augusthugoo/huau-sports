@@ -372,6 +372,7 @@ type Invitation = {
   id: string;
   kind: "pair" | "team";
   expiresAt: number;
+  tournamentId: string;
   tournamentName: string;
   slug: string;
   categoryName: string;
@@ -395,6 +396,7 @@ type ManagedRegistration = {
   finalAmountMinor: number;
   currency: string | null;
   waitlistPosition: number | null;
+  tournamentId: string;
   tournamentName: string;
   slug: string;
   categoryName: string;
@@ -464,6 +466,19 @@ export function MyTournamentRegistrations({ locale, go, onProfileSaved }: { loca
     catch (e) { setError(codeCopy(locale, e instanceof RegistrationError ? e.code : "CANCEL_FAILED")); }
     finally { setBusy(""); }
   };
+  const cancelAll = async (tournamentId: string, tournamentName: string, count: number) => {
+    if (!window.confirm(tr(locale, `¿Cancelar tus ${count} inscripciones activas en ${tournamentName}? Las categorías pagadas quedarán activas hasta que el organizador resuelva la solicitud y la devolución que corresponda.`, `Cancel your ${count} active registrations in ${tournamentName}? Paid categories remain active until the organizer reviews the request and any applicable refund.`))) return;
+    const reason = window.prompt(tr(locale, "Motivo de cancelación total (opcional)", "Reason for cancelling all registrations (optional)"));
+    if (reason === null) return;
+    setBusy(`cancel-all-${tournamentId}`);
+    try {
+      const result = await api<{ ok: true; total: number; cancelledNow: number; requestsCreated: number; requestsAlreadyPending: number }>(`/api/tournaments/${tournamentId}/registrations/cancel-all`, { method: "POST", body: JSON.stringify({ reason }) });
+      if (result.requestsCreated + result.requestsAlreadyPending > 0) window.alert(tr(locale, `Se cancelaron ${result.cancelledNow} inscripción(es) sin saldo y ${result.requestsCreated + result.requestsAlreadyPending} quedaron solicitadas para revisión del organizador.`, `${result.cancelledNow} unpaid registration(s) were cancelled and ${result.requestsCreated + result.requestsAlreadyPending} were sent for organizer review.`));
+      await load();
+    }
+    catch (e) { setError(codeCopy(locale, e instanceof RegistrationError ? e.code : "CANCEL_FAILED")); }
+    finally { setBusy(""); }
+  };
 
   const leaveGroup = async (registration: ManagedRegistration) => {
     const message = registration.entryType === "pair" ? tr(locale, "¿Desvincular esta pareja? Ambos seguirán inscriptos y quedarán libres para buscar otra pareja.", "Unlink this pair? Both players remain registered and become free again.") : registration.groupingState === "captain" ? tr(locale, "¿Disolver el equipo? Los integrantes seguirán inscriptos y quedarán libres.", "Dissolve this team? Members remain registered and become free.") : tr(locale, "¿Salir del equipo? Tu inscripción seguirá activa y quedarás libre.", "Leave the team? Your registration stays active and you become free.");
@@ -506,6 +521,11 @@ export function MyTournamentRegistrations({ locale, go, onProfileSaved }: { loca
 
   const currentRegistrations = data?.registrations.filter((registration) => !["cancelled", "rejected"].includes(registration.status)) ?? [];
   const registrationHistory = data?.registrations.filter((registration) => ["cancelled", "rejected"].includes(registration.status)) ?? [];
+  const cancellableTournamentGroups = [...new Map(currentRegistrations.filter((registration) => registration.isOwner === 1).map((registration) => [registration.tournamentId, registration])).values()].map((seed) => ({
+    tournamentId: seed.tournamentId,
+    tournamentName: seed.tournamentName,
+    count: currentRegistrations.filter((registration) => registration.isOwner === 1 && registration.tournamentId === seed.tournamentId).length,
+  })).filter((group) => group.count > 1);
 
   return (
     <main className="dashboard my-registrations-page">
@@ -516,7 +536,7 @@ export function MyTournamentRegistrations({ locale, go, onProfileSaved }: { loca
 
       {data?.invitations.length ? <section className="panel"><div className="panel-title"><div><h2>{tr(locale, "Invitaciones pendientes", "Pending invitations")}</h2><p className="muted">{tr(locale, "Aceptar vincula tu inscripción existente; no crea una inscripción nueva.", "Accepting links your existing registration; it does not create a new one.")}</p></div><span>{data.invitations.length}</span></div><div className="registration-list">{data.invitations.map((invitation) => <article className="registration-row" key={invitation.id}><div><span className="pill">{invitation.kind}</span><strong>{invitation.kind === "pair" ? tr(locale, `${invitation.inviterName} quiere formar pareja contigo`, `${invitation.inviterName} wants to pair with you`) : tr(locale, `${invitation.inviterName} te invita a ${invitation.teamName || "su equipo"}`, `${invitation.inviterName} invites you to ${invitation.teamName || "their team"}`)}</strong><small>{invitation.tournamentName} · {invitation.categoryName}</small></div><div className="form-actions"><button className="ghost small" disabled={busy === invitation.id} onClick={() => void respond(invitation.id, "decline")}>{tr(locale, "Rechazar", "Decline")}</button><button className="light small" disabled={busy === invitation.id} onClick={() => void respond(invitation.id, "accept")}>{tr(locale, "Aceptar", "Accept")}</button></div></article>)}</div></section> : null}
 
-      <section className="panel"><div className="panel-title"><div><h2>{tr(locale, "Inscripciones actuales", "Current registrations")}</h2><p className="muted">{tr(locale, "Sólo aparecen acá tus participaciones vigentes. Las canceladas quedan guardadas aparte como historial.", "Only current participation appears here. Cancelled registrations are kept separately as history.")}</p></div><span>{currentRegistrations.length}</span></div><div className="registration-list">{currentRegistrations.length ? currentRegistrations.map((registration) => {
+      <section className="panel"><div className="panel-title"><div><h2>{tr(locale, "Inscripciones actuales", "Current registrations")}</h2><p className="muted">{tr(locale, "Sólo aparecen acá tus participaciones vigentes. Las canceladas quedan guardadas aparte como historial.", "Only current participation appears here. Cancelled registrations are kept separately as history.")}</p></div><span>{currentRegistrations.length}</span></div>{cancellableTournamentGroups.length > 0 && <div className="registration-cancel-all-list">{cancellableTournamentGroups.map((group) => <div key={group.tournamentId}><div><strong>{group.tournamentName}</strong><span>{group.count} {tr(locale, "inscripciones activas", "active registrations")}</span></div><button className="ghost small" disabled={busy === `cancel-all-${group.tournamentId}`} onClick={() => void cancelAll(group.tournamentId, group.tournamentName, group.count)}>{tr(locale, "Cancelar todas", "Cancel all")}</button></div>)}</div>}<div className="registration-list">{currentRegistrations.length ? currentRegistrations.map((registration) => {
         const active = !["cancelled", "rejected"].includes(registration.status);
         const registrationCandidates = candidates[registration.id];
         return <article className="registration-card" key={`${registration.id}-${registration.isOwner}`}>

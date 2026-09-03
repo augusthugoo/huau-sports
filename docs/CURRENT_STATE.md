@@ -4,7 +4,7 @@ Updated: 2026-09-03
 
 ## Current phase
 
-Phase 7 — Tournament Payments
+Phase 7 — Tournament Payments (manual-payment acceptance closed; Mercado Pago deferred)
 
 Version: `0.8.0-phase7-payments`
 
@@ -74,6 +74,20 @@ Phase 7 adds only:
 - schema marker: `phase7-payments`.
 
 Because the historical Wrangler migration ledger is incomplete/empty, remote environments must not use a blanket `wrangler d1 migrations apply`. Back up the database and apply only the intended migration file.
+
+## Preview acceptance completed
+
+Validated interactively in the Phase 7 preview:
+
+- manual player -> expected balance and correct per-player amount;
+- bank transfer -> proof upload -> review -> open proof -> approve;
+- rejected proof returns the player to a payable state and allows resubmission;
+- cash -> mark paid -> reverse manual collection;
+- paid registration -> cancellation request -> admin review -> manual refund;
+- financial history survives competitive-player removal;
+- closeout adds compact payment UI, explicit 8 MB proof limit, cancel-all-per-tournament, and clearer competitive-profile removal wording.
+
+Mercado Pago code remains present but its credentials, OAuth connection and sandbox end-to-end acceptance are deferred. It must stay disabled until that QA is performed. This does not block moving product development to Phase 8 for the first tournament scope.
 
 ## Validation completed before packaging
 
