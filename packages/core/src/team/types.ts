@@ -49,6 +49,12 @@ export type TeamEncounterConfig = {
 export type TeamCompetitionConfig = {
   groupRounds: 1 | 2;
   playoffMode: PlayoffMode;
+  /** Standard bracket: fixed qualifiers from every group. Defaults to 2 for persisted Phase 5 formats. */
+  qualifiersPerGroup?: number;
+  /** Standard bracket: extra cross-group qualifiers after the fixed places. Defaults to 0. */
+  wildcardQualifiers?: number;
+  /** Optional third-place encounter when the selected playoff shape supports it. Defaults to false. */
+  bronzeMatch?: boolean;
 };
 
 export type TeamStandingCriterion =

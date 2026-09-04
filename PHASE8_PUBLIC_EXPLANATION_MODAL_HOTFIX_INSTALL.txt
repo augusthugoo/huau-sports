@@ -1,0 +1,18 @@
+HUAU Sports — Phase 8 public explanation modal hotfix
+
+Scope:
+- Public registration only.
+- Replaces the inline expanding "Cómo se juega" block with a centered floating modal.
+- Keeps the category card compact.
+- Dimmed/blurred transparent backdrop.
+- Modal scrolls internally, closes with X, backdrop click or Escape.
+- No D1 migration.
+
+Apply from repository root:
+  unzip -o ~/Downloads/HUAU_Sports_Phase_8_Public_Explanation_Modal_Hotfix.zip -d .
+  pnpm typecheck && pnpm lint && pnpm test
+
+Suggested commit:
+  git add -A
+  git commit -m "fix: show public format explanation in modal"
+  git push

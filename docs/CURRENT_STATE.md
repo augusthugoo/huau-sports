@@ -4,11 +4,11 @@ Updated: 2026-09-03
 
 ## Current phase
 
-Phase 7.1 — Participant Admin Consolidation (Phase 7 manual-payment acceptance closed; Mercado Pago deferred)
+Phase 8 — Format Explanation Engine / ES-EN (implementation package prepared; repository gates and preview acceptance pending)
 
-Version: `0.8.0-phase7-payments`
+Version: `0.9.0-phase8-explanation`
 
-Validation branch: `phase-7`
+Validation branch: `phase-8`
 
 ## Accepted foundation
 
@@ -19,6 +19,7 @@ Validation branch: `phase-7`
 - Phase 4 — Tournament legacy parity: complete.
 - Phase 5 — Team Competition Engine: complete.
 - Phase 6 — Online Registration: complete, QA accepted and merged to `main`.
+- Phase 7 — Payments + Participant Admin Consolidation: complete for the current operational scope, QA accepted and merged to `main`; Mercado Pago sandbox/production acceptance remains intentionally deferred and disabled.
 
 Phase 6 established the personal-registration-first model, multi-category basket, doubles matching, Team free/captain flows, team pricing, capacity/waitlist, admin registration operations, cancellation history and reversible courtesy adjustments.
 
@@ -118,10 +119,25 @@ Before merging Phase 7, organizer QA identified that one person was being manage
 
 Phase 7.1 consolidates `Jugadores` + `Inscripciones` into **Participantes**, a person-centric admin workspace that shows registration, competition and payment state together. `Pagos` remains separate as the financial batch/review queue. No migration is required.
 
-Phase 7.1 must pass repository gates and preview acceptance before Phase 7 is merged to `main`.
+Phase 7.1 passed repository gates and organizer preview acceptance. Phase 7 was merged to `main`, and development moved to `phase-8`.
 
-## Next after Phase 7.1 acceptance
+## Phase 8 — Format Explanation Engine / ES-EN
 
-Phase 8 — Explanation Engine / ES-EN.
+Phase 8 implementation derives official, localized rules text directly from the persisted competition format rather than maintaining editable prose for every format combination.
 
-Then Phase 9 — public HUAU Live / TV, followed by Phase 10 — PWA/offline/sync.
+Implemented in the Phase 8 package, pending repository gates and preview acceptance:
+
+- core explanation model with 1–3 paragraph summary plus semantic detail sections;
+- exact standard-group tiebreak criteria;
+- Normalized and Equalized cross-group explanations, including the Equalized no-deletion guarantee;
+- qualifiers, wildcards, seeding, byes, final mode, consolation, bronze, BO1/BO3 and point-target explanation;
+- Team roster/rubber/series-winner/tiebreaker/standings explanation without claiming unsupported Team playoffs;
+- organizer standard-format explanation;
+- Team builder live explanation preview;
+- public category `Cómo se juega / How it works`;
+- active registration explanation in Mi HUAU;
+- Spanish and English output from the same structured rules.
+
+Phase 8 requires no D1 migration and reuses `competition_format_versions.explanation_schema_version`.
+
+After Phase 8 acceptance: Phase 9 — public HUAU Live / TV, followed by Phase 10 — PWA/offline/sync.

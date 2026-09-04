@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { registrationPriceMinor, resolveRegistrationPricing, resolveTeamIndividualPrice } from "@huau/core";
+import { FormatExplanationPanel, explanationForPersistedFormat } from "./FormatExplanationPanel";
 import type { Locale } from "./i18n";
 
 type Go = (path: string) => void;
@@ -78,6 +79,9 @@ type PublicCategory = {
   structureLocked: number;
   occupiedEntries: number;
   waitlistCount: number;
+  formatKind: "standard" | "team" | null;
+  formatConfig: unknown;
+  explanationSchemaVersion: number | null;
   registrationBlockedCode: string | null;
   viewerAlreadyRegistered: boolean;
 };
@@ -220,6 +224,7 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
   const [notice, setNotice] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [teamSelections, setTeamSelections] = useState<Record<string, TeamSelection>>({});
+  const [explanationCategoryId, setExplanationCategoryId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -230,6 +235,19 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
     }
   }, [slug]);
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (!explanationCategoryId) return;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setExplanationCategoryId(null);
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [explanationCategoryId]);
 
   const login = () => {
     sessionStorage.setItem("huau.afterAuth", `/tournaments/${slug}`);
@@ -320,6 +338,10 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
   if (!data) return <main className="public-tournament-page"><button className="back-link" onClick={() => go("/")}>← HUAU</button>{error ? <div className="registration-alert">{error}</div> : <div className="empty-state">{tr(locale, "Cargando torneo…", "Loading tournament…")}</div>}</main>;
 
   const profileNeededSomewhere = data.viewer.authenticated && data.categories.some((category) => !category.registrationBlockedCode && categoryNeedsProfile(category, data.viewer.profile));
+  const explanationCategory = explanationCategoryId ? data.categories.find((category) => category.id === explanationCategoryId) ?? null : null;
+  const modalExplanation = explanationCategory
+    ? explanationForPersistedFormat(explanationCategory.formatKind, explanationCategory.formatConfig, locale)
+    : null;
 
   return (
     <main className="public-tournament-page">
@@ -339,12 +361,14 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
             const full = category.maxEntries !== null && category.occupiedEntries >= category.maxEntries;
             const needsProfile = categoryNeedsProfile(category, data.viewer.profile);
             const isSelected = selected.includes(category.id);
+            const explanation = explanationForPersistedFormat(category.formatKind, category.formatConfig, locale);
             return (
               <article className={`public-category-card ${isSelected ? "selected" : ""}`} key={category.id}>
                 <header><div><span className="pill">{category.entryType.toUpperCase()}</span><h2>{category.name}</h2></div><strong>{money(category.priceMinor, category.currency, locale)}</strong></header>
                 <div className="category-registration-meta"><span>{category.competitionGender ?? "open"}</span>{category.minAge !== null && <span>+{category.minAge}</span>}{category.maxAge !== null && <span>≤ {category.maxAge}</span>}<span>{category.maxEntries === null ? tr(locale, "Sin cupo máximo", "No capacity limit") : `${category.occupiedEntries}/${category.maxEntries}`}</span>{category.waitlistCount > 0 && <span>{category.waitlistCount} waitlist</span>}</div>
                 {category.entryType === "pair" && <p className="muted">{tr(locale, "Te inscribís vos primero. La pareja se arma después entre jugadores ya inscriptos y libres.", "Register yourself first. Pairing happens later between registered free players.")}</p>}
                 {category.entryType === "team" && <p className="muted">{tr(locale, "Podés quedar libre o crear un equipo y convertirte en capitán.", "Stay free or create a team and become captain.")}</p>}
+                {explanation && <button type="button" className="public-format-explanation-trigger" onClick={() => setExplanationCategoryId(category.id)}><span>{tr(locale, "Cómo se juega", "How it works")}</span><span aria-hidden="true">↗</span></button>}
                 {category.registrationBlockedCode ? <><button className="ghost full" disabled>{blockedButtonCopy(locale, category.registrationBlockedCode)}</button><p className="muted">{codeCopy(locale, category.registrationBlockedCode)}</p></> : !data.viewer.authenticated ? <button className="ghost full" onClick={login}>{tr(locale, "Ingresar para inscribirme", "Sign in to register")}</button> : <button className={isSelected ? "ghost full" : full ? "ghost full" : "light full"} disabled={needsProfile} onClick={() => toggle(category)}>{needsProfile ? tr(locale, "Completá tu perfil", "Complete your profile") : isSelected ? tr(locale, "Quitar", "Remove") : full ? tr(locale, "Agregar · puede ir a waitlist", "Add · may waitlist") : tr(locale, "Agregar", "Add")}</button>}
               </article>
             );
@@ -364,6 +388,45 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
           {limitAfterSelection !== null && data.maxCategoriesPerPlayer !== null && <small>{tr(locale, `${limitAfterSelection}/${data.maxCategoriesPerPlayer} categorías`, `${limitAfterSelection}/${data.maxCategoriesPerPlayer} categories`)}</small>}
         </aside>
       </section>
+
+      {explanationCategory && modalExplanation && (
+        <div
+          className="public-format-modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setExplanationCategoryId(null);
+          }}
+        >
+          <section
+            className="public-format-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="public-format-modal-title"
+          >
+            <header className="public-format-modal-header">
+              <div>
+                <div className="eyebrow">{tr(locale, "FORMATO DE COMPETENCIA", "COMPETITION FORMAT")}</div>
+                <h2 id="public-format-modal-title">{explanationCategory.name}</h2>
+                <p>{tr(locale, "Así se juega esta categoría según la configuración oficial del torneo.", "This is how the category is played according to the tournament's official configuration.")}</p>
+              </div>
+              <button
+                type="button"
+                className="public-format-modal-close"
+                aria-label={tr(locale, "Cerrar explicación", "Close explanation")}
+                onClick={() => setExplanationCategoryId(null)}
+              >
+                ×
+              </button>
+            </header>
+            <div className="public-format-modal-scroll">
+              <FormatExplanationPanel
+                explanation={modalExplanation}
+                locale={locale}
+                title={tr(locale, "Formato oficial", "Official format")}
+              />
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }
@@ -416,6 +479,9 @@ type ManagedRegistration = {
   coveredByRegistrationId: string | null;
   covered: boolean;
   canSearch: boolean;
+  formatKind: "standard" | "team" | null;
+  formatConfig: unknown;
+  explanationSchemaVersion: number | null;
   pendingCancellationRequest: { id: string; reason: string | null; netPaidMinor: number; createdAt: number } | null;
 };
 
@@ -539,6 +605,7 @@ export function MyTournamentRegistrations({ locale, go, onProfileSaved }: { loca
       <section className="panel"><div className="panel-title"><div><h2>{tr(locale, "Inscripciones actuales", "Current registrations")}</h2><p className="muted">{tr(locale, "Sólo aparecen acá tus participaciones vigentes. Las canceladas quedan guardadas aparte como historial.", "Only current participation appears here. Cancelled registrations are kept separately as history.")}</p></div><span>{currentRegistrations.length}</span></div>{cancellableTournamentGroups.length > 0 && <div className="registration-cancel-all-list">{cancellableTournamentGroups.map((group) => <div key={group.tournamentId}><div><strong>{group.tournamentName}</strong><span>{group.count} {tr(locale, "inscripciones activas", "active registrations")}</span></div><button className="ghost small" disabled={busy === `cancel-all-${group.tournamentId}`} onClick={() => void cancelAll(group.tournamentId, group.tournamentName, group.count)}>{tr(locale, "Cancelar todas", "Cancel all")}</button></div>)}</div>}<div className="registration-list">{currentRegistrations.length ? currentRegistrations.map((registration) => {
         const active = !["cancelled", "rejected"].includes(registration.status);
         const registrationCandidates = candidates[registration.id];
+        const explanation = explanationForPersistedFormat(registration.formatKind, registration.formatConfig, locale);
         return <article className="registration-card" key={`${registration.id}-${registration.isOwner}`}>
           <div className="registration-card-head"><button className="registration-main" onClick={() => go(`/tournaments/${registration.slug}`)}><span className={`pill status-${registration.status}`}>#{registration.registrationNumber} · {registration.status}</span><strong>{registration.tournamentName} · {registration.categoryName}</strong><small>{registration.entryType === "pair" ? registration.groupingState === "paired" ? tr(locale, "Pareja asignada", "Partner assigned") : tr(locale, "Buscando pareja", "Looking for partner") : registration.entryType === "team" ? registration.groupingState === "free" ? tr(locale, "Libre / sin equipo", "Free agent / no team") : `${registration.entryName || tr(locale, "Equipo", "Team")} · ${registration.groupingState}` : tr(locale, "Individual", "Individual")} · {money(registration.finalAmountMinor, registration.currency, locale)}</small></button><div className="form-actions">{registration.isOwner === 1 && active && (registration.pendingCancellationRequest ? <span className="pill">{tr(locale, "Cancelación solicitada", "Cancellation requested")}</span> : <button className="ghost small" disabled={busy === registration.id} onClick={() => void cancel(registration.id)}>{tr(locale, "Cancelar inscripción", "Cancel registration")}</button>)}{registration.isOwner === 0 && active && registration.entryType !== "individual" && <button className="ghost small" disabled={busy === `leave-${registration.id}`} onClick={() => void leaveGroup(registration)}>{tr(locale, "Salir", "Leave")}</button>}</div></div>
 
@@ -561,7 +628,8 @@ export function MyTournamentRegistrations({ locale, go, onProfileSaved }: { loca
           {registration.outgoingInvitations.length > 0 && <div className="registration-outgoing"><span className="muted">{tr(locale, "Invitaciones enviadas", "Sent invitations")}</span>{registration.outgoingInvitations.map((invitation) => <div key={invitation.id}><span>{invitation.targetName}</span><button className="text-button" disabled={busy === `cancel-invite-${invitation.id}`} onClick={() => void cancelInvite(registration.id, invitation.id)}>{tr(locale, "Cancelar", "Cancel")}</button></div>)}</div>}
 
           {registration.covered && <div className="registration-payment-note covered"><strong>{tr(locale, "Cubierto por el capitán", "Covered by captain")}</strong><span>{tr(locale, "Tu participación está asociada a un equipo con pago completo.", "Your participation is covered by a full-team payment.")}</span></div>}
-          {!registration.covered && registration.status === "awaiting_payment" && <div className="registration-payment-note"><strong>{tr(locale, "Pago pendiente", "Payment pending")}</strong><span>{tr(locale, "La inscripción ya existe. Phase 7 conectará el cobro y la confirmación de pago.", "The registration already exists. Phase 7 will connect payment and confirmation.")}</span></div>}
+          {!registration.covered && registration.status === "awaiting_payment" && <div className="registration-payment-note"><strong>{tr(locale, "Pago pendiente", "Payment pending")}</strong><span>{tr(locale, "La inscripción ya existe. El pago se confirma cuando el organizador o el medio habilitado lo aprueba.", "Your registration already exists. Payment is confirmed when the organizer or enabled payment method approves it.")}</span></div>}
+          {explanation && <details className="registration-format-explanation"><summary>{tr(locale, "Cómo se juega esta categoría", "How this category works")}</summary><FormatExplanationPanel explanation={explanation} locale={locale} compact title={registration.categoryName}/></details>}
         </article>;
       }) : <div className="empty-state">{tr(locale, "No tenés inscripciones vigentes.", "You do not have current registrations.")}</div>}</div></section>
 

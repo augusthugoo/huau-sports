@@ -198,13 +198,12 @@ function makeEncounter(input: {
   };
 }
 
-function roundLabel(totalRounds: number, index: number): string {
+export function knockoutRoundLabel(totalRounds: number, index: number): string {
   const remaining = totalRounds - index;
   if (remaining === 1) return "Final";
   if (remaining === 2) return "Semifinal";
   if (remaining === 3) return "Quarterfinal";
-  if (remaining === 4) return "Round of 16";
-  return "Preliminary round";
+  return `Round of ${2 ** remaining}`;
 }
 
 function entryFromQualified(value: QualifiedEntry | null): TournamentEntry | null {
@@ -240,7 +239,7 @@ function buildSimpleKnockout(
     const match = makeEncounter({
       id: `${prefix}:r1:m${index + 1}`,
       stage,
-      roundLabel: `${prefix} · ${roundLabel(totalRounds, 0)}`,
+      roundLabel: `${prefix} · ${knockoutRoundLabel(totalRounds, 0)}`,
       roundNumber: 1,
       entryA: slots[index * 2] ?? null,
       entryB: slots[index * 2 + 1] ?? null,
@@ -261,7 +260,7 @@ function buildSimpleKnockout(
       const match = makeEncounter({
         id: `${prefix}:r${round + 1}:m${Math.floor(index / 2) + 1}`,
         stage: isFinal && stage === "playoff" ? "final" : stage,
-        roundLabel: isFinal && stage === "playoff" ? "Final" : `${prefix} · ${roundLabel(totalRounds, round)}`,
+        roundLabel: isFinal && stage === "playoff" ? "Final" : `${prefix} · ${knockoutRoundLabel(totalRounds, round)}`,
         roundNumber: round + 1,
         sourceA: left.id,
         sourceB: right.id,
@@ -289,7 +288,7 @@ function standardPlayoff(competition: Competition): CompetitionEncounter[] {
     const match = makeEncounter({
       id: `playoff:r1:m${index + 1}`,
       stage,
-      roundLabel: roundLabel(totalRounds, 0),
+      roundLabel: knockoutRoundLabel(totalRounds, 0),
       roundNumber: 1,
       entryA: entryFromQualified(bracket.slots[index * 2] ?? null),
       entryB: entryFromQualified(bracket.slots[index * 2 + 1] ?? null),
@@ -310,7 +309,7 @@ function standardPlayoff(competition: Competition): CompetitionEncounter[] {
       const match = makeEncounter({
         id: `playoff:r${round + 1}:m${Math.floor(index / 2) + 1}`,
         stage: isFinal ? "final" : "playoff",
-        roundLabel: roundLabel(totalRounds, round),
+        roundLabel: knockoutRoundLabel(totalRounds, round),
         roundNumber: round + 1,
         sourceA: left.id,
         sourceB: right.id,

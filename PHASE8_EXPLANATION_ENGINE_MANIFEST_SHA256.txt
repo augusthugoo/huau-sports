@@ -1,0 +1,17 @@
+d94e2df352ba63ff7ecc81dc091ad047586714818be6425431557462aee05ba0  ./.env.example
+88b86a0bd1c3681d970c5fad7ef27f61954fc6a0b752b30e0d574ae219476512  ./PHASE8_EXPLANATION_ENGINE_INSTALL.txt
+c861bc90ef21b6f73f7056830ec2a6426e3800186d389b9ab8cecf4bacdedf8f  ./apps/web/package.json
+976c58b60459da9b48682247a5bfc28f7212de0694d812f9b5b706512c091671  ./apps/web/src/FormatExplanationPanel.tsx
+d5aeed79dee7294769899c439cd93c7062968570e0a124e0f994fb8fb08740e1  ./apps/web/src/TeamTournamentPanel.tsx
+1a56e981c46272d0aa8164bfba076df4dd6d00a30ae55a0ab4f8ff747a9b4d0c  ./apps/web/src/TournamentParityWorkspace.tsx
+9673022be4416351c75071d365f299573d28ef123cb4f57b86743ea43f367bcb  ./apps/web/src/TournamentRegistration.tsx
+ae6c8fbaa62732b98276b5c652caf920b2bc1cfc096504eee4b96e3c4afedcfa  ./apps/web/src/styles.css
+e70421f88ff2607f7ccb85b06f4d1be32537b86aa16ace187c6220f63ccaf9e8  ./apps/web/src/worker/registration.ts
+9d2ec74c8acb450b2acd4e913a8c08db3cdebd63dac97e2854a3f3b5e0ac6db0  ./docs/CURRENT_STATE.md
+58d9e2dd886bb6c8f3b204ddf4d3a6c340a6697f90a31ea9514ddf9acb52e345  ./docs/phase-8/PHASE_8_EXPLANATION_ENGINE.md
+c7a30b1980c5d18db9f42a62b684c9c169bc51093130b7b4257b52bb5e662114  ./package.json
+53c03859ad4eec99fd6fb7c30fa08b7464939e6f2f4f43cb39a7a3532926a101  ./packages/core/package.json
+40f1753c53ea0bceaf7ae6968c3933c53af87979f7f6a9bfdcd8e174cab9fe9d  ./packages/core/src/index.ts
+427c8eb66fb52f3eda64ef14c2ef46cdce750f588cc6fb8feb51cf8aa24d13b9  ./packages/core/src/tournament/explanation.test.ts
+8bc8786a99dbf6883a74f9ddd1a1afb7f987f9112b036fd635b1e6d6b8a2da95  ./packages/core/src/tournament/explanation.ts
+bbee6ded4c187a0c72e9e12ce149ce65e331887ff42dec1e7f42f1a7b8e46cf3  ./packages/core/src/tournament/index.ts

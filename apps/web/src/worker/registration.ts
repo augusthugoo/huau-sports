@@ -114,6 +114,15 @@ const now = () => Math.floor(Date.now() / 1000);
 const dateFromUnix = (value: number) => new Date((value < 10_000_000_000 ? value * 1000 : value)).toISOString().slice(0, 10);
 const activeRegistrationSql = `status NOT IN ('cancelled','rejected')`;
 
+function parseJsonOrNull(value: string | null): unknown | null {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
+}
+
 async function tournamentBySlug(env: Env, slug: string) {
   return env.HUAU_DB.prepare(
     `SELECT id,organizer_organization_id as organizerOrganizationId,name,slug,sport,status,visibility,start_at as startAt,end_at as endAt,timezone,court_count as courtCount,structure_locked as structureLocked FROM tournaments WHERE slug=?`,
@@ -638,10 +647,12 @@ async function publicTournament(slug: string, request: Request, env: Env, access
     `SELECT tc.id,tc.tournament_id as tournamentId,tc.name,tc.entry_type as entryType,tc.competition_gender as competitionGender,tc.min_age as minAge,tc.max_age as maxAge,
             tc.max_entries as maxEntries,tc.registration_status as registrationStatus,tc.price_scope as priceScope,tc.price_minor as priceMinor,tc.currency,
             tc.structure_locked as structureLocked,tc.format_version_id as formatVersionId,tc.scheduled_date as scheduledDate,
+            fv.format_kind as formatKind,fv.config_json as formatConfigJson,fv.explanation_schema_version as explanationSchemaVersion,
             (SELECT COUNT(*) FROM tournament_entries e WHERE e.category_id=tc.id AND e.status NOT IN ('waitlisted','withdrawn','rejected')) as occupiedEntries,
             (SELECT COUNT(*) FROM tournament_entries e WHERE e.category_id=tc.id AND e.status='waitlisted') as waitlistCount
-       FROM tournament_categories tc WHERE tc.tournament_id=? ORDER BY tc.sort_order,tc.name`,
-  ).bind(tournament.id).all<CategoryRow & { scheduledDate: string | null; occupiedEntries: number; waitlistCount: number }>();
+       FROM tournament_categories tc LEFT JOIN competition_format_versions fv ON fv.id=tc.format_version_id
+      WHERE tc.tournament_id=? ORDER BY tc.sort_order,tc.name`,
+  ).bind(tournament.id).all<CategoryRow & { scheduledDate: string | null; occupiedEntries: number; waitlistCount: number; formatKind: string | null; formatConfigJson: string | null; explanationSchemaVersion: number | null }>();
   const currentUser = await access.requireUser(request, env);
   const profile = currentUser ? await profileForUser(env, currentUser.id) : null;
   const activeCategoryCount = currentUser ? await activeCategoryCountForUser(env, tournament.id, currentUser.id) : 0;
@@ -688,8 +699,10 @@ async function publicTournament(slug: string, request: Request, env: Env, access
                 : overlapBlocked
                   ? "TEAM_AGE_DIVISION_OVERLAP_DISABLED"
                   : null;
+    const { formatConfigJson, ...categoryPublic } = category;
     return {
-      ...category,
+      ...categoryPublic,
+      formatConfig: parseJsonOrNull(formatConfigJson),
       rawPriceScope: category.priceScope,
       rawPriceMinor: category.priceMinor,
       priceScope: preview.priceScope,
@@ -1275,6 +1288,9 @@ type RegistrationViewerRow = {
   viewerRole: string | null;
   coveredByRegistrationId: string | null;
   teamPaymentMode: TeamPaymentMode | null;
+  formatKind: string | null;
+  formatConfigJson: string | null;
+  explanationSchemaVersion: number | null;
   createdAt: number;
 };
 
@@ -1312,8 +1328,10 @@ async function registrationDetails(env: Env, row: RegistrationViewerRow) {
         : row.viewerRole === "captain" && teamCaptain?.captainUserId
           ? "captain"
           : "member";
+  const { formatConfigJson, ...baseRow } = row;
   return {
-    ...row,
+    ...baseRow,
+    formatConfig: parseJsonOrNull(formatConfigJson),
     groupingState,
     members: members.results,
     outgoingInvitations: outgoing.results,
@@ -1335,9 +1353,9 @@ async function myRegistrations(request: Request, env: Env, access: AccessHelpers
             t.id as tournamentId,t.name as tournamentName,t.slug,tc.id as categoryId,tc.name as categoryName,tc.entry_type as entryType,
             e.display_name as entryName,tr.entry_id as entryId,1 as isOwner,
             (SELECT em.member_role FROM entry_members em JOIN organization_people op ON op.id=em.organization_person_id WHERE em.entry_id=tr.entry_id AND op.user_id=? AND em.status IN ('accepted','manual') LIMIT 1) as viewerRole,
-            e.team_payment_mode as teamPaymentMode
+            e.team_payment_mode as teamPaymentMode,fv.format_kind as formatKind,fv.config_json as formatConfigJson,fv.explanation_schema_version as explanationSchemaVersion
        FROM tournament_registrations tr JOIN tournaments t ON t.id=tr.tournament_id JOIN tournament_categories tc ON tc.id=tr.category_id
-       LEFT JOIN tournament_entries e ON e.id=tr.entry_id
+       LEFT JOIN tournament_entries e ON e.id=tr.entry_id LEFT JOIN competition_format_versions fv ON fv.id=tc.format_version_id
       WHERE tr.user_id=? ORDER BY tr.created_at DESC`,
   ).bind(user.id, user.id).all<RegistrationViewerRow>();
 
@@ -1346,10 +1364,11 @@ async function myRegistrations(request: Request, env: Env, access: AccessHelpers
             tr.waitlist_position as waitlistPosition,tr.created_at as createdAt,tr.covered_by_registration_id as coveredByRegistrationId,
             t.id as tournamentId,t.name as tournamentName,t.slug,tc.id as categoryId,tc.name as categoryName,tc.entry_type as entryType,
             e.display_name as entryName,tr.entry_id as entryId,0 as isOwner,
-            em.member_role as viewerRole,e.team_payment_mode as teamPaymentMode
+            em.member_role as viewerRole,e.team_payment_mode as teamPaymentMode,
+            fv.format_kind as formatKind,fv.config_json as formatConfigJson,fv.explanation_schema_version as explanationSchemaVersion
        FROM tournament_registrations tr JOIN tournaments t ON t.id=tr.tournament_id JOIN tournament_categories tc ON tc.id=tr.category_id
        JOIN tournament_entries e ON e.id=tr.entry_id JOIN entry_members em ON em.entry_id=e.id AND em.status IN ('accepted','manual')
-       JOIN organization_people op ON op.id=em.organization_person_id
+       JOIN organization_people op ON op.id=em.organization_person_id LEFT JOIN competition_format_versions fv ON fv.id=tc.format_version_id
       WHERE op.user_id=? AND tr.user_id<>? AND NOT EXISTS (
         SELECT 1 FROM tournament_registrations mine WHERE mine.user_id=? AND mine.category_id=tr.category_id AND mine.status NOT IN ('cancelled','rejected')
       ) ORDER BY tr.created_at DESC`,
@@ -1389,9 +1408,10 @@ async function adminRegistrations(tournamentId: string, request: Request, env: E
             t.id as tournamentId,t.name as tournamentName,t.slug,tc.id as categoryId,tc.name as categoryName,tc.entry_type as entryType,
             e.display_name as entryName,tr.entry_id as entryId,1 as isOwner,
             (SELECT em.member_role FROM entry_members em JOIN organization_people op ON op.id=em.organization_person_id WHERE em.entry_id=tr.entry_id AND op.user_id=tr.user_id AND em.status IN ('accepted','manual') LIMIT 1) as viewerRole,
-            e.team_payment_mode as teamPaymentMode,u.name as userName,u.email as userEmail
+            e.team_payment_mode as teamPaymentMode,u.name as userName,u.email as userEmail,
+            fv.format_kind as formatKind,fv.config_json as formatConfigJson,fv.explanation_schema_version as explanationSchemaVersion
        FROM tournament_registrations tr JOIN tournaments t ON t.id=tr.tournament_id JOIN tournament_categories tc ON tc.id=tr.category_id
-       JOIN user u ON u.id=tr.user_id LEFT JOIN tournament_entries e ON e.id=tr.entry_id
+       JOIN user u ON u.id=tr.user_id LEFT JOIN tournament_entries e ON e.id=tr.entry_id LEFT JOIN competition_format_versions fv ON fv.id=tc.format_version_id
       WHERE tr.tournament_id=? ORDER BY tc.sort_order,tr.created_at`,
   ).bind(tournamentId).all<RegistrationViewerRow & { priceScope: string; baseAmountMinor: number; discountMinor: number; userName: string; userEmail: string }>();
   const detailed = await Promise.all(rows.results.map((row) => registrationDetails(env, row)));

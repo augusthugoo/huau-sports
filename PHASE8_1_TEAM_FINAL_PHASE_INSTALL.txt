@@ -1,0 +1,24 @@
+HUAU Sports — Phase 8.1 Team Final Phase
+========================================
+
+Authored against phase-8 commit:
+aade6b1fa1db7972621a53593b17b8b5e2262cd9
+
+This package contains small complete core files plus an exact-anchor patcher for the large current Team/admin files.
+
+Apply from the repository root:
+
+  unzip -o ~/Downloads/HUAU_Sports_Phase_8_1_Team_Final_Phase.zip -d .
+  python3 tools/apply_phase8_1.py
+  pnpm typecheck && pnpm lint && pnpm test
+
+There is NO D1 migration in this package.
+Do NOT rerun 0008.
+
+If all gates are green:
+
+  git add -A
+  git commit -m "feat: complete team final phase engine"
+  git push
+
+Important: the patcher verifies exact source anchors and stops instead of guessing if the local source differs unexpectedly.

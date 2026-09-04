@@ -13,3 +13,5 @@ export * from "./persistence";
 
 export * from "./registration";
 export * from "./payment";
+
+export * from "./explanation";
