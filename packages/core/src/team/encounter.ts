@@ -135,6 +135,8 @@ export function scoreTeamEncounter(input: {
     entryBId: input.entryBId,
     weightedWinsA,
     weightedWinsB,
+    standingPointsA: weightedWinsA,
+    standingPointsB: weightedWinsB,
     rubbersWonA,
     rubbersWonB,
     pointsA,

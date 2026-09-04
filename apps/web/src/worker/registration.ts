@@ -49,6 +49,8 @@ type ProfileRow = {
   birthDate: string | null;
   sportGender: "male" | "female" | "unspecified";
   phone: string | null;
+  duprSingles: number | null;
+  duprDoubles: number | null;
 };
 
 type PricingSettingsRow = {
@@ -56,6 +58,12 @@ type PricingSettingsRow = {
   entryFeeMinor: number | null;
   baseFeeMinor: number | null;
   extraCategoryFeeMinor: number | null;
+  registrationCloseAt: number | null;
+  regulationsText: string;
+  regulationsVersion: number;
+  duprRequired: number;
+  duprMax: number | null;
+  duprAsOfDate: string | null;
   maxCategoriesPerPlayer: number | null;
   teamIndividualFeeMinor: number | null;
   teamFullFeeMinor: number | null;
@@ -144,7 +152,7 @@ async function categoryById(env: Env, id: string) {
 
 async function profileForUser(env: Env, userId: string) {
   return env.HUAU_DB.prepare(
-    `SELECT first_name as firstName,last_name as lastName,birth_date as birthDate,COALESCE(sport_gender,'unspecified') as sportGender,phone FROM user_profiles WHERE user_id=?`,
+    `SELECT first_name as firstName,last_name as lastName,birth_date as birthDate,COALESCE(sport_gender,'unspecified') as sportGender,phone,dupr_singles as duprSingles,dupr_doubles as duprDoubles FROM user_profiles WHERE user_id=?`,
   ).bind(userId).first<ProfileRow>();
 }
 
@@ -177,6 +185,7 @@ async function publicInfoForTournament(env: Env, tournamentId: string): Promise<
 async function pricingSettingsForTournament(env: Env, tournamentId: string): Promise<PricingSettingsRow> {
   const row = await env.HUAU_DB.prepare(
     `SELECT payment_type as paymentType,entry_fee_minor as entryFeeMinor,base_fee_minor as baseFeeMinor,extra_category_fee_minor as extraCategoryFeeMinor,
+            registration_close_at as registrationCloseAt,COALESCE(regulations_text,'') as regulationsText,COALESCE(regulations_version,0) as regulationsVersion,COALESCE(dupr_required,0) as duprRequired,dupr_max as duprMax,dupr_as_of_date as duprAsOfDate,
             max_categories_per_player as maxCategoriesPerPlayer,team_individual_fee_minor as teamIndividualFeeMinor,
             team_full_fee_minor as teamFullFeeMinor,COALESCE(team_additional_participation_mode,'full') as teamAdditionalParticipationMode,
             team_additional_fee_minor as teamAdditionalFeeMinor,COALESCE(allow_team_age_division_overlap,1) as allowTeamAgeDivisionOverlap
@@ -187,6 +196,12 @@ async function pricingSettingsForTournament(env: Env, tournamentId: string): Pro
     entryFeeMinor: null,
     baseFeeMinor: null,
     extraCategoryFeeMinor: null,
+    registrationCloseAt: null,
+    regulationsText: "",
+    regulationsVersion: 0,
+    duprRequired: 0,
+    duprMax: null,
+    duprAsOfDate: null,
     maxCategoriesPerPlayer: null,
     teamIndividualFeeMinor: null,
     teamFullFeeMinor: null,
@@ -246,6 +261,51 @@ async function activeCategoryCountForUser(env: Env, tournamentId: string, userId
      )`,
   ).bind(tournamentId, userId, tournamentId, userId).first<{ count: number }>();
   return Number(row?.count ?? 0);
+}
+
+
+async function viewerCategoryIdsForTournament(env: Env, tournamentId: string, userId: string) {
+  const rows = await env.HUAU_DB.prepare(
+    `SELECT DISTINCT categoryId FROM (
+       SELECT category_id as categoryId FROM tournament_registrations
+        WHERE tournament_id=? AND user_id=? AND status NOT IN ('cancelled','rejected')
+       UNION
+       SELECT e.category_id as categoryId
+         FROM tournament_entries e
+         JOIN tournament_categories tc ON tc.id=e.category_id
+         JOIN entry_members em ON em.entry_id=e.id AND em.status IN ('accepted','manual')
+         JOIN organization_people op ON op.id=em.organization_person_id
+        WHERE tc.tournament_id=? AND op.user_id=? AND e.status NOT IN ('withdrawn','rejected')
+     )`,
+  ).bind(tournamentId, userId, tournamentId, userId).all<{ categoryId: string }>();
+  return new Set(rows.results.map((row) => row.categoryId));
+}
+
+async function viewerTeamRegistrationStats(env: Env, tournamentId: string, userId: string) {
+  const row = await env.HUAU_DB.prepare(
+    `SELECT
+       COUNT(DISTINCT CASE WHEN tc.entry_type='team' THEN tc.id END) as activeTeamCategoryCount,
+       COUNT(DISTINCT CASE WHEN tc.entry_type='team' AND (tc.min_age IS NOT NULL OR tc.max_age IS NOT NULL) THEN tc.id END) as activeAgeTeamDivisionCount
+       FROM tournament_registrations tr
+       JOIN tournament_categories tc ON tc.id=tr.category_id
+      WHERE tr.tournament_id=? AND tr.user_id=? AND tr.status NOT IN ('cancelled','rejected')`,
+  ).bind(tournamentId, userId).first<{ activeTeamCategoryCount: number; activeAgeTeamDivisionCount: number }>();
+  return {
+    activeTeamCategoryCount: Number(row?.activeTeamCategoryCount ?? 0),
+    activeAgeTeamDivisionCount: Number(row?.activeAgeTeamDivisionCount ?? 0),
+  };
+}
+
+async function hasTournamentWildCard(env: Env, tournamentId: string, userId: string) {
+  const row = await env.HUAU_DB.prepare(`SELECT 1 as ok FROM tournament_wild_cards WHERE tournament_id=? AND user_id=? LIMIT 1`).bind(tournamentId,userId).first<{ok:number}>();
+  return Boolean(row);
+}
+
+function duprPolicyViolation(settings: PricingSettingsRow, profile: ProfileRow | null, hasWildCard: boolean): string | null {
+  if (!settings.duprRequired) return null;
+  if (!profile || profile.duprSingles === null || profile.duprDoubles === null || profile.duprSingles <= 0 || profile.duprDoubles <= 0) return "DUPR_REQUIRED";
+  if (settings.duprMax !== null && !hasWildCard && (profile.duprSingles > settings.duprMax || profile.duprDoubles > settings.duprMax)) return "DUPR_LIMIT_EXCEEDED";
+  return null;
 }
 
 async function userAlreadyInCategory(env: Env, userId: string, categoryId: string) {
@@ -340,7 +400,13 @@ async function ensureTournamentPlayerProfile(env: Env, tournament: TournamentRow
   const existing = await env.HUAU_DB.prepare(
     `SELECT id FROM tournament_player_profiles WHERE tournament_id=? AND organization_person_id=?`,
   ).bind(tournament.id, personId).first<{ id: string }>();
-  if (existing) return existing.id;
+  if (existing) {
+    if (profile.duprSingles !== null || profile.duprDoubles !== null) {
+      await env.HUAU_DB.prepare(`UPDATE tournament_player_profiles SET dupr_singles=COALESCE(?,dupr_singles),dupr_doubles=COALESCE(?,dupr_doubles),updated_at=?,version=version+1 WHERE id=?`)
+        .bind(profile.duprSingles, profile.duprDoubles, now(), existing.id).run();
+    }
+    return existing.id;
+  }
   const id = uuid();
   const stamp = now();
   const sort = await env.HUAU_DB.prepare(
@@ -348,8 +414,8 @@ async function ensureTournamentPlayerProfile(env: Env, tournament: TournamentRow
   ).bind(tournament.id).first<{ nextSort: number }>();
   await env.HUAU_DB.prepare(
     `INSERT INTO tournament_player_profiles (id,tournament_id,organization_person_id,display_name,club,contact,dupr_singles,dupr_doubles,payment_status,player_status,notes,sort_order,created_at,updated_at,version)
-     VALUES (?,?,?,?, '', ?,0,0,'pending','confirmed','',?,?,?,1)`,
-  ).bind(id, tournament.id, personId, `${profile.firstName} ${profile.lastName}`.trim() || user.name, user.email, sort?.nextSort ?? 0, stamp, stamp).run();
+     VALUES (?,?,?,?, '', ?,?,?,'pending','confirmed','',?,?,?,1)`,
+  ).bind(id, tournament.id, personId, `${profile.firstName} ${profile.lastName}`.trim() || user.name, user.email, profile.duprSingles ?? 0, profile.duprDoubles ?? 0, sort?.nextSort ?? 0, stamp, stamp).run();
   return id;
 }
 
@@ -569,7 +635,7 @@ async function createPersonalRegistration(
   tournament: TournamentRow,
   category: CategoryRow,
   user: CurrentUser,
-  selection: { teamChoice?: "free" | "create"; teamName?: string; teamPaymentMode?: TeamPaymentMode },
+  selection: { teamChoice?: "free" | "create"; teamName?: string; teamPaymentMode?: TeamPaymentMode; regulationsVersionAccepted?: number | null },
 ) {
   const identity = await ensureIdentity(env, tournament, user);
   const registrationId = uuid();
@@ -579,6 +645,8 @@ async function createPersonalRegistration(
   const pricing = await effectivePersonalPricing(env, tournament.id, user.id, category, { teamPaymentMode });
   const amount = pricing.priceMinor;
   const stamp = now();
+  const regulationsVersionAccepted = selection.regulationsVersionAccepted ?? null;
+  const regulationsAcceptedAt = regulationsVersionAccepted === null ? null : stamp;
   let status = amount > 0 ? "awaiting_payment" : "confirmed";
   let entryId: string | null = null;
   let waitlistPosition: number | null = null;
@@ -600,9 +668,9 @@ async function createPersonalRegistration(
          VALUES (?,?,?,?,?,'accepted',?,?,?,?)`,
       ).bind(uuid(), entryId, identity.personId, "player", "1", user.id, stamp, stamp, stamp),
       env.HUAU_DB.prepare(
-        `INSERT INTO tournament_registrations (id,tournament_id,category_id,entry_id,user_id,registration_number,status,participant_count,price_scope,base_amount_minor,discount_minor,final_amount_minor,currency,waitlist_position,created_at,updated_at,version,covered_by_registration_id)
-         VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,1,NULL)`,
-      ).bind(registrationId, tournament.id, category.id, entryId, user.id, number, status, 1, pricing.priceScope, amount, amount, category.currency ?? "UYU", waitlistPosition, stamp, stamp),
+        `INSERT INTO tournament_registrations (id,tournament_id,category_id,entry_id,user_id,registration_number,status,participant_count,price_scope,base_amount_minor,discount_minor,final_amount_minor,currency,waitlist_position,created_at,updated_at,version,covered_by_registration_id,regulations_version_accepted,regulations_accepted_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,1,NULL,?,?)`,
+      ).bind(registrationId, tournament.id, category.id, entryId, user.id, number, status, 1, pricing.priceScope, amount, amount, category.currency ?? "UYU", waitlistPosition, stamp, stamp, regulationsVersionAccepted, regulationsAcceptedAt),
     ]);
     await syncLegacyAssignment(env, identity.playerProfileId, category.id, null);
     return { registrationId, entryId, status, waitlistPosition };
@@ -626,18 +694,18 @@ async function createPersonalRegistration(
          VALUES (?,?,?,?,?,'accepted',?,?,?,?)`,
       ).bind(uuid(), entryId, identity.personId, "captain", "1", user.id, stamp, stamp, stamp),
       env.HUAU_DB.prepare(
-        `INSERT INTO tournament_registrations (id,tournament_id,category_id,entry_id,user_id,registration_number,status,participant_count,price_scope,base_amount_minor,discount_minor,final_amount_minor,currency,waitlist_position,created_at,updated_at,version,covered_by_registration_id)
-         VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,1,NULL)`,
-      ).bind(registrationId, tournament.id, category.id, entryId, user.id, number, status, 1, pricing.priceScope, amount, amount, category.currency ?? "UYU", waitlistPosition, stamp, stamp),
+        `INSERT INTO tournament_registrations (id,tournament_id,category_id,entry_id,user_id,registration_number,status,participant_count,price_scope,base_amount_minor,discount_minor,final_amount_minor,currency,waitlist_position,created_at,updated_at,version,covered_by_registration_id,regulations_version_accepted,regulations_accepted_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,1,NULL,?,?)`,
+      ).bind(registrationId, tournament.id, category.id, entryId, user.id, number, status, 1, pricing.priceScope, amount, amount, category.currency ?? "UYU", waitlistPosition, stamp, stamp, regulationsVersionAccepted, regulationsAcceptedAt),
     ]);
     await recalcCompetitiveEntry(env, entryId);
     return { registrationId, entryId, status, waitlistPosition };
   }
 
   await env.HUAU_DB.prepare(
-    `INSERT INTO tournament_registrations (id,tournament_id,category_id,entry_id,user_id,registration_number,status,participant_count,price_scope,base_amount_minor,discount_minor,final_amount_minor,currency,waitlist_position,created_at,updated_at,version,covered_by_registration_id)
-     VALUES (?,?,?,NULL,?,?,?,?,?,?,0,?,?,NULL,?,?,1,NULL)`,
-  ).bind(registrationId, tournament.id, category.id, user.id, number, status, 1, pricing.priceScope, amount, amount, category.currency ?? "UYU", stamp, stamp).run();
+    `INSERT INTO tournament_registrations (id,tournament_id,category_id,entry_id,user_id,registration_number,status,participant_count,price_scope,base_amount_minor,discount_minor,final_amount_minor,currency,waitlist_position,created_at,updated_at,version,covered_by_registration_id,regulations_version_accepted,regulations_accepted_at)
+     VALUES (?,?,?,NULL,?,?,?,?,?,?,0,?,?,NULL,?,?,1,NULL,?,?)`,
+  ).bind(registrationId, tournament.id, category.id, user.id, number, status, 1, pricing.priceScope, amount, amount, category.currency ?? "UYU", stamp, stamp, regulationsVersionAccepted, regulationsAcceptedAt).run();
   if (category.entryType === "pair") await syncLegacyAssignment(env, identity.playerProfileId, category.id, null);
   return { registrationId, entryId: null, status, waitlistPosition: null };
 }
@@ -672,11 +740,11 @@ async function publicTournamentHero(slug: string, env: Env) {
 async function publicTournament(slug: string, request: Request, env: Env, access: AccessHelpers) {
   const tournament = await tournamentBySlug(env, slug);
   if (!tournament || tournament.visibility !== "public") return json({ ok: false, code: "TOURNAMENT_NOT_FOUND" }, { status: 404 });
-  const [closeAt, settings, publicInfo] = await Promise.all([
-    registrationCloseAt(env, tournament.id),
+  const [settings, publicInfo] = await Promise.all([
     pricingSettingsForTournament(env, tournament.id),
     publicInfoForTournament(env, tournament.id),
   ]);
+  const closeAt = settings.registrationCloseAt;
   const categories = await env.HUAU_DB.prepare(
     `SELECT tc.id,tc.tournament_id as tournamentId,tc.name,tc.entry_type as entryType,tc.competition_gender as competitionGender,tc.min_age as minAge,tc.max_age as maxAge,
             tc.max_entries as maxEntries,tc.registration_status as registrationStatus,tc.price_scope as priceScope,tc.price_minor as priceMinor,tc.currency,
@@ -688,16 +756,40 @@ async function publicTournament(slug: string, request: Request, env: Env, access
       WHERE tc.tournament_id=? ORDER BY tc.sort_order,tc.name`,
   ).bind(tournament.id).all<CategoryRow & { scheduledDate: string | null; occupiedEntries: number; waitlistCount: number; formatKind: string | null; formatConfigJson: string | null; explanationSchemaVersion: number | null }>();
   const currentUser = await access.requireUser(request, env);
-  const profile = currentUser ? await profileForUser(env, currentUser.id) : null;
-  const activeCategoryCount = currentUser ? await activeCategoryCountForUser(env, tournament.id, currentUser.id) : 0;
-  const activeTeamCategoryCount = currentUser ? await priorActiveTeamRegistrationCount(env, tournament.id, currentUser.id) : 0;
-  const activeAgeTeamDivisionCount = currentUser ? await priorAgeTeamDivisionCount(env, tournament.id, currentUser.id) : 0;
+  const viewerState = currentUser
+    ? await Promise.all([
+        profileForUser(env, currentUser.id),
+        viewerCategoryIdsForTournament(env, tournament.id, currentUser.id),
+        viewerTeamRegistrationStats(env, tournament.id, currentUser.id),
+        hasTournamentWildCard(env, tournament.id, currentUser.id),
+      ])
+    : null;
+  const profile = viewerState?.[0] ?? null;
+  const viewerCategoryIds = viewerState?.[1] ?? new Set<string>();
+  const activeCategoryCount = viewerCategoryIds.size;
+  const activeTeamCategoryCount = viewerState?.[2].activeTeamCategoryCount ?? 0;
+  const activeAgeTeamDivisionCount = viewerState?.[2].activeAgeTeamDivisionCount ?? 0;
+  const viewerHasWildCard = viewerState?.[3] ?? false;
+  const duprBlockedCode = currentUser ? duprPolicyViolation(settings, profile, viewerHasWildCard) : null;
 
-  const publicCategories = await Promise.all(categories.results.map(async (category) => {
-    const preview = currentUser
-      ? await effectivePersonalPricing(env, tournament.id, currentUser.id, category)
-      : category.entryType === "team" && category.priceMinor === null && settings.teamIndividualFeeMinor !== null
-        ? { priceScope: "per_person" as const, priceMinor: settings.teamIndividualFeeMinor, source: "team_individual" as const }
+  const publicCategories = categories.results.map((category) => {
+    const preview = category.priceMinor !== null
+      ? {
+          priceScope: category.priceScope,
+          priceMinor: registrationPriceMinor({ priceScope: category.priceScope, priceMinor: category.priceMinor }, 1),
+          source: "category" as const,
+        }
+      : category.entryType === "team" && settings.teamIndividualFeeMinor !== null
+        ? {
+            priceScope: "per_person" as const,
+            priceMinor: resolveTeamIndividualPrice({
+              individualFeeMinor: settings.teamIndividualFeeMinor,
+              additionalMode: settings.teamAdditionalParticipationMode,
+              additionalFeeMinor: settings.teamAdditionalFeeMinor,
+              priorTeamRegistrationCount: activeTeamCategoryCount,
+            }),
+            source: activeTeamCategoryCount > 0 ? "team_additional" as const : "team_individual" as const,
+          }
         : (() => {
             const resolution = resolveRegistrationPricing({
               categoryPriceScope: category.priceScope,
@@ -706,11 +798,15 @@ async function publicTournament(slug: string, request: Request, env: Env, access
               tournamentEntryFeeMinor: settings.entryFeeMinor,
               tournamentBaseFeeMinor: settings.baseFeeMinor,
               tournamentExtraCategoryFeeMinor: settings.extraCategoryFeeMinor,
-              priorActiveRegistrationCount: 0,
+              priorActiveRegistrationCount: activeCategoryCount,
             });
-            return { priceScope: resolution.priceScope, priceMinor: registrationPriceMinor({ priceScope: resolution.priceScope, priceMinor: resolution.priceMinor }, 1), source: resolution.source };
+            return {
+              priceScope: resolution.priceScope,
+              priceMinor: registrationPriceMinor({ priceScope: resolution.priceScope, priceMinor: resolution.priceMinor }, 1),
+              source: resolution.source,
+            };
           })();
-    const alreadyRegistered = currentUser ? await userAlreadyInCategory(env, currentUser.id, category.id) : false;
+    const alreadyRegistered = viewerCategoryIds.has(category.id);
     const overlapBlocked = currentUser && !alreadyRegistered && category.entryType === "team"
       ? teamAgeDivisionOverlapBlocked({
           allowOverlap: Boolean(settings.allowTeamAgeDivisionOverlap),
@@ -728,8 +824,10 @@ async function publicTournament(slug: string, request: Request, env: Env, access
             ? "REGISTRATION_DEADLINE_PASSED"
             : alreadyRegistered
               ? "ALREADY_REGISTERED_IN_CATEGORY"
-              : categoryLimitReached(settings.maxCategoriesPerPlayer, activeCategoryCount)
-                ? "MAX_CATEGORIES_REACHED"
+              : duprBlockedCode
+                ? duprBlockedCode
+                : categoryLimitReached(settings.maxCategoriesPerPlayer, activeCategoryCount)
+                  ? "MAX_CATEGORIES_REACHED"
                 : overlapBlocked
                   ? "TEAM_AGE_DIVISION_OVERLAP_DISABLED"
                   : null;
@@ -745,7 +843,7 @@ async function publicTournament(slug: string, request: Request, env: Env, access
       registrationBlockedCode: blockedCode,
       viewerAlreadyRegistered: alreadyRegistered,
     };
-  }));
+  });
 
   const { publicHeroR2Key, organizerOrganizationId: _organizerOrganizationId, visibility: _visibility, ...publicTournamentData } = tournament;
   void _organizerOrganizationId;
@@ -757,8 +855,15 @@ async function publicTournament(slug: string, request: Request, env: Env, access
       heroImageUrl: publicHeroR2Key ? `/api/public/tournaments/${encodeURIComponent(tournament.slug)}/hero` : null,
     },
     publicInfo,
+    regulations: { text: settings.regulationsText, version: settings.regulationsVersion },
+    eligibilityPolicy: { duprRequired: Boolean(settings.duprRequired), duprMax: settings.duprMax, duprAsOfDate: settings.duprAsOfDate },
     registrationCloseAt: closeAt,
-    pricingPolicy: settings,
+    pricingPolicy: {
+      paymentType: settings.paymentType,
+      entryFeeMinor: settings.entryFeeMinor,
+      baseFeeMinor: settings.baseFeeMinor,
+      extraCategoryFeeMinor: settings.extraCategoryFeeMinor,
+    },
     teamPricing: {
       individualFeeMinor: settings.teamIndividualFeeMinor,
       fullTeamFeeMinor: settings.teamFullFeeMinor,
@@ -771,7 +876,7 @@ async function publicTournament(slug: string, request: Request, env: Env, access
     activeTeamCategoryCount,
     activeAgeTeamDivisionCount,
     categories: publicCategories,
-    viewer: currentUser ? { authenticated: true, profile } : { authenticated: false, profile: null },
+    viewer: currentUser ? { authenticated: true, profile, wildCard: viewerHasWildCard } : { authenticated: false, profile: null, wildCard: false },
   });
 }
 
@@ -787,13 +892,26 @@ async function batchRegistration(tournamentId: string, request: Request, env: En
   if (!user) return json({ ok: false, code: "UNAUTHENTICATED" }, { status: 401 });
   const tournament = await tournamentById(env, tournamentId);
   if (!tournament) return json({ ok: false, code: "TOURNAMENT_NOT_FOUND" }, { status: 404 });
-  const body = await readJson<{ selections?: BatchSelection[] }>(request).catch(() => ({ selections: [] }));
+  const body: { selections?: BatchSelection[]; regulationsVersionAccepted?: number | null } =
+    await readJson<{ selections?: BatchSelection[]; regulationsVersionAccepted?: number | null }>(request).catch(() => ({ selections: [] }));
   const selections = Array.isArray(body.selections) ? body.selections.slice(0, 20) : [];
   if (!selections.length) return json({ ok: false, code: "NO_CATEGORIES_SELECTED" }, { status: 400 });
   const uniqueIds = new Set(selections.map((selection) => selection.categoryId));
   if (uniqueIds.size !== selections.length) return json({ ok: false, code: "DUPLICATE_CATEGORY_SELECTION" }, { status: 400 });
 
   const settings = await pricingSettingsForTournament(env, tournamentId);
+  if (settings.regulationsText.trim()) {
+    if (body.regulationsVersionAccepted === undefined || body.regulationsVersionAccepted === null) {
+      return json({ ok: false, code: "REGULATIONS_ACCEPTANCE_REQUIRED" }, { status: 409 });
+    }
+    if (Number(body.regulationsVersionAccepted) !== settings.regulationsVersion) {
+      return json({ ok: false, code: "REGULATIONS_VERSION_CHANGED", regulationsVersion: settings.regulationsVersion }, { status: 409 });
+    }
+  }
+  const acceptedRegulationsVersion = settings.regulationsText.trim() ? settings.regulationsVersion : null;
+  const [registrationProfile, registrationWildCard] = await Promise.all([profileForUser(env,user.id),hasTournamentWildCard(env,tournamentId,user.id)]);
+  const duprCode = duprPolicyViolation(settings, registrationProfile, registrationWildCard);
+  if (duprCode) return json({ok:false,code:duprCode,duprMax:settings.duprMax,duprAsOfDate:settings.duprAsOfDate},{status:409});
   const activeCount = await activeCategoryCountForUser(env, tournamentId, user.id);
   if (settings.maxCategoriesPerPlayer !== null && activeCount + selections.length > settings.maxCategoriesPerPlayer) {
     return json({ ok: false, code: "MAX_CATEGORIES_REACHED", maxCategoriesPerPlayer: settings.maxCategoriesPerPlayer, activeCategoryCount: activeCount }, { status: 409 });
@@ -827,7 +945,7 @@ async function batchRegistration(tournamentId: string, request: Request, env: En
   const created: Array<{ registrationId: string; entryId: string | null; categoryId: string; status: string; waitlistPosition: number | null }> = [];
   try {
     for (let index = 0; index < selections.length; index += 1) {
-      const result = await createPersonalRegistration(env, tournament, categories[index]!, user, selections[index]!);
+      const result = await createPersonalRegistration(env, tournament, categories[index]!, user, { ...selections[index]!, regulationsVersionAccepted: acceptedRegulationsVersion });
       created.push({ ...result, categoryId: categories[index]!.id });
     }
   } catch (error) {
@@ -843,17 +961,27 @@ async function createRegistration(tournamentId: string, categoryId: string, requ
   const tournament = await tournamentById(env, tournamentId);
   const category = await categoryById(env, categoryId);
   if (!tournament || !category) return json({ ok: false, code: "CATEGORY_NOT_FOUND" }, { status: 404 });
-  let body: { teamName?: string } = {};
-  try { body = await readJson<{ teamName?: string }>(request); } catch { body = {}; }
+  let body: { teamName?: string; regulationsVersionAccepted?: number | null } = {};
+  try { body = await readJson<{ teamName?: string; regulationsVersionAccepted?: number | null }>(request); } catch { body = {}; }
   try {
     await validateRegistrationCommon(env, tournament, category, user);
     const settings = await pricingSettingsForTournament(env, tournamentId);
+    if (settings.regulationsText.trim()) {
+      if (body.regulationsVersionAccepted === undefined || body.regulationsVersionAccepted === null) throw new Error("REGULATIONS_ACCEPTANCE_REQUIRED");
+      if (Number(body.regulationsVersionAccepted) !== settings.regulationsVersion) throw new Error("REGULATIONS_VERSION_CHANGED");
+    }
+    const acceptedRegulationsVersion = settings.regulationsText.trim() ? settings.regulationsVersion : null;
+    const registrationProfile = await profileForUser(env,user.id);
+    const registrationWildCard = await hasTournamentWildCard(env,tournamentId,user.id);
+    const duprCode = duprPolicyViolation(settings,registrationProfile,registrationWildCard);
+    if (duprCode) throw new Error(duprCode);
     const activeCount = await activeCategoryCountForUser(env, tournamentId, user.id);
     if (categoryLimitReached(settings.maxCategoriesPerPlayer, activeCount)) throw new Error("MAX_CATEGORIES_REACHED");
     const result = await createPersonalRegistration(env, tournament, category, user, {
       teamChoice: category.entryType === "team" && body.teamName ? "create" : "free",
       ...(body.teamName ? { teamName: body.teamName } : {}),
       teamPaymentMode: "individual",
+      regulationsVersionAccepted: acceptedRegulationsVersion,
     });
     return json({ ok: true, ...result }, { status: 201 });
   } catch (error) {

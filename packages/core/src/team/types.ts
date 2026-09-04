@@ -58,8 +58,10 @@ export type TeamCompetitionConfig = {
 };
 
 export type TeamStandingCriterion =
+  | "standing_points"
   | "encounter_wins"
   | "encounter_win_rate"
+  | "head_to_head"
   | "rubber_diff"
   | "point_diff"
   | "points_for";
@@ -135,6 +137,8 @@ export type TeamEncounterScore = {
   entryBId: string;
   weightedWinsA: number;
   weightedWinsB: number;
+  standingPointsA: number;
+  standingPointsB: number;
   rubbersWonA: number;
   rubbersWonB: number;
   pointsA: number;
@@ -166,6 +170,8 @@ export type TeamStandingEncounter = {
   entryAId: string;
   entryBId: string;
   winnerEntryId: string;
+  standingPointsA?: number;
+  standingPointsB?: number;
   rubbersWonA: number;
   rubbersWonB: number;
   pointsA: number;
@@ -179,6 +185,7 @@ export type TeamStandingRow = {
   wins: number;
   losses: number;
   winRate: number;
+  standingPoints: number;
   rubbersFor: number;
   rubbersAgainst: number;
   rubberDiff: number;

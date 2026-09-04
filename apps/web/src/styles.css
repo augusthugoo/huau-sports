@@ -1328,3 +1328,57 @@ textarea { resize:vertical; }
   }
   .tpw-workspace-actions { justify-content: flex-start; }
 }
+
+/* Phase 9 registration launch: public regulations */
+.tournament-regulations-admin {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 18px;
+  background: rgba(255,255,255,.025);
+}
+.tournament-regulations-admin textarea { min-height: 220px; resize: vertical; }
+.tournament-regulations-admin small { display: block; margin-top: 6px; opacity: .65; }
+.public-regulations-trigger { margin-top: 14px; }
+.registration-regulations-accept {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid rgba(255,255,255,.13);
+  border-radius: 14px;
+  background: rgba(255,255,255,.035);
+}
+.registration-regulations-accept label,
+.public-regulations-modal-footer label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+.registration-regulations-accept input,
+.public-regulations-modal-footer input {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  flex: 0 0 auto;
+}
+.public-regulations-modal { max-width: 820px; }
+.public-regulations-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.65;
+  font-size: .98rem;
+}
+.public-regulations-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px 20px 20px;
+  border-top: 1px solid rgba(255,255,255,.1);
+}
+@media (max-width: 680px) {
+  .public-regulations-modal-footer { align-items: stretch; flex-direction: column; }
+  .public-regulations-modal-footer .light { width: 100%; }
+}

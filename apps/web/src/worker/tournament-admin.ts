@@ -250,6 +250,11 @@ type TournamentSettingsRow = {
   location: string;
   description: string;
   contact: string;
+  regulationsText: string;
+  regulationsVersion: number;
+  duprRequired: number;
+  duprMax: number | null;
+  duprAsOfDate: string | null;
   dailyStart: string;
   dailyEnd: string;
   defaultMatchMinutes: number;
@@ -308,7 +313,7 @@ async function ensureTournamentSettings(env: Env, tournamentId: string) {
 async function settingsForTournament(env: Env, tournamentId: string): Promise<TournamentSettingsRow> {
   await ensureTournamentSettings(env, tournamentId);
   const row = await env.HUAU_DB.prepare(
-    `SELECT tournament_id as tournamentId,club,city,location,description,contact,daily_start as dailyStart,daily_end as dailyEnd,
+    `SELECT tournament_id as tournamentId,club,city,location,description,contact,COALESCE(regulations_text,'') as regulationsText,COALESCE(regulations_version,0) as regulationsVersion,COALESCE(dupr_required,0) as duprRequired,dupr_max as duprMax,dupr_as_of_date as duprAsOfDate,daily_start as dailyStart,daily_end as dailyEnd,
             default_match_minutes as defaultMatchMinutes,payment_type as paymentType,entry_fee_minor as entryFeeMinor,
             base_fee_minor as baseFeeMinor,extra_category_fee_minor as extraCategoryFeeMinor,registration_close_at as registrationCloseAt,
             max_categories_per_player as maxCategoriesPerPlayer,team_individual_fee_minor as teamIndividualFeeMinor,team_full_fee_minor as teamFullFeeMinor,
@@ -325,7 +330,7 @@ async function settingsForTournament(env: Env, tournamentId: string): Promise<To
 
 async function readTournamentSettings(env: Env, tournamentId: string): Promise<TournamentSettingsRow> {
   const row = await env.HUAU_DB.prepare(
-    `SELECT tournament_id as tournamentId,club,city,location,description,contact,daily_start as dailyStart,daily_end as dailyEnd,
+    `SELECT tournament_id as tournamentId,club,city,location,description,contact,COALESCE(regulations_text,'') as regulationsText,COALESCE(regulations_version,0) as regulationsVersion,COALESCE(dupr_required,0) as duprRequired,dupr_max as duprMax,dupr_as_of_date as duprAsOfDate,daily_start as dailyStart,daily_end as dailyEnd,
             default_match_minutes as defaultMatchMinutes,payment_type as paymentType,entry_fee_minor as entryFeeMinor,
             base_fee_minor as baseFeeMinor,extra_category_fee_minor as extraCategoryFeeMinor,registration_close_at as registrationCloseAt,
             max_categories_per_player as maxCategoriesPerPlayer,team_individual_fee_minor as teamIndividualFeeMinor,team_full_fee_minor as teamFullFeeMinor,
@@ -342,6 +347,11 @@ async function readTournamentSettings(env: Env, tournamentId: string): Promise<T
     location: "",
     description: "",
     contact: "",
+    regulationsText: "",
+    regulationsVersion: 0,
+    duprRequired: 0,
+    duprMax: null,
+    duprAsOfDate: null,
     dailyStart: "09:00",
     dailyEnd: "20:00",
     defaultMatchMinutes: 30,
@@ -2457,7 +2467,7 @@ async function commitTournamentWorkspace(
 
 async function lightSettingsForTournament(env: Env, tournamentId: string): Promise<TournamentSettingsRow> {
   const row = await env.HUAU_DB.prepare(
-    `SELECT tournament_id as tournamentId,club,city,location,description,contact,daily_start as dailyStart,daily_end as dailyEnd,
+    `SELECT tournament_id as tournamentId,club,city,location,description,contact,COALESCE(regulations_text,'') as regulationsText,COALESCE(regulations_version,0) as regulationsVersion,COALESCE(dupr_required,0) as duprRequired,dupr_max as duprMax,dupr_as_of_date as duprAsOfDate,daily_start as dailyStart,daily_end as dailyEnd,
             default_match_minutes as defaultMatchMinutes,payment_type as paymentType,entry_fee_minor as entryFeeMinor,
             base_fee_minor as baseFeeMinor,extra_category_fee_minor as extraCategoryFeeMinor,registration_close_at as registrationCloseAt,
             max_categories_per_player as maxCategoriesPerPlayer,team_individual_fee_minor as teamIndividualFeeMinor,team_full_fee_minor as teamFullFeeMinor,
@@ -3014,6 +3024,48 @@ export async function handleTournamentAdminApi(
     return json({ ok: true, ...(await tournamentParticipantsCore(env, accessResult.tournament)) });
   }
 
+  const tournamentWildCardsRoute = url.pathname.match(/^\/api\/admin\/tournaments\/([^/]+)\/wild-cards$/);
+  if (tournamentWildCardsRoute) {
+    const tournamentId = decodeURIComponent(tournamentWildCardsRoute[1]!);
+    const accessResult = await tournamentForAccess(tournamentId, request, env, access);
+    if (accessResult instanceof Response) return accessResult;
+    if (request.method === "GET") {
+      const rows = await env.HUAU_DB.prepare(
+        `SELECT wc.user_id as userId,u.name,u.email,wc.note,wc.created_at as createdAt,wc.updated_at as updatedAt
+           FROM tournament_wild_cards wc JOIN user u ON u.id=wc.user_id
+          WHERE wc.tournament_id=? ORDER BY wc.updated_at DESC`,
+      ).bind(tournamentId).all();
+      return json({ok:true,wildCards:rows.results});
+    }
+    if (request.method === "POST") {
+      const body: { email?: string; note?: string } =
+        await readJson<{ email?: string; note?: string }>(request).catch(() => ({}));
+      const email = body.email?.trim().toLowerCase();
+      if (!email) return json({ok:false,code:"WILD_CARD_EMAIL_REQUIRED"},{status:400});
+      const target = await env.HUAU_DB.prepare(`SELECT id,name,email FROM user WHERE lower(email)=? LIMIT 1`).bind(email).first<{id:string;name:string;email:string}>();
+      if (!target) return json({ok:false,code:"WILD_CARD_USER_NOT_FOUND"},{status:404});
+      const stamp = unixNow();
+      await env.HUAU_DB.prepare(
+        `INSERT INTO tournament_wild_cards (tournament_id,user_id,note,created_by_user_id,created_at,updated_at)
+         VALUES (?,?,?,?,?,?)
+         ON CONFLICT(tournament_id,user_id) DO UPDATE SET note=excluded.note,created_by_user_id=excluded.created_by_user_id,updated_at=excluded.updated_at`,
+      ).bind(tournamentId,target.id,body.note?.trim()||null,accessResult.user.id,stamp,stamp).run();
+      await audit(env,accessResult.tournament,accessResult.user.id,"tournament.wild_card.granted",`Granted Wild Card to ${target.email}`,"user",target.id,{email:target.email,note:body.note?.trim()||null});
+      return json({ok:true,wildCard:{userId:target.id,name:target.name,email:target.email}});
+    }
+  }
+
+  const tournamentWildCardRoute = url.pathname.match(/^\/api\/admin\/tournaments\/([^/]+)\/wild-cards\/([^/]+)$/);
+  if (tournamentWildCardRoute && request.method === "DELETE") {
+    const tournamentId = decodeURIComponent(tournamentWildCardRoute[1]!);
+    const targetUserId = decodeURIComponent(tournamentWildCardRoute[2]!);
+    const accessResult = await tournamentForAccess(tournamentId, request, env, access);
+    if (accessResult instanceof Response) return accessResult;
+    await env.HUAU_DB.prepare(`DELETE FROM tournament_wild_cards WHERE tournament_id=? AND user_id=?`).bind(tournamentId,targetUserId).run();
+    await audit(env,accessResult.tournament,accessResult.user.id,"tournament.wild_card.revoked","Revoked tournament Wild Card","user",targetUserId);
+    return json({ok:true});
+  }
+
   const tournamentHeroRoute = url.pathname.match(/^\/api\/admin\/tournaments\/([^/]+)\/public-hero$/);
   if (tournamentHeroRoute && (request.method === "PUT" || request.method === "DELETE")) {
     return mutateTournamentPublicHero(decodeURIComponent(tournamentHeroRoute[1]!), request, env, access);
@@ -3108,11 +3160,19 @@ export async function handleTournamentAdminApi(
     const minimumGroup = Math.max(2,Math.trunc(Number(body.minimumGroup ?? current.minimumGroup)));
     const preferredGroup = Math.max(minimumGroup,Math.trunc(Number(body.preferredGroup ?? current.preferredGroup)));
     const maximumGroup = Math.max(preferredGroup,Math.trunc(Number(body.maximumGroup ?? current.maximumGroup)));
+    const nextRegulationsText = body.regulationsText === undefined ? current.regulationsText : String(body.regulationsText).trim();
+    if (nextRegulationsText.length > 30000) return json({ok:false,code:"TOURNAMENT_REGULATIONS_TOO_LONG"},{status:400});
+    const nextRegulationsVersion = nextRegulationsText === current.regulationsText ? current.regulationsVersion : current.regulationsVersion + 1;
+    const nextDuprRequired = Object.prototype.hasOwnProperty.call(body,"duprRequired") ? (Number(body.duprRequired) ? 1 : 0) : current.duprRequired;
+    const nextDuprMax = Object.prototype.hasOwnProperty.call(body,"duprMax") ? (body.duprMax === null ? null : Number(body.duprMax)) : current.duprMax;
+    if (nextDuprMax !== null && (!Number.isFinite(nextDuprMax) || nextDuprMax <= 0 || nextDuprMax > 8)) return json({ok:false,code:"INVALID_DUPR_MAX"},{status:400});
+    const nextDuprAsOfDate = Object.prototype.hasOwnProperty.call(body,"duprAsOfDate") ? (body.duprAsOfDate ? String(body.duprAsOfDate) : null) : current.duprAsOfDate;
+    if (nextDuprAsOfDate && !/^\d{4}-\d{2}-\d{2}$/.test(nextDuprAsOfDate)) return json({ok:false,code:"INVALID_DUPR_AS_OF_DATE"},{status:400});
     const stamp = unixNow();
     await env.HUAU_DB.batch([
       env.HUAU_DB.prepare(
-        `UPDATE tournament_settings SET club=?,city=?,location=?,description=?,contact=?,daily_start=?,daily_end=?,default_match_minutes=?,payment_type=?,entry_fee_minor=?,base_fee_minor=?,extra_category_fee_minor=?,registration_close_at=?,max_categories_per_player=?,team_individual_fee_minor=?,team_full_fee_minor=?,team_additional_participation_mode=?,team_additional_fee_minor=?,allow_team_age_division_overlap=?,minimum_group=?,preferred_group=?,maximum_group=?,suggested_qualifiers_per_group=?,seeding_method=?,minimum_rest_slots=?,updated_at=? WHERE tournament_id=?`,
-      ).bind(body.club ?? current.club,body.city ?? current.city,body.location ?? current.location,body.description ?? current.description,body.contact ?? current.contact,dailyStart,dailyEnd,
+        `UPDATE tournament_settings SET club=?,city=?,location=?,description=?,contact=?,regulations_text=?,regulations_version=?,dupr_required=?,dupr_max=?,dupr_as_of_date=?,daily_start=?,daily_end=?,default_match_minutes=?,payment_type=?,entry_fee_minor=?,base_fee_minor=?,extra_category_fee_minor=?,registration_close_at=?,max_categories_per_player=?,team_individual_fee_minor=?,team_full_fee_minor=?,team_additional_participation_mode=?,team_additional_fee_minor=?,allow_team_age_division_overlap=?,minimum_group=?,preferred_group=?,maximum_group=?,suggested_qualifiers_per_group=?,seeding_method=?,minimum_rest_slots=?,updated_at=? WHERE tournament_id=?`,
+      ).bind(body.club ?? current.club,body.city ?? current.city,body.location ?? current.location,body.description ?? current.description,body.contact ?? current.contact,nextRegulationsText,nextRegulationsVersion,nextDuprRequired,nextDuprMax,nextDuprAsOfDate,dailyStart,dailyEnd,
         Math.max(5,Math.trunc(Number(body.defaultMatchMinutes ?? current.defaultMatchMinutes))),body.paymentType ?? current.paymentType,
         Object.prototype.hasOwnProperty.call(body,"entryFeeMinor") ? body.entryFeeMinor ?? null : current.entryFeeMinor,
         Object.prototype.hasOwnProperty.call(body,"baseFeeMinor") ? body.baseFeeMinor ?? null : current.baseFeeMinor,

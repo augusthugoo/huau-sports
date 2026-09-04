@@ -22,6 +22,8 @@ type Me = {
     firstName: string;
     lastName: string;
     phone: string | null;
+    duprSingles: number | null;
+    duprDoubles: number | null;
     birthDate: string | null;
     sportGender: "male" | "female" | "unspecified" | null;
     city: string | null;
@@ -212,7 +214,7 @@ function MyHuau({locale,setLocale,go,me,loading,refreshMe}:{locale:Locale;setLoc
     event.preventDefault();setProfileBusy(true);setProfileMessage("");
     const form=new FormData(event.currentTarget);
     try{
-      await api("/api/me/profile",{method:"PUT",body:JSON.stringify({firstName:form.get("firstName"),lastName:form.get("lastName"),birthDate:form.get("birthDate")||null,sportGender:form.get("sportGender")})});
+      await api("/api/me/profile",{method:"PUT",body:JSON.stringify({firstName:form.get("firstName"),lastName:form.get("lastName"),phone:form.get("phone")||null,birthDate:form.get("birthDate")||null,sportGender:form.get("sportGender"),duprSingles:String(form.get("duprSingles")||"").trim()?Number(form.get("duprSingles")):null,duprDoubles:String(form.get("duprDoubles")||"").trim()?Number(form.get("duprDoubles")):null})});
       await refreshMe();
       setProfileMessage(copy(locale,"Perfil actualizado.","Profile updated."));
     }catch(error){setProfileMessage(error instanceof Error?error.message:"PROFILE_UPDATE_FAILED");}
@@ -222,10 +224,10 @@ function MyHuau({locale,setLocale,go,me,loading,refreshMe}:{locale:Locale;setLoc
     <section className="dashboard-head"><div><div className="eyebrow">{t(locale,"myHuau")}</div><h1>{me?.profile?.firstName ? `${me.profile.firstName}, ${copy(locale,"tu deporte empieza acá.","your sport starts here.")}` : copy(locale,"Tu deporte empieza acá.","Your sport starts here.")}</h1></div><div className="dashboard-head-actions"><button className="ghost" onClick={()=>go("/app/registrations")}>{copy(locale,"Mis inscripciones","My registrations")}</button><LocaleToggle locale={locale} setLocale={setLocale}/></div></section>
     <section className="dashboard-grid">
       <div className="panel wide">
-        <div className="panel-title"><div><div className="eyebrow">HUAU ID</div><h2>{copy(locale,"Mi perfil","My profile")}</h2><p className="muted">{copy(locale,"Datos globales de tu cuenta. Tournament usa fecha de nacimiento y género deportivo sólo cuando una categoría los necesita.","Global account data. Tournament uses birth date and sport gender only when a category requires them.")}</p></div></div>
+        <div className="panel-title"><div><div className="eyebrow">HUAU ID</div><h2>{copy(locale,"Mi perfil","My profile")}</h2><p className="muted">{copy(locale,"Tus datos deportivos y de contacto viven en HUAU ID y se reutilizan al inscribirte a torneos.","Your sport and contact data live in HUAU ID and are reused when you register for tournaments.")}</p></div></div>
         <form onSubmit={saveProfile}>
           <div className="two"><Field name="firstName" label={copy(locale,"Nombre","First name")} defaultValue={me?.profile?.firstName??""}/><Field name="lastName" label={copy(locale,"Apellido","Last name")} defaultValue={me?.profile?.lastName??""}/></div>
-          <div className="two"><Field name="birthDate" label={copy(locale,"Fecha de nacimiento","Birth date")} type="date" required={false} defaultValue={me?.profile?.birthDate??""}/><label><span>{copy(locale,"Género deportivo","Sport gender")}</span><select name="sportGender" defaultValue={me?.profile?.sportGender??"unspecified"}><option value="unspecified">{copy(locale,"Sin especificar","Unspecified")}</option><option value="male">{copy(locale,"Masculino","Male")}</option><option value="female">{copy(locale,"Femenino","Female")}</option></select></label></div>
+          <div className="two"><Field name="phone" label={copy(locale,"Teléfono","Phone")} required={false} defaultValue={me?.profile?.phone??""}/><Field name="birthDate" label={copy(locale,"Fecha de nacimiento","Birth date")} type="date" required={false} defaultValue={me?.profile?.birthDate??""}/></div><div className="two"><label><span>{copy(locale,"Género deportivo","Sport gender")}</span><select name="sportGender" defaultValue={me?.profile?.sportGender??"unspecified"}><option value="unspecified">{copy(locale,"Sin especificar","Unspecified")}</option><option value="male">{copy(locale,"Masculino","Male")}</option><option value="female">{copy(locale,"Femenino","Female")}</option></select></label><span className="muted">{copy(locale,"Datos usados sólo cuando el torneo necesita validar elegibilidad.","Used only when a tournament needs eligibility checks.")}</span></div><div className="two"><label><span>DUPR Singles</span><input name="duprSingles" type="number" min="0" max="8" step="0.001" defaultValue={me?.profile?.duprSingles===null||me?.profile?.duprSingles===undefined?"":String(me.profile.duprSingles)}/></label><label><span>DUPR Doubles</span><input name="duprDoubles" type="number" min="0" max="8" step="0.001" defaultValue={me?.profile?.duprDoubles===null||me?.profile?.duprDoubles===undefined?"":String(me.profile.duprDoubles)}/></label></div>
           <div className="form-actions"><button className="light small" disabled={profileBusy}>{profileBusy?"…":copy(locale,"Guardar perfil","Save profile")}</button>{profileMessage&&<span className="muted">{profileMessage}</span>}</div>
         </form>
       </div>

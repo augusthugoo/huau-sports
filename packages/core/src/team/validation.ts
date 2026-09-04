@@ -374,7 +374,7 @@ export function parseTeamFormat(value: unknown): TeamFormat {
       criteria: standings.criteria.map((criterion, index) =>
         asEnum(
           criterion,
-          ["encounter_wins", "encounter_win_rate", "rubber_diff", "point_diff", "points_for"] as const,
+          ["standing_points", "encounter_wins", "encounter_win_rate", "head_to_head", "rubber_diff", "point_diff", "points_for"] as const,
           `standings.criteria.${index}`,
         ),
       ),

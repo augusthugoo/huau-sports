@@ -43,6 +43,8 @@ type PlayerProfile = {
   birthDate: string | null;
   sportGender: "male" | "female" | "unspecified";
   phone: string | null;
+  duprSingles: number | null;
+  duprDoubles: number | null;
 };
 
 type PricingPolicy = {
@@ -108,6 +110,8 @@ export type PublicTournamentData = {
     description: string;
     contact: string;
   };
+  regulations: { text: string; version: number };
+  eligibilityPolicy: { duprRequired: boolean; duprMax: number | null; duprAsOfDate: string | null };
   registrationCloseAt: number | null;
   pricingPolicy: PricingPolicy;
   teamPricing: TeamPricingPolicy;
@@ -116,7 +120,7 @@ export type PublicTournamentData = {
   activeTeamCategoryCount: number;
   activeAgeTeamDivisionCount: number;
   categories: PublicCategory[];
-  viewer: { authenticated: boolean; profile: PlayerProfile | null };
+  viewer: { authenticated: boolean; profile: PlayerProfile | null; wildCard: boolean };
 };
 
 function codeCopy(locale: Locale, code: string) {
@@ -147,6 +151,11 @@ function codeCopy(locale: Locale, code: string) {
     CREATE_TEAM_FIRST: ["Primero creá tu equipo.", "Create your team first."],
     CAPTAIN_REQUIRED: ["Sólo el capitán puede invitar jugadores.", "Only the captain can invite players."],
     NO_CATEGORIES_SELECTED: ["Seleccioná al menos una categoría.", "Select at least one category."],
+    DUPR_REQUIRED: ["Completá tu DUPR de Singles y Dobles en tu perfil antes de inscribirte.", "Add your Singles and Doubles DUPR to your profile before registering."],
+    DUPR_LIMIT_EXCEEDED: ["Tu DUPR supera el máximo configurado para este torneo. Necesitás una Wild Card de la organización.", "Your DUPR is above this tournament limit. You need an organizer Wild Card."],
+    INVALID_DUPR: ["Revisá los valores de DUPR ingresados.", "Check the DUPR values you entered."],
+    REGULATIONS_ACCEPTANCE_REQUIRED: ["Leé y aceptá el reglamento del torneo antes de confirmar.", "Read and accept the tournament regulations before confirming."],
+    REGULATIONS_VERSION_CHANGED: ["El reglamento cambió mientras estabas inscribiéndote. Revisalo nuevamente antes de confirmar.", "The regulations changed while you were registering. Review them again before confirming."],
   };
   return map[code]?.[locale === "es" ? 0 : 1] ?? code;
 }
@@ -175,11 +184,12 @@ function blockedButtonCopy(locale: Locale, code: string) {
   return tr(locale, "Cerrada", "Closed");
 }
 
-function categoryNeedsProfile(category: Pick<PublicCategory, "minAge" | "maxAge" | "competitionGender">, profile: PlayerProfile | null) {
+function categoryNeedsProfile(category: Pick<PublicCategory, "minAge" | "maxAge" | "competitionGender">, profile: PlayerProfile | null, requireDupr = false) {
   if (!profile) return true;
   const needsBirth = (category.minAge !== null || category.maxAge !== null) && !profile.birthDate;
   const gendered = ["male", "female", "mixed"].includes(category.competitionGender ?? "");
-  return needsBirth || (gendered && profile.sportGender === "unspecified");
+  const needsDupr = requireDupr && (profile.duprSingles === null || profile.duprDoubles === null || profile.duprSingles <= 0 || profile.duprDoubles <= 0);
+  return needsBirth || (gendered && profile.sportGender === "unspecified") || needsDupr;
 }
 
 function EligibilityProfileCard({
@@ -203,8 +213,10 @@ function EligibilityProfileCard({
         <p>{tr(locale, compact ? "Estos datos pertenecen a tu perfil global HUAU." : "Tournament usa estos datos de tu perfil global sólo cuando una categoría necesita validar elegibilidad.", compact ? "These fields belong to your global HUAU profile." : "Tournament uses your global profile only when a category needs eligibility checks.")}</p>
       </div>
       <form onSubmit={(event) => void onSave(event)}>
+        <label><span>{tr(locale, "Teléfono", "Phone")}</span><input name="phone" type="tel" defaultValue={profile?.phone ?? ""} /></label>
         <label><span>{tr(locale, "Fecha de nacimiento", "Birth date")}</span><input name="birthDate" type="date" defaultValue={profile?.birthDate ?? ""} /></label>
         <label><span>{tr(locale, "Género deportivo", "Sport gender")}</span><select name="sportGender" defaultValue={profile?.sportGender ?? "unspecified"}><option value="unspecified">{tr(locale, "Sin especificar", "Unspecified")}</option><option value="male">{tr(locale, "Masculino", "Male")}</option><option value="female">{tr(locale, "Femenino", "Female")}</option></select></label>
+        <div className="two"><label><span>DUPR Singles</span><input name="duprSingles" type="number" min="0" max="8" step="0.001" defaultValue={profile?.duprSingles ?? ""}/></label><label><span>DUPR Doubles</span><input name="duprDoubles" type="number" min="0" max="8" step="0.001" defaultValue={profile?.duprDoubles ?? ""}/></label></div>
         <button className="light" disabled={busy}>{busy ? "…" : tr(locale, "Guardar perfil", "Save profile")}</button>
       </form>
     </section>
@@ -248,6 +260,8 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
   const [selected, setSelected] = useState<string[]>([]);
   const [teamSelections, setTeamSelections] = useState<Record<string, TeamSelection>>({});
   const [explanationCategoryId, setExplanationCategoryId] = useState<string | null>(null);
+  const [regulationsOpen, setRegulationsOpen] = useState(false);
+  const [regulationsAccepted, setRegulationsAccepted] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -259,10 +273,10 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
   }, [slug]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
-    if (!explanationCategoryId) return;
+    if (!explanationCategoryId && !regulationsOpen) return;
     const previousOverflow = document.body.style.overflow;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setExplanationCategoryId(null);
+      if (event.key === "Escape") { setExplanationCategoryId(null); setRegulationsOpen(false); }
     };
     document.body.style.overflow = "hidden";
     window.addEventListener("keydown", closeOnEscape);
@@ -270,7 +284,8 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", closeOnEscape);
     };
-  }, [explanationCategoryId]);
+  }, [explanationCategoryId, regulationsOpen]);
+  useEffect(() => { setRegulationsAccepted(false); }, [data?.regulations.version]);
 
   const login = () => {
     sessionStorage.setItem("huau.afterAuth", `/tournaments/${slug}`);
@@ -282,7 +297,7 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
     setBusy("profile");
     const form = new FormData(event.currentTarget);
     try {
-      await api("/api/me/profile", { method: "PUT", body: JSON.stringify({ birthDate: form.get("birthDate") || null, sportGender: form.get("sportGender") }) });
+      await api("/api/me/profile", { method: "PUT", body: JSON.stringify({ phone: form.get("phone") || null, birthDate: form.get("birthDate") || null, sportGender: form.get("sportGender"), duprSingles: String(form.get("duprSingles")||"").trim()?Number(form.get("duprSingles")):null, duprDoubles: String(form.get("duprDoubles")||"").trim()?Number(form.get("duprDoubles")):null }) });
       await Promise.all([load(), onProfileSaved?.() ?? Promise.resolve()]);
       setNotice(tr(locale, "Perfil actualizado.", "Profile updated."));
     } catch (err) {
@@ -333,6 +348,11 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
 
   const confirmBasket = async () => {
     if (!data || !basket.length) return;
+    if (data.regulations.text.trim() && !regulationsAccepted) {
+      setError(codeCopy(locale, "REGULATIONS_ACCEPTANCE_REQUIRED"));
+      setRegulationsOpen(true);
+      return;
+    }
     const invalidTeam = basket.find(({ category }) => category.entryType === "team" && teamChoice(category.id).choice === "create" && teamChoice(category.id).paymentMode === "team_full" && data.teamPricing.fullTeamFeeMinor === null);
     if (invalidTeam) {
       setError(codeCopy(locale, "TEAM_FULL_FEE_NOT_CONFIGURED"));
@@ -344,15 +364,22 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
     try {
       const result = await api<{ registrations: Array<{ status: string }> }>(`/api/tournaments/${data.tournament.id}/registrations/batch`, {
         method: "POST",
-        body: JSON.stringify({ selections: basket.map(({ category }) => ({ categoryId: category.id, ...(category.entryType === "team" ? { teamChoice: teamChoice(category.id).choice, teamName: teamChoice(category.id).teamName, teamPaymentMode: teamChoice(category.id).paymentMode } : {}) })) }),
+        body: JSON.stringify({ regulationsVersionAccepted: data.regulations.text.trim() ? data.regulations.version : null, selections: basket.map(({ category }) => ({ categoryId: category.id, ...(category.entryType === "team" ? { teamChoice: teamChoice(category.id).choice, teamName: teamChoice(category.id).teamName, teamPaymentMode: teamChoice(category.id).paymentMode } : {}) })) }),
       });
       const waitlisted = result.registrations.filter((registration) => registration.status === "waitlisted").length;
       setSelected([]);
       setTeamSelections({});
+      setRegulationsAccepted(false);
       await load();
       setNotice(waitlisted ? tr(locale, `Inscripción creada. ${waitlisted} selección(es) quedaron en waitlist.`, `Registration created. ${waitlisted} selection(s) joined the waitlist.`) : tr(locale, "Inscripción creada. Parejas y equipos se completan desde Mis inscripciones.", "Registration created. Complete pairs and teams from My registrations."));
     } catch (err) {
-      setError(codeCopy(locale, err instanceof RegistrationError ? err.code : "REGISTRATION_FAILED"));
+      const code = err instanceof RegistrationError ? err.code : "REGISTRATION_FAILED";
+      if (code === "REGULATIONS_VERSION_CHANGED") {
+        setRegulationsAccepted(false);
+        await load();
+        setRegulationsOpen(true);
+      }
+      setError(codeCopy(locale, code));
     } finally {
       setBusy("");
     }
@@ -360,7 +387,8 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
 
   if (!data) return <main className="public-tournament-page"><button className="back-link" onClick={() => go("/")}>← HUAU</button>{error ? <div className="registration-alert">{error}</div> : <div className="empty-state">{tr(locale, "Cargando torneo…", "Loading tournament…")}</div>}</main>;
 
-  const profileNeededSomewhere = data.viewer.authenticated && data.categories.some((category) => !category.registrationBlockedCode && categoryNeedsProfile(category, data.viewer.profile));
+  const duprNeedsAttention = data.eligibilityPolicy.duprRequired && (!data.viewer.profile || data.viewer.profile.duprSingles === null || data.viewer.profile.duprDoubles === null || data.viewer.profile.duprSingles <= 0 || data.viewer.profile.duprDoubles <= 0 || (!data.viewer.wildCard && data.eligibilityPolicy.duprMax !== null && (data.viewer.profile.duprSingles > data.eligibilityPolicy.duprMax || data.viewer.profile.duprDoubles > data.eligibilityPolicy.duprMax)));
+  const profileNeededSomewhere = data.viewer.authenticated && (duprNeedsAttention || data.categories.some((category) => !category.registrationBlockedCode && categoryNeedsProfile(category, data.viewer.profile, data.eligibilityPolicy.duprRequired)));
   const explanationCategory = explanationCategoryId ? data.categories.find((category) => category.id === explanationCategoryId) ?? null : null;
   const modalExplanation = explanationCategory
     ? explanationForPersistedFormat(explanationCategory.formatKind, explanationCategory.formatConfig, locale)
@@ -421,6 +449,9 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
           {data.publicInfo.contact && (
             <small>{tr(locale, "Contacto", "Contact")}: {data.publicInfo.contact}</small>
           )}
+          {data.regulations.text.trim() && (
+            <button type="button" className="public-format-explanation-trigger public-regulations-trigger" onClick={() => setRegulationsOpen(true)}><span>{tr(locale, "Reglamento del torneo", "Tournament regulations")}</span><span aria-hidden="true">↗</span></button>
+          )}
         </div>
         <div className="public-tournament-facts">
           <div className="public-tournament-fact"><span>{tr(locale, "Fecha", "Date")}</span><strong>{date(data.tournament.startAt)}</strong></div>
@@ -431,6 +462,7 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
       </section>
       {notice && <div className="registration-notice">{notice}</div>}
       {error && <div className="registration-alert">{error}</div>}
+      {data.eligibilityPolicy.duprRequired && <div className="registration-limit-note">{tr(locale, `DUPR máximo ${data.eligibilityPolicy.duprMax?.toFixed(3) ?? "—"}${data.eligibilityPolicy.duprAsOfDate ? ` · referencia ${data.eligibilityPolicy.duprAsOfDate}` : ""}${data.viewer.wildCard ? " · Wild Card autorizada" : ""}`, `DUPR max ${data.eligibilityPolicy.duprMax?.toFixed(3) ?? "—"}${data.eligibilityPolicy.duprAsOfDate ? ` · as of ${data.eligibilityPolicy.duprAsOfDate}` : ""}${data.viewer.wildCard ? " · Wild Card authorized" : ""}`)}</div>}
       {data.viewer.authenticated && data.maxCategoriesPerPlayer !== null && <div className="registration-limit-note">{tr(locale, `Categorías: ${data.activeCategoryCount + selected.length}/${data.maxCategoriesPerPlayer}`, `Categories: ${data.activeCategoryCount + selected.length}/${data.maxCategoriesPerPlayer}`)}</div>}
       {profileNeededSomewhere && <EligibilityProfileCard locale={locale} profile={data.viewer.profile} busy={busy === "profile"} onSave={saveProfile} />}
 
@@ -438,7 +470,7 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
         <div className="public-registration-grid">
           {data.categories.map((category) => {
             const full = category.maxEntries !== null && category.occupiedEntries >= category.maxEntries;
-            const needsProfile = categoryNeedsProfile(category, data.viewer.profile);
+            const needsProfile = categoryNeedsProfile(category, data.viewer.profile, data.eligibilityPolicy.duprRequired);
             const isSelected = selected.includes(category.id);
             const explanation = explanationForPersistedFormat(category.formatKind, category.formatConfig, locale);
             return (
@@ -463,7 +495,8 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
           <div className="registration-basket-total"><span>{tr(locale, "Total previsto", "Estimated total")}</span><strong>{money(basketTotal, basket[0]?.category.currency ?? "UYU", locale)}</strong></div>
           {data.pricingPolicy.paymentType === "base_plus_extra" && <p className="muted">{tr(locale, "El cálculo incluye automáticamente tarifa base y categorías extra según tus inscripciones previas y esta selección.", "The estimate automatically includes base and extra-category pricing using your existing registrations and this selection.")}</p>}
           {data.teamPricing.individualFeeMinor !== null && <p className="muted">{tr(locale, `Equipos: individual ${money(data.teamPricing.individualFeeMinor, "UYU", locale)}${data.teamPricing.additionalParticipationMode === "extra" ? ` · participación adicional ${money(data.teamPricing.additionalFeeMinor ?? 0, "UYU", locale)}` : data.teamPricing.additionalParticipationMode === "free" ? " · participación adicional gratis" : " · participación adicional a precio completo"}.`, `Teams: individual ${money(data.teamPricing.individualFeeMinor, "UYU", locale)}.`)}</p>}
-          <button className="light full" disabled={!basket.length || busy === "basket"} onClick={() => void confirmBasket()}>{busy === "basket" ? "…" : tr(locale, "Confirmar inscripción", "Confirm registration")}</button>
+          {data.regulations.text.trim() && <div className="registration-regulations-accept"><label><input type="checkbox" checked={regulationsAccepted} onChange={(event) => setRegulationsAccepted(event.target.checked)}/><span>{tr(locale,"Leí y acepto el reglamento del torneo.","I have read and accept the tournament regulations.")}</span></label><button type="button" className="text-button" onClick={() => setRegulationsOpen(true)}>{tr(locale,"Ver reglamento","View regulations")}</button></div>}
+          <button className="light full" disabled={!basket.length || busy === "basket" || (Boolean(data.regulations.text.trim()) && !regulationsAccepted)} onClick={() => void confirmBasket()}>{busy === "basket" ? "…" : tr(locale, "Confirmar inscripción", "Confirm registration")}</button>
           {limitAfterSelection !== null && data.maxCategoriesPerPlayer !== null && <small>{tr(locale, `${limitAfterSelection}/${data.maxCategoriesPerPlayer} categorías`, `${limitAfterSelection}/${data.maxCategoriesPerPlayer} categories`)}</small>}
         </aside>
       </section>
@@ -503,6 +536,47 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
                 title={tr(locale, "Formato oficial", "Official format")}
               />
             </div>
+          </section>
+        </div>
+      )}
+
+      {regulationsOpen && data.regulations.text.trim() && (
+        <div
+          className="public-format-modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setRegulationsOpen(false);
+          }}
+        >
+          <section
+            className="public-format-modal public-regulations-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="public-regulations-modal-title"
+          >
+            <header className="public-format-modal-header">
+              <div>
+                <div className="eyebrow">{tr(locale, "DOCUMENTO OFICIAL", "OFFICIAL DOCUMENT")}</div>
+                <h2 id="public-regulations-modal-title">{tr(locale, "Reglamento del torneo", "Tournament regulations")}</h2>
+                <p>{data.tournament.name}</p>
+              </div>
+              <button
+                type="button"
+                className="public-format-modal-close"
+                aria-label={tr(locale, "Cerrar reglamento", "Close regulations")}
+                onClick={() => setRegulationsOpen(false)}
+              >
+                ×
+              </button>
+            </header>
+            <div className="public-format-modal-scroll">
+              <div className="public-regulations-text">{data.regulations.text}</div>
+            </div>
+            {basket.length > 0 && data.viewer.authenticated && (
+              <footer className="public-regulations-modal-footer">
+                <label><input type="checkbox" checked={regulationsAccepted} onChange={(event) => setRegulationsAccepted(event.target.checked)}/><span>{tr(locale,"Leí y acepto este reglamento.","I have read and accept these regulations.")}</span></label>
+                <button type="button" className="light" onClick={() => setRegulationsOpen(false)}>{tr(locale,"Continuar","Continue")}</button>
+              </footer>
+            )}
           </section>
         </div>
       )}
@@ -586,7 +660,7 @@ export function MyTournamentRegistrations({ locale, go, onProfileSaved }: { loca
 
   const saveProfile = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); setBusy("profile"); const form = new FormData(event.currentTarget);
-    try { await api("/api/me/profile", { method: "PUT", body: JSON.stringify({ birthDate: form.get("birthDate") || null, sportGender: form.get("sportGender") }) }); setProfileNeeded(false); await Promise.all([load(), onProfileSaved?.() ?? Promise.resolve()]); }
+    try { await api("/api/me/profile", { method: "PUT", body: JSON.stringify({ phone: form.get("phone") || null, birthDate: form.get("birthDate") || null, sportGender: form.get("sportGender"), duprSingles: String(form.get("duprSingles")||"").trim()?Number(form.get("duprSingles")):null, duprDoubles: String(form.get("duprDoubles")||"").trim()?Number(form.get("duprDoubles")):null }) }); setProfileNeeded(false); await Promise.all([load(), onProfileSaved?.() ?? Promise.resolve()]); }
     catch (e) { setError(codeCopy(locale, e instanceof RegistrationError ? e.code : "PROFILE_UPDATE_FAILED")); }
     finally { setBusy(""); }
   };

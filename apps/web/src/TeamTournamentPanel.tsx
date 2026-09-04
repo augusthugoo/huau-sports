@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import { createMixedFiveRubberTeamFormat, explainTeamFormat, type TeamFormat } from "@huau/core";
+import { createMixedFiveRubberTeamFormat, createSeniorTeamCupFormat, explainTeamFormat, type TeamFormat } from "@huau/core";
 import type { Locale } from "./i18n";
 import { FormatExplanationPanel } from "./FormatExplanationPanel";
 
@@ -96,6 +96,7 @@ type Standing = {
     wins: number;
     losses: number;
     winRate: number;
+    standingPoints: number;
     rubbersFor: number;
     rubbersAgainst: number;
     rubberDiff: number;
@@ -402,6 +403,7 @@ function TeamCategoryCreate({
           name: data.get("name"),
           scheduledDate: data.get("scheduledDate") || null,
           mixedDoublesPlay: data.get("mixedDoublesPlay"),
+          preset: data.get("preset"),
         }),
       });
       form.reset();
@@ -425,7 +427,14 @@ function TeamCategoryCreate({
           <input name="scheduledDate" type="date" />
         </label>
         <label>
-          <span>{tr(locale, "Mixto decisivo", "Mixed doubles")}</span>
+          <span>{tr(locale, "Preset", "Preset")}</span>
+          <select name="preset" defaultValue="generic">
+            <option value="generic">{tr(locale, "Team configurable", "Configurable Team")}</option>
+            <option value="senior_cup_2026">Uruguay Senior Team Cup 2026</option>
+          </select>
+        </label>
+        <label>
+          <span>{tr(locale, "Mixto decisivo (preset genérico)", "Mixed doubles (generic preset)")}</span>
           <select name="mixedDoublesPlay" defaultValue="always">
             <option value="always">{tr(locale, "Siempre se juega", "Always played")}</option>
             <option value="if_tied">{tr(locale, "Sólo si llegan empatados", "Only if tied")}</option>
@@ -524,7 +533,10 @@ function TeamFormatBuilder({
           <h2>{category.name}</h2>
           <p>{tr(locale, "El formato de 5 partidos es un preset, no una regla hardcodeada.", "The five-rubber format is a preset, not a hardcoded rule.")}</p>
         </div>
-        <span className="pill strong">{category.structureLocked ? tr(locale, "GENERADO", "GENERATED") : tr(locale, "EDITABLE", "EDITABLE")}</span>
+        <div className="form-actions">
+          <button className="ghost small" type="button" disabled={busy} onClick={() => setDraft(cloneFormat(createSeniorTeamCupFormat()))}>{tr(locale,"Cargar preset Senior Cup 2026","Load Senior Cup 2026 preset")}</button>
+          <span className="pill strong">{category.structureLocked ? tr(locale, "GENERADO", "GENERATED") : tr(locale, "EDITABLE", "EDITABLE")}</span>
+        </div>
       </div>
 
       <div className="team-builder-grid">
@@ -767,7 +779,7 @@ function TeamStandings({ category, locale }: { category: TeamCategory; locale: L
       <div className="team-standing-grid">
         {category.standings.map((standing) => <div className="team-standing-card" key={standing.groupId}>
           <h3>{tr(locale, "Grupo", "Group")} {standing.groupName}</h3>
-          <div className="table-wrap"><table><thead><tr><th>#</th><th>{tr(locale, "Equipo", "Team")}</th><th>PJ</th><th>PG</th><th>PP</th><th>RF</th><th>RC</th><th>DIF R</th><th>PF</th><th>PC</th><th>DIF P</th></tr></thead><tbody>{standing.rows.map((row, index) => <tr key={row.entryId}><td>{index + 1}</td><td>{row.entryName}</td><td>{row.played}</td><td>{row.wins}</td><td>{row.losses}</td><td>{row.rubbersFor}</td><td>{row.rubbersAgainst}</td><td>{row.rubberDiff}</td><td>{row.pointsFor}</td><td>{row.pointsAgainst}</td><td>{row.pointDiff}</td></tr>)}</tbody></table></div>
+          <div className="table-wrap"><table><thead><tr><th>#</th><th>{tr(locale, "Equipo", "Team")}</th><th>PTS</th><th>PJ</th><th>PG</th><th>PP</th><th>RF</th><th>RC</th><th>DIF R</th><th>PF</th><th>PC</th><th>DIF P</th></tr></thead><tbody>{standing.rows.map((row, index) => <tr key={row.entryId}><td>{index + 1}</td><td>{row.entryName}</td><td><strong>{row.standingPoints}</strong></td><td>{row.played}</td><td>{row.wins}</td><td>{row.losses}</td><td>{row.rubbersFor}</td><td>{row.rubbersAgainst}</td><td>{row.rubberDiff}</td><td>{row.pointsFor}</td><td>{row.pointsAgainst}</td><td>{row.pointDiff}</td></tr>)}</tbody></table></div>
           <small>{tr(locale, "Criterios", "Criteria")}: {standing.explanation.criteria.join(" → ")}</small>
         </div>)}
       </div>

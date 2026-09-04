@@ -15,6 +15,7 @@ function createRow(entry: TeamEntry): TeamStandingRow {
     wins: 0,
     losses: 0,
     winRate: 0,
+    standingPoints: 0,
     rubbersFor: 0,
     rubbersAgainst: 0,
     rubberDiff: 0,
@@ -30,6 +31,9 @@ function applyEncounter(row: TeamStandingRow, encounter: TeamStandingEncounter):
   if (!isA && !isB) return row;
 
   const won = row.entryId === encounter.winnerEntryId;
+  const standingPointsFor = isA
+    ? encounter.standingPointsA ?? encounter.rubbersWonA
+    : encounter.standingPointsB ?? encounter.rubbersWonB;
   const rubbersFor = isA ? encounter.rubbersWonA : encounter.rubbersWonB;
   const rubbersAgainst = isA ? encounter.rubbersWonB : encounter.rubbersWonA;
   const pointsFor = isA ? encounter.pointsA : encounter.pointsB;
@@ -43,6 +47,7 @@ function applyEncounter(row: TeamStandingRow, encounter: TeamStandingEncounter):
     wins,
     losses: row.losses + (won ? 0 : 1),
     winRate: wins / played,
+    standingPoints: row.standingPoints + standingPointsFor,
     rubbersFor: row.rubbersFor + rubbersFor,
     rubbersAgainst: row.rubbersAgainst + rubbersAgainst,
     rubberDiff: row.rubberDiff + rubbersFor - rubbersAgainst,
@@ -52,24 +57,79 @@ function applyEncounter(row: TeamStandingRow, encounter: TeamStandingEncounter):
   };
 }
 
-function compareNumberDescending(a: number, b: number): number {
-  if (a === b) return 0;
-  return b - a;
+function criterionValue(row: TeamStandingRow, criterion: Exclude<TeamStandingCriterion, "head_to_head">): number {
+  switch (criterion) {
+    case "standing_points": return row.standingPoints;
+    case "encounter_wins": return row.wins;
+    case "encounter_win_rate": return row.winRate;
+    case "rubber_diff": return row.rubberDiff;
+    case "point_diff": return row.pointDiff;
+    case "points_for": return row.pointsFor;
+  }
 }
 
-function compareCriterion(a: TeamStandingRow, b: TeamStandingRow, criterion: TeamStandingCriterion): number {
-  switch (criterion) {
-    case "encounter_wins":
-      return compareNumberDescending(a.wins, b.wins);
-    case "encounter_win_rate":
-      return compareNumberDescending(a.winRate, b.winRate);
-    case "rubber_diff":
-      return compareNumberDescending(a.rubberDiff, b.rubberDiff);
-    case "point_diff":
-      return compareNumberDescending(a.pointDiff, b.pointDiff);
-    case "points_for":
-      return compareNumberDescending(a.pointsFor, b.pointsFor);
-  }
+function directWinner(entryAId: string, entryBId: string, encounters: TeamStandingEncounter[]): string | null {
+  let winsA = 0;
+  let winsB = 0;
+  encounters.forEach((encounter) => {
+    const direct =
+      (encounter.entryAId === entryAId && encounter.entryBId === entryBId) ||
+      (encounter.entryAId === entryBId && encounter.entryBId === entryAId);
+    if (!direct) return;
+    if (encounter.winnerEntryId === entryAId) winsA += 1;
+    if (encounter.winnerEntryId === entryBId) winsB += 1;
+  });
+  if (winsA === winsB) return null;
+  return winsA > winsB ? entryAId : entryBId;
+}
+
+function rankRows(
+  rows: TeamStandingRow[],
+  criteria: TeamStandingCriterion[],
+  encounters: TeamStandingEncounter[],
+): TeamStandingRow[] {
+  let buckets: TeamStandingRow[][] = [rows];
+  criteria.forEach((criterion) => {
+    const next: TeamStandingRow[][] = [];
+    buckets.forEach((bucket) => {
+      if (bucket.length <= 1) {
+        next.push(bucket);
+        return;
+      }
+      if (criterion === "head_to_head") {
+        if (bucket.length === 2) {
+          const winner = directWinner(bucket[0]!.entryId, bucket[1]!.entryId, encounters);
+          if (winner) {
+            const first = bucket.find((row) => row.entryId === winner)!;
+            const second = bucket.find((row) => row.entryId !== winner)!;
+            next.push([first], [second]);
+            return;
+          }
+        }
+        next.push(bucket);
+        return;
+      }
+
+      const sorted = [...bucket].sort((a, b) => {
+        const delta = criterionValue(b, criterion) - criterionValue(a, criterion);
+        return delta || a.entryId.localeCompare(b.entryId);
+      });
+      let current: TeamStandingRow[] = [];
+      let previousValue: number | null = null;
+      sorted.forEach((row) => {
+        const value = criterionValue(row, criterion);
+        if (current.length && previousValue !== value) {
+          next.push(current);
+          current = [];
+        }
+        current.push(row);
+        previousValue = value;
+      });
+      if (current.length) next.push(current);
+    });
+    buckets = next;
+  });
+  return buckets.flatMap((bucket) => [...bucket].sort((a, b) => a.entryId.localeCompare(b.entryId)));
 }
 
 export function calculateTeamStandings(input: {
@@ -91,19 +151,8 @@ export function calculateTeamStandings(input: {
     rowByEntryId.set(encounter.entryBId, applyEncounter(rowB, encounter));
   });
 
-  const rows = [...rowByEntryId.values()].sort((a, b) => {
-    for (const criterion of criteria) {
-      const compared = compareCriterion(a, b, criterion);
-      if (compared !== 0) return compared;
-    }
-    return a.entryId.localeCompare(b.entryId);
-  });
-
   return {
-    rows,
-    explanation: {
-      criteria,
-      fallback: "entry_id",
-    },
+    rows: rankRows([...rowByEntryId.values()], criteria, input.encounters),
+    explanation: { criteria, fallback: "entry_id" },
   };
 }

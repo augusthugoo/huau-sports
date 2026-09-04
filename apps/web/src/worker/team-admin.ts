@@ -1,6 +1,7 @@
 import {
   calculateTeamStandings,
   createMixedFiveRubberTeamFormat,
+  createSeniorTeamCupFormat,
   generateTeamRoundRobinEncounters,
   generateTeamFinalPhasePlan,
   parseTeamFormat,
@@ -388,7 +389,7 @@ function distributeSnake<T>(items: T[], sizes: number[]): T[][] {
   return groups;
 }
 
-function setWinner(sets: ResultSetInput[], bestOf: number): { winnerSide: "A" | "B"; pointsA: number; pointsB: number } {
+function setWinner(sets: ResultSetInput[], bestOf: number, pointTarget: number, scoringMode: string | null): { winnerSide: "A" | "B"; pointsA: number; pointsB: number } {
   const needed = bestOf === 3 ? 2 : 1;
   if (sets.length < needed || sets.length > bestOf) throw new Error("TEAM_RESULT_SET_COUNT_INVALID");
   let winsA = 0;
@@ -398,6 +399,13 @@ function setWinner(sets: ResultSetInput[], bestOf: number): { winnerSide: "A" | 
   for (const set of sets) {
     if (!Number.isInteger(set.scoreA) || !Number.isInteger(set.scoreB) || set.scoreA < 0 || set.scoreB < 0 || set.scoreA === set.scoreB) {
       throw new Error("TEAM_RESULT_SET_INVALID");
+    }
+    if (scoringMode === "rally-win-by-2-cap-21") {
+      const winner = Math.max(set.scoreA, set.scoreB);
+      const loser = Math.min(set.scoreA, set.scoreB);
+      if (winner < pointTarget || winner > 21 || (winner < 21 && winner - loser < 2)) {
+        throw new Error("TEAM_RESULT_RALLY_SCORE_INVALID");
+      }
     }
     if (winsA >= needed || winsB >= needed) throw new Error("TEAM_RESULT_EXTRA_SET");
     pointsA += set.scoreA;
@@ -415,7 +423,7 @@ async function teamStandingSnapshots(
   categoryId: string,
   format: TeamFormat,
 ): Promise<TeamGroupStandingSnapshot[]> {
-  const [groupRows, encounterRows] = await Promise.all([
+  const [groupRows, resultRows] = await Promise.all([
     env.HUAU_DB.prepare(
       `SELECT g.id as groupId,g.name as groupName,ge.entry_id as entryId,e.display_name as entryName,ge.sort_order as sortOrder
          FROM competition_groups g JOIN competitions c ON c.id=g.competition_id
@@ -424,34 +432,50 @@ async function teamStandingSnapshots(
     ).bind(categoryId).all<{ groupId: string; groupName: string; entryId: string; entryName: string; sortOrder: number }>(),
     env.HUAU_DB.prepare(
       `SELECT ce.id,ce.group_id as groupId,ce.entry_a_id as entryAId,ce.entry_b_id as entryBId,ce.winner_entry_id as winnerEntryId,
-              SUM(CASE WHEN mr.result_status IN ('final','corrected') AND m.winner_side='A' THEN 1 ELSE 0 END) as rubbersWonA,
-              SUM(CASE WHEN mr.result_status IN ('final','corrected') AND m.winner_side='B' THEN 1 ELSE 0 END) as rubbersWonB,
-              SUM(CASE WHEN mr.result_status IN ('final','corrected') THEN COALESCE(mr.score_a,0) ELSE 0 END) as pointsA,
-              SUM(CASE WHEN mr.result_status IN ('final','corrected') THEN COALESCE(mr.score_b,0) ELSE 0 END) as pointsB
+              m.rubber_key as rubberKey,m.winner_side as winnerSide,mr.score_a as scoreA,mr.score_b as scoreB
          FROM competition_encounters ce JOIN competitions c ON c.id=ce.competition_id
-         LEFT JOIN matches m ON m.encounter_id=ce.id LEFT JOIN match_results mr ON mr.match_id=m.id
-        WHERE c.category_id=? AND ce.stage='group' AND ce.status='finished'
-        GROUP BY ce.id,ce.group_id,ce.entry_a_id,ce.entry_b_id,ce.winner_entry_id`,
-    ).bind(categoryId).all<{ id: string; groupId: string; entryAId: string; entryBId: string; winnerEntryId: string; rubbersWonA: number; rubbersWonB: number; pointsA: number; pointsB: number }>(),
+         JOIN matches m ON m.encounter_id=ce.id JOIN match_results mr ON mr.match_id=m.id
+        WHERE c.category_id=? AND ce.stage='group' AND ce.status='finished' AND mr.result_status IN ('final','corrected')
+        ORDER BY ce.id,m.rubber_order`,
+    ).bind(categoryId).all<{ id: string; groupId: string; entryAId: string; entryBId: string; winnerEntryId: string; rubberKey: string; winnerSide: "A" | "B"; scoreA: number; scoreB: number }>(),
   ]);
+  const weightByKey = new Map(format.encounter.rubbers.map((rubber) => [rubber.key, rubber.weight] as const));
+  const encounterById = new Map<string, TeamStandingEncounter & { groupId: string }>();
+  resultRows.results.forEach((row) => {
+    const current = encounterById.get(row.id) ?? {
+      id: row.id,
+      groupId: row.groupId,
+      entryAId: row.entryAId,
+      entryBId: row.entryBId,
+      winnerEntryId: row.winnerEntryId,
+      standingPointsA: 0,
+      standingPointsB: 0,
+      rubbersWonA: 0,
+      rubbersWonB: 0,
+      pointsA: 0,
+      pointsB: 0,
+    };
+    const weight = weightByKey.get(row.rubberKey) ?? 1;
+    if (row.winnerSide === "A") {
+      current.rubbersWonA += 1;
+      current.standingPointsA = Number(current.standingPointsA ?? 0) + weight;
+    } else {
+      current.rubbersWonB += 1;
+      current.standingPointsB = Number(current.standingPointsB ?? 0) + weight;
+    }
+    current.pointsA += Number(row.scoreA ?? 0);
+    current.pointsB += Number(row.scoreB ?? 0);
+    encounterById.set(row.id, current);
+  });
+
   const snapshots: TeamGroupStandingSnapshot[] = [];
   const groupIds = [...new Set(groupRows.results.map((row) => row.groupId))];
   for (const groupId of groupIds) {
     const rows = groupRows.results.filter((row) => row.groupId === groupId);
     const entries: TeamEntry[] = rows.map((row) => ({ id: row.entryId, name: row.entryName, roster: [] }));
-    const results: TeamStandingEncounter[] = encounterRows.results
-      .filter((row) => row.groupId === groupId && row.winnerEntryId)
-      .map((row) => ({
-        id: row.id,
-        entryAId: row.entryAId,
-        entryBId: row.entryBId,
-        winnerEntryId: row.winnerEntryId,
-        rubbersWonA: Number(row.rubbersWonA ?? 0),
-        rubbersWonB: Number(row.rubbersWonB ?? 0),
-        pointsA: Number(row.pointsA ?? 0),
-        pointsB: Number(row.pointsB ?? 0),
-      }));
-    const standing = calculateTeamStandings({ entries, encounters: results, criteria: format.standings.criteria });
+    const encounters = [...encounterById.values()]
+      .filter((row) => row.groupId === groupId);
+    const standing = calculateTeamStandings({ entries, encounters, criteria: format.standings.criteria });
     snapshots.push({ groupId, groupName: rows[0]?.groupName ?? "", rows: standing.rows });
   }
   return snapshots;
@@ -651,7 +675,7 @@ async function createTeamCategory(
 ): Promise<Response> {
   const accessResult = await tournamentForAccess(tournamentId, request, env, access);
   if (accessResult instanceof Response) return accessResult;
-  const body = await readJson<{ name?: string; scheduledDate?: string | null; mixedDoublesPlay?: "always" | "if_tied" }>(request);
+  const body = await readJson<{ name?: string; scheduledDate?: string | null; mixedDoublesPlay?: "always" | "if_tied"; preset?: "generic" | "senior_cup_2026" }>(request);
   const name = body.name?.trim();
   if (!name) return json({ ok: false, code: "TEAM_CATEGORY_NAME_REQUIRED" }, { status: 400 });
   const duplicate = await env.HUAU_DB.prepare(
@@ -674,7 +698,7 @@ async function createTeamCategory(
   )
     .bind(categoryId, tournamentId, name, body.scheduledDate ?? null, sort?.nextSort ?? 0, stamp, stamp)
     .run();
-  const format = createMixedFiveRubberTeamFormat(body.mixedDoublesPlay ?? "always");
+  const format = body.preset === "senior_cup_2026" ? createSeniorTeamCupFormat() : createMixedFiveRubberTeamFormat(body.mixedDoublesPlay ?? "always");
   await saveTeamFormatVersion(env, categoryId, accessResult.user.id, format);
   await bumpTournament(env, tournamentId);
   await audit(env, accessResult.tournament, accessResult.user.id, "team.category.create", `Created team category ${name}`, "category", categoryId);
@@ -1101,7 +1125,7 @@ async function saveTeamMatchResult(
   access: AccessHelpers,
 ): Promise<Response> {
   const match = await env.HUAU_DB.prepare(
-    `SELECT m.id,m.encounter_id as encounterId,m.rubber_key as rubberKey,m.rubber_order as rubberOrder,m.best_of as bestOf,m.status,
+    `SELECT m.id,m.encounter_id as encounterId,m.rubber_key as rubberKey,m.rubber_order as rubberOrder,m.best_of as bestOf,m.point_target as pointTarget,m.scoring_mode as scoringMode,m.status,
             ce.entry_a_id as entryAId,ce.entry_b_id as entryBId,ce.stage,c.id as competitionId,c.category_id as categoryId,
             tc.tournament_id as tournamentId,f.config_json as configJson
        FROM matches m
@@ -1118,6 +1142,8 @@ async function saveTeamMatchResult(
       rubberKey: string;
       rubberOrder: number;
       bestOf: number;
+      pointTarget: number;
+      scoringMode: string | null;
       status: string;
       entryAId: string;
       entryBId: string;
@@ -1135,7 +1161,7 @@ async function saveTeamMatchResult(
   const body = await readJson<{ sets?: ResultSetInput[] }>(request);
   let outcome: { winnerSide: "A" | "B"; pointsA: number; pointsB: number };
   try {
-    outcome = setWinner(body.sets ?? [], match.bestOf);
+    outcome = setWinner(body.sets ?? [], match.bestOf, match.pointTarget, match.scoringMode);
   } catch (error) {
     return json({ ok: false, code: error instanceof Error ? error.message : "TEAM_RESULT_INVALID" }, { status: 400 });
   }
@@ -1576,11 +1602,14 @@ async function teamDetail(
           .filter((encounter) => encounter.groupId === groupId && encounter.status === "finished" && encounter.winnerEntryId)
           .forEach((encounter) => {
             const finished = encounter.matches.filter((match) => match.resultStatus === "final" || match.resultStatus === "corrected");
+            const weightByKey = new Map(format.encounter.rubbers.map((rubber) => [rubber.key, rubber.weight] as const));
             standingEncounters.push({
               id: encounter.id,
               entryAId: encounter.entryAId,
               entryBId: encounter.entryBId,
               winnerEntryId: encounter.winnerEntryId!,
+              standingPointsA: finished.filter((match) => match.winnerSide === "A").reduce((sum, match) => sum + (weightByKey.get(match.rubberKey) ?? 1), 0),
+              standingPointsB: finished.filter((match) => match.winnerSide === "B").reduce((sum, match) => sum + (weightByKey.get(match.rubberKey) ?? 1), 0),
               rubbersWonA: finished.filter((match) => match.winnerSide === "A").length,
               rubbersWonB: finished.filter((match) => match.winnerSide === "B").length,
               pointsA: finished.reduce((sum, match) => sum + Number(match.scoreA ?? 0), 0),

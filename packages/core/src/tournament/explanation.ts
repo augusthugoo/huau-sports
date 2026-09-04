@@ -402,8 +402,10 @@ function teamGenderCopy(gender: TeamCompetitionGender, locale: ExplanationLocale
 
 function teamStandingCriterionCopy(criterion: TeamStandingCriterion, locale: ExplanationLocale): string {
   switch (criterion) {
+    case "standing_points": return tr(locale, "Puntos de tabla acumulados según el valor de cada rubber.", "Accumulated standings points based on each rubber's configured value.");
     case "encounter_wins": return tr(locale, "Series ganadas.", "Encounters won.");
     case "encounter_win_rate": return tr(locale, "Porcentaje de series ganadas si hay distinta cantidad jugada.", "Encounter win percentage when teams have played different totals.");
+    case "head_to_head": return tr(locale, "Resultado del enfrentamiento directo entre los equipos empatados.", "Head-to-head result between tied teams.");
     case "rubber_diff": return tr(locale, "Diferencia de rubbers ganados/perdidos.", "Rubber win/loss differential.");
     case "point_diff": return tr(locale, "Diferencia de puntos.", "Point differential.");
     case "points_for": return tr(locale, "Puntos anotados.", "Points scored.");

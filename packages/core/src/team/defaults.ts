@@ -108,3 +108,38 @@ export function createMixedFiveRubberTeamFormat(mixedDoublesPlay: "always" | "if
     },
   };
 }
+
+/** Official Uruguay Senior Team Pickleball Cup 2026 preset.
+ * Four mandatory rubbers award 2 standings points each; mixed doubles is only
+ * played at 2-2 and awards 1 standings point. The generic Team preset remains
+ * unchanged so other tournaments keep their existing semantics.
+ */
+export function createSeniorTeamCupFormat(): TeamFormat {
+  const base = createMixedFiveRubberTeamFormat("if_tied");
+  return {
+    ...base,
+    roster: {
+      ...base.roster,
+      min: 4,
+      max: 6,
+      captainRequired: true,
+    },
+    encounter: {
+      ...base.encounter,
+      winnerRule: "majority",
+      targetWins: null,
+      playRemainingAfterClinched: true,
+      rubbers: base.encounter.rubbers.map((rubber) => ({
+        ...rubber,
+        play: rubber.key === "xd" ? "if_tied" : "always",
+        isTiebreaker: rubber.key === "xd",
+        weight: rubber.key === "xd" ? 1 : 2,
+        pointTarget: 15,
+        scoringMode: "rally-win-by-2-cap-21",
+      })),
+    },
+    standings: {
+      criteria: ["standing_points", "encounter_wins", "head_to_head", "rubber_diff", "point_diff"],
+    },
+  };
+}

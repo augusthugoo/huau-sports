@@ -11,6 +11,7 @@ function row(id: string, wins: number, rubberDiff: number, pointDiff: number): T
     wins,
     losses: 3 - wins,
     winRate: wins / 3,
+    standingPoints: wins,
     rubbersFor: 8 + rubberDiff,
     rubbersAgainst: 8,
     rubberDiff,
