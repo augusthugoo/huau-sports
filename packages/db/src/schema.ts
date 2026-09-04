@@ -289,6 +289,7 @@ export const tournaments = sqliteTable(
     courtCount: integer("court_count").notNull(),
     publicParticipants: integer("public_participants", { mode: "boolean" }).notNull().default(true),
     publicLive: integer("public_live", { mode: "boolean" }).notNull().default(true),
+    publicHeroR2Key: text("public_hero_r2_key"),
     structureLocked: integer("structure_locked", { mode: "boolean" }).notNull().default(false),
     publishedRevision: integer("published_revision").notNull().default(0),
     workingRevision: integer("working_revision").notNull().default(0),

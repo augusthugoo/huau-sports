@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { createMixedFiveRubberTeamFormat, explainTeamFormat, type TeamFormat } from "@huau/core";
 import type { Locale } from "./i18n";
@@ -1135,8 +1135,14 @@ function TeamTVBracket({
   );
 }
 
-export function TeamTVPanel({ tournamentId, categoryId, locale, tournamentName }: Props & { categoryId:string; tournamentName:string }) {
-  const { detail, error, loading } = useTeamSnapshot(tournamentId, 5000);
+export function TeamTVPanel({ tournamentId, categoryId, locale, tournamentName, refreshToken }: Props & { tournamentId:string; categoryId:string; locale:Locale; tournamentName:string; refreshToken:number }) {
+  const { detail, error, loading, reload } = useTeamSnapshot(tournamentId);
+  const seenRefreshToken = useRef(refreshToken);
+  useEffect(() => {
+    if (seenRefreshToken.current === refreshToken) return;
+    seenRefreshToken.current = refreshToken;
+    void reload();
+  }, [refreshToken, reload]);
   if (loading) return <section className="tv-shell"><div className="empty-state">{tr(locale,"Cargando TV Team…","Loading Team TV…")}</div></section>;
   if (error) return <section className="tv-shell"><div className="tpw-alert">{error}</div></section>;
   const category=detail?.categories.find(item=>item.id===categoryId);

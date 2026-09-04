@@ -1623,9 +1623,10 @@ async function tournamentDetail(env: Env, tournamentId: string) {
   const tournament = await env.HUAU_DB.prepare(
     `SELECT id,organizer_organization_id as organizerOrganizationId,name,slug,sport,status,visibility,start_at as startAt,end_at as endAt,
             timezone,court_count as courtCount,public_participants as publicParticipants,public_live as publicLive,
-            structure_locked as structureLocked,published_revision as publishedRevision,working_revision as workingRevision
+            public_hero_r2_key as publicHeroR2Key,structure_locked as structureLocked,
+            published_revision as publishedRevision,working_revision as workingRevision
        FROM tournaments WHERE id=?`,
-  ).bind(tournamentId).first<TournamentRow>();
+  ).bind(tournamentId).first<TournamentRow & { publicHeroR2Key: string | null }>();
   if (!tournament) return null;
 
   const settings = await settingsForTournament(env, tournamentId);
@@ -1902,6 +1903,88 @@ async function restoreSnapshot(
   return json({ ok: true });
 }
 
+
+const tournamentHeroTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+function safeTournamentHeroFileName(name: string) {
+  const cleanName = name.normalize("NFKD").replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  return cleanName.slice(-120) || "portada";
+}
+
+async function mutateTournamentPublicHero(
+  tournamentId: string,
+  request: Request,
+  env: Env,
+  access: AccessHelpers,
+): Promise<Response> {
+  const accessResult = await tournamentForAccess(tournamentId, request, env, access);
+  if (accessResult instanceof Response) return accessResult;
+
+  const current = await env.HUAU_DB.prepare(
+    `SELECT public_hero_r2_key as publicHeroR2Key FROM tournaments WHERE id=?`,
+  ).bind(tournamentId).first<{ publicHeroR2Key: string | null }>();
+
+  if (request.method === "DELETE") {
+    await env.HUAU_DB.prepare(
+      `UPDATE tournaments SET public_hero_r2_key=NULL,updated_at=? WHERE id=?`,
+    ).bind(unixNow(), tournamentId).run();
+    if (current?.publicHeroR2Key) await env.HUAU_ASSETS.delete(current.publicHeroR2Key).catch(() => undefined);
+    await audit(
+      env,
+      accessResult.tournament,
+      accessResult.user.id,
+      "tournament.public_hero.removed",
+      "Removed public tournament cover image",
+      "tournament",
+      tournamentId,
+    );
+    return json({ ok: true, heroImageUrl: null });
+  }
+
+  const form = await request.formData();
+  const raw = form.get("file");
+  if (!(raw instanceof File)) return json({ ok: false, code: "TOURNAMENT_HERO_REQUIRED" }, { status: 400 });
+  if (!tournamentHeroTypes.has(raw.type)) {
+    return json({ ok: false, code: "TOURNAMENT_HERO_TYPE_NOT_ALLOWED" }, { status: 415 });
+  }
+  if (raw.size <= 0 || raw.size > 8 * 1024 * 1024) {
+    return json({ ok: false, code: "TOURNAMENT_HERO_SIZE_INVALID" }, { status: 413 });
+  }
+
+  const objectKey = `tournaments/${tournamentId}/public/hero/${uuid()}-${safeTournamentHeroFileName(raw.name)}`;
+  await env.HUAU_ASSETS.put(objectKey, raw.stream(), {
+    httpMetadata: { contentType: raw.type },
+    customMetadata: { tournamentId, kind: "public-hero" },
+  });
+
+  try {
+    await env.HUAU_DB.prepare(
+      `UPDATE tournaments SET public_hero_r2_key=?,updated_at=? WHERE id=?`,
+    ).bind(objectKey, unixNow(), tournamentId).run();
+  } catch {
+    await env.HUAU_ASSETS.delete(objectKey).catch(() => undefined);
+    return json({ ok: false, code: "TOURNAMENT_HERO_SAVE_FAILED" }, { status: 500 });
+  }
+
+  if (current?.publicHeroR2Key && current.publicHeroR2Key !== objectKey) {
+    await env.HUAU_ASSETS.delete(current.publicHeroR2Key).catch(() => undefined);
+  }
+  await audit(
+    env,
+    accessResult.tournament,
+    accessResult.user.id,
+    "tournament.public_hero.updated",
+    "Updated public tournament cover image",
+    "tournament",
+    tournamentId,
+    { contentType: raw.type, size: raw.size },
+  );
+  return json({
+    ok: true,
+    heroImageUrl: `/api/public/tournaments/${encodeURIComponent(accessResult.tournament.slug)}/hero`,
+  });
+}
+
 export async function handleTournamentAdminApi(
   request: Request,
   env: Env,
@@ -1941,6 +2024,19 @@ export async function handleTournamentAdminApi(
       await ensureTournamentSettings(env, tournamentId);
       return json({ ok: true, tournament: { id: tournamentId, name, slug } }, { status: 201 });
     }
+  }
+
+  const tournamentRevisionRoute = url.pathname.match(/^\/api\/admin\/tournaments\/([^/]+)\/revision$/);
+  if (tournamentRevisionRoute && request.method === "GET") {
+    const tournamentId = decodeURIComponent(tournamentRevisionRoute[1]!);
+    const accessResult = await tournamentForAccess(tournamentId, request, env, access);
+    if (accessResult instanceof Response) return accessResult;
+    return json({ ok: true, workingRevision: accessResult.tournament.workingRevision });
+  }
+
+  const tournamentHeroRoute = url.pathname.match(/^\/api\/admin\/tournaments\/([^/]+)\/public-hero$/);
+  if (tournamentHeroRoute && (request.method === "PUT" || request.method === "DELETE")) {
+    return mutateTournamentPublicHero(decodeURIComponent(tournamentHeroRoute[1]!), request, env, access);
   }
 
   const tournamentRoute = url.pathname.match(/^\/api\/admin\/tournaments\/([^/]+)$/);

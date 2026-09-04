@@ -31,6 +31,7 @@ type TournamentRow = {
   endAt: number | null;
   timezone: string;
   courtCount: number;
+  publicHeroR2Key: string | null;
   structureLocked: number;
 };
 
@@ -125,13 +126,13 @@ function parseJsonOrNull(value: string | null): unknown | null {
 
 async function tournamentBySlug(env: Env, slug: string) {
   return env.HUAU_DB.prepare(
-    `SELECT id,organizer_organization_id as organizerOrganizationId,name,slug,sport,status,visibility,start_at as startAt,end_at as endAt,timezone,court_count as courtCount,structure_locked as structureLocked FROM tournaments WHERE slug=?`,
+    `SELECT id,organizer_organization_id as organizerOrganizationId,name,slug,sport,status,visibility,start_at as startAt,end_at as endAt,timezone,court_count as courtCount,public_hero_r2_key as publicHeroR2Key,structure_locked as structureLocked FROM tournaments WHERE slug=?`,
   ).bind(slug).first<TournamentRow>();
 }
 
 async function tournamentById(env: Env, id: string) {
   return env.HUAU_DB.prepare(
-    `SELECT id,organizer_organization_id as organizerOrganizationId,name,slug,sport,status,visibility,start_at as startAt,end_at as endAt,timezone,court_count as courtCount,structure_locked as structureLocked FROM tournaments WHERE id=?`,
+    `SELECT id,organizer_organization_id as organizerOrganizationId,name,slug,sport,status,visibility,start_at as startAt,end_at as endAt,timezone,court_count as courtCount,public_hero_r2_key as publicHeroR2Key,structure_locked as structureLocked FROM tournaments WHERE id=?`,
   ).bind(id).first<TournamentRow>();
 }
 
@@ -156,6 +157,21 @@ async function registrationCloseAt(env: Env, tournamentId: string) {
     `SELECT registration_close_at as registrationCloseAt FROM tournament_settings WHERE tournament_id=?`,
   ).bind(tournamentId).first<{ registrationCloseAt: number | null }>();
   return row?.registrationCloseAt ?? null;
+}
+
+type PublicTournamentInfoRow = {
+  club: string;
+  city: string;
+  location: string;
+  description: string;
+  contact: string;
+};
+
+async function publicInfoForTournament(env: Env, tournamentId: string): Promise<PublicTournamentInfoRow> {
+  const row = await env.HUAU_DB.prepare(
+    `SELECT club,city,location,description,contact FROM tournament_settings WHERE tournament_id=?`,
+  ).bind(tournamentId).first<PublicTournamentInfoRow>();
+  return row ?? { club: "", city: "", location: "", description: "", contact: "" };
 }
 
 async function pricingSettingsForTournament(env: Env, tournamentId: string): Promise<PricingSettingsRow> {
@@ -638,11 +654,29 @@ async function compactWaitlist(env: Env, categoryId: string) {
   if (statements.length) await env.HUAU_DB.batch(statements);
 }
 
+async function publicTournamentHero(slug: string, env: Env) {
+  const tournament = await tournamentBySlug(env, slug);
+  if (!tournament || tournament.visibility !== "public" || !tournament.publicHeroR2Key) {
+    return json({ ok: false, code: "TOURNAMENT_HERO_NOT_FOUND" }, { status: 404 });
+  }
+  const object = await env.HUAU_ASSETS.get(tournament.publicHeroR2Key);
+  if (!object) return json({ ok: false, code: "TOURNAMENT_HERO_NOT_FOUND" }, { status: 404 });
+  return new Response(object.body, {
+    headers: {
+      "content-type": object.httpMetadata?.contentType ?? "image/jpeg",
+      "cache-control": "public, max-age=300",
+    },
+  });
+}
+
 async function publicTournament(slug: string, request: Request, env: Env, access: AccessHelpers) {
   const tournament = await tournamentBySlug(env, slug);
   if (!tournament || tournament.visibility !== "public") return json({ ok: false, code: "TOURNAMENT_NOT_FOUND" }, { status: 404 });
-  const closeAt = await registrationCloseAt(env, tournament.id);
-  const settings = await pricingSettingsForTournament(env, tournament.id);
+  const [closeAt, settings, publicInfo] = await Promise.all([
+    registrationCloseAt(env, tournament.id),
+    pricingSettingsForTournament(env, tournament.id),
+    publicInfoForTournament(env, tournament.id),
+  ]);
   const categories = await env.HUAU_DB.prepare(
     `SELECT tc.id,tc.tournament_id as tournamentId,tc.name,tc.entry_type as entryType,tc.competition_gender as competitionGender,tc.min_age as minAge,tc.max_age as maxAge,
             tc.max_entries as maxEntries,tc.registration_status as registrationStatus,tc.price_scope as priceScope,tc.price_minor as priceMinor,tc.currency,
@@ -713,9 +747,16 @@ async function publicTournament(slug: string, request: Request, env: Env, access
     };
   }));
 
+  const { publicHeroR2Key, organizerOrganizationId: _organizerOrganizationId, visibility: _visibility, ...publicTournamentData } = tournament;
+  void _organizerOrganizationId;
+  void _visibility;
   return json({
     ok: true,
-    tournament,
+    tournament: {
+      ...publicTournamentData,
+      heroImageUrl: publicHeroR2Key ? `/api/public/tournaments/${encodeURIComponent(tournament.slug)}/hero` : null,
+    },
+    publicInfo,
     registrationCloseAt: closeAt,
     pricingPolicy: settings,
     teamPricing: {
@@ -1473,6 +1514,9 @@ async function adminAdjustment(registrationId: string, request: Request, env: En
 
 export async function handleRegistrationApi(request: Request, env: Env, access: AccessHelpers): Promise<Response | null> {
   const url = new URL(request.url);
+  const pubHero = url.pathname.match(/^\/api\/public\/tournaments\/([^/]+)\/hero$/);
+  if (pubHero && request.method === "GET") return publicTournamentHero(decodeURIComponent(pubHero[1]!), env);
+
   const pub = url.pathname.match(/^\/api\/public\/tournaments\/([^/]+)$/);
   if (pub && request.method === "GET") return publicTournament(decodeURIComponent(pub[1]!), request, env, access);
 

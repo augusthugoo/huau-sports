@@ -96,8 +96,17 @@ export type PublicTournamentData = {
     status: string;
     startAt: number;
     endAt: number | null;
+    timezone: string;
     courtCount: number;
+    heroImageUrl: string | null;
     structureLocked: number;
+  };
+  publicInfo: {
+    club: string;
+    city: string;
+    location: string;
+    description: string;
+    contact: string;
   };
   registrationCloseAt: number | null;
   pricingPolicy: PricingPolicy;
@@ -140,6 +149,20 @@ function codeCopy(locale: Locale, code: string) {
     NO_CATEGORIES_SELECTED: ["Seleccioná al menos una categoría.", "Select at least one category."],
   };
   return map[code]?.[locale === "es" ? 0 : 1] ?? code;
+}
+
+function tournamentStatusCopy(locale: Locale, status: string) {
+  const statuses: Record<string, [string, string]> = {
+    draft: ["En preparación", "In setup"],
+    registration_open: ["Inscripciones abiertas", "Registration open"],
+    registration_closed: ["Inscripciones cerradas", "Registration closed"],
+    draw_ready: ["Sorteo listo", "Draw ready"],
+    scheduled: ["Cronograma publicado", "Schedule published"],
+    live: ["En vivo", "Live"],
+    completed: ["Finalizado", "Completed"],
+    cancelled: ["Cancelado", "Cancelled"],
+  };
+  return statuses[status]?.[locale === "es" ? 0 : 1] ?? status.replaceAll("_", " ");
 }
 
 function blockedButtonCopy(locale: Locale, code: string) {
@@ -349,13 +372,69 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
         <button className="brand-button" onClick={() => go("/")}><strong>HUAU</strong><span>SPORTS</span></button>
         <div>{data.viewer.authenticated ? <button className="ghost" onClick={() => go("/app/registrations")}>{tr(locale, "Mis inscripciones", "My registrations")}</button> : <button className="light" onClick={login}>{tr(locale, "Ingresar", "Sign in")}</button>}</div>
       </header>
-      <section className="public-tournament-hero"><div><div className="eyebrow">HUAU TOURNAMENT</div><h1>{data.tournament.name}</h1><p>{date(data.tournament.startAt)}{data.tournament.endAt ? ` → ${date(data.tournament.endAt)}` : ""} · {data.tournament.courtCount} {tr(locale, "canchas", "courts")}</p></div><span className={`registration-open-pill ${data.tournament.status}`}>{data.tournament.status.replaceAll("_", " ")}</span></section>
+      <section
+        className={`public-tournament-hero ${data.tournament.heroImageUrl ? "has-cover" : ""}`}
+        style={data.tournament.heroImageUrl ? {
+          backgroundImage: `linear-gradient(90deg, rgba(3,3,3,.94) 0%, rgba(3,3,3,.70) 50%, rgba(3,3,3,.30) 100%), url("${data.tournament.heroImageUrl}")`,
+        } : undefined}
+      >
+        <div className="public-tournament-hero-content">
+          <div className="public-tournament-hero-copy">
+            <div className="eyebrow">{data.tournament.sport.toUpperCase()} · HUAU TOURNAMENT</div>
+            <h1>{data.tournament.name}</h1>
+            <div className="public-tournament-hero-meta">
+              <span>{date(data.tournament.startAt)}{data.tournament.endAt ? ` → ${date(data.tournament.endAt)}` : ""}</span>
+              {(data.publicInfo.location || data.publicInfo.club || data.publicInfo.city) && (
+                <span>{data.publicInfo.location || data.publicInfo.club || data.publicInfo.city}</span>
+              )}
+              <span>{data.tournament.courtCount} {tr(locale, "canchas", "courts")}</span>
+            </div>
+            <div className="public-tournament-hero-actions">
+              <button
+                className="light"
+                onClick={() => document.getElementById("registration-categories")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+              >
+                {tr(locale, "Ver inscripción", "View registration")}
+              </button>
+              {data.viewer.authenticated && (
+                <button className="ghost" onClick={() => go("/app/registrations")}>
+                  {tr(locale, "Mis inscripciones", "My registrations")}
+                </button>
+              )}
+            </div>
+          </div>
+          <span className={`registration-open-pill ${data.tournament.status}`}>
+            {tournamentStatusCopy(locale, data.tournament.status)}
+          </span>
+        </div>
+      </section>
+
+      <section className="public-tournament-summary">
+        <div className="public-tournament-summary-copy">
+          <div className="eyebrow">{tr(locale, "INFORMACIÓN DEL TORNEO", "TOURNAMENT INFO")}</div>
+          <h2>{tr(locale, "Todo lo necesario antes de inscribirte", "Everything you need before registering")}</h2>
+          {data.publicInfo.description ? (
+            <p>{data.publicInfo.description}</p>
+          ) : (
+            <p>{tr(locale, "Revisá las categorías disponibles, su formato oficial y el valor de inscripción.", "Review available categories, their official format and registration fee.")}</p>
+          )}
+          {data.publicInfo.contact && (
+            <small>{tr(locale, "Contacto", "Contact")}: {data.publicInfo.contact}</small>
+          )}
+        </div>
+        <div className="public-tournament-facts">
+          <div className="public-tournament-fact"><span>{tr(locale, "Fecha", "Date")}</span><strong>{date(data.tournament.startAt)}</strong></div>
+          <div className="public-tournament-fact"><span>{tr(locale, "Sede", "Venue")}</span><strong>{data.publicInfo.location || data.publicInfo.club || data.publicInfo.city || tr(locale, "A confirmar", "TBC")}</strong></div>
+          <div className="public-tournament-fact"><span>{tr(locale, "Inscripción", "Registration")}</span><strong>{data.registrationCloseAt ? `${tr(locale, "Hasta", "Until")} ${date(data.registrationCloseAt)}` : tournamentStatusCopy(locale, data.tournament.status)}</strong></div>
+          <div className="public-tournament-fact"><span>{tr(locale, "Categorías", "Categories")}</span><strong>{data.categories.length}</strong></div>
+        </div>
+      </section>
       {notice && <div className="registration-notice">{notice}</div>}
       {error && <div className="registration-alert">{error}</div>}
       {data.viewer.authenticated && data.maxCategoriesPerPlayer !== null && <div className="registration-limit-note">{tr(locale, `Categorías: ${data.activeCategoryCount + selected.length}/${data.maxCategoriesPerPlayer}`, `Categories: ${data.activeCategoryCount + selected.length}/${data.maxCategoriesPerPlayer}`)}</div>}
       {profileNeededSomewhere && <EligibilityProfileCard locale={locale} profile={data.viewer.profile} busy={busy === "profile"} onSave={saveProfile} />}
 
-      <section className="registration-shop-layout">
+      <section className="registration-shop-layout" id="registration-categories">
         <div className="public-registration-grid">
           {data.categories.map((category) => {
             const full = category.maxEntries !== null && category.occupiedEntries >= category.maxEntries;
