@@ -81,14 +81,16 @@ async function tournamentForAccess(
   env: Env,
   access: AccessHelpers,
 ): Promise<{ user: CurrentUser; tournament: TournamentRow } | Response> {
-  const user = await access.requireUser(request, env);
+  const [user, tournament] = await Promise.all([
+    access.requireUser(request, env),
+    env.HUAU_DB.prepare(
+      `SELECT id,organizer_organization_id as organizerOrganizationId,name,working_revision as workingRevision
+         FROM tournaments WHERE id=?`,
+    )
+      .bind(tournamentId)
+      .first<TournamentRow>(),
+  ]);
   if (!user) return json({ ok: false, code: "UNAUTHENTICATED" }, { status: 401 });
-  const tournament = await env.HUAU_DB.prepare(
-    `SELECT id,organizer_organization_id as organizerOrganizationId,name,working_revision as workingRevision
-       FROM tournaments WHERE id=?`,
-  )
-    .bind(tournamentId)
-    .first<TournamentRow>();
   if (!tournament) return json({ ok: false, code: "TOURNAMENT_NOT_FOUND" }, { status: 404 });
   if (!(await access.isOrgAdmin(user.id, tournament.organizerOrganizationId, env, request))) {
     return json({ ok: false, code: "FORBIDDEN" }, { status: 403 });
@@ -102,17 +104,36 @@ async function categoryForAccess(
   env: Env,
   access: AccessHelpers,
 ): Promise<{ user: CurrentUser; tournament: TournamentRow; category: CategoryRow } | Response> {
-  const category = await env.HUAU_DB.prepare(
-    `SELECT id,tournament_id as tournamentId,name,entry_type as entryType,format_version_id as formatVersionId,
-            structure_locked as structureLocked
-       FROM tournament_categories WHERE id=? AND entry_type='team'`,
-  )
-    .bind(categoryId)
-    .first<CategoryRow>();
-  if (!category) return json({ ok: false, code: "TEAM_CATEGORY_NOT_FOUND" }, { status: 404 });
-  const result = await tournamentForAccess(category.tournamentId, request, env, access);
-  if (result instanceof Response) return result;
-  return { ...result, category };
+  const [user, row] = await Promise.all([
+    access.requireUser(request, env),
+    env.HUAU_DB.prepare(
+      `SELECT tc.id,tc.tournament_id as tournamentId,tc.name,tc.entry_type as entryType,
+              tc.format_version_id as formatVersionId,tc.structure_locked as structureLocked,
+              t.organizer_organization_id as tournamentOrganizerOrganizationId,
+              t.name as tournamentName,t.working_revision as tournamentWorkingRevision
+         FROM tournament_categories tc JOIN tournaments t ON t.id=tc.tournament_id
+        WHERE tc.id=? AND tc.entry_type='team'`,
+    )
+      .bind(categoryId)
+      .first<CategoryRow & {
+        tournamentOrganizerOrganizationId: string;
+        tournamentName: string;
+        tournamentWorkingRevision: number;
+      }>(),
+  ]);
+  if (!row) return json({ ok: false, code: "TEAM_CATEGORY_NOT_FOUND" }, { status: 404 });
+  if (!user) return json({ ok: false, code: "UNAUTHENTICATED" }, { status: 401 });
+  if (!(await access.isOrgAdmin(user.id, row.tournamentOrganizerOrganizationId, env, request))) {
+    return json({ ok: false, code: "FORBIDDEN" }, { status: 403 });
+  }
+  const tournament: TournamentRow = {
+    id: row.tournamentId,
+    organizerOrganizationId: row.tournamentOrganizerOrganizationId,
+    name: row.tournamentName,
+    workingRevision: row.tournamentWorkingRevision,
+  };
+  const category: CategoryRow = row;
+  return { user, tournament, category };
 }
 
 async function entryForAccess(

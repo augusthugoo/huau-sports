@@ -149,18 +149,20 @@ async function tournamentForAccess(
   env: Env,
   access: AccessHelpers,
 ): Promise<{ user: CurrentUser; tournament: TournamentRow } | Response> {
-  const user = await access.requireUser(request, env);
+  const [user, tournament] = await Promise.all([
+    access.requireUser(request, env),
+    env.HUAU_DB.prepare(
+      `SELECT id, organizer_organization_id as organizerOrganizationId, name, slug, sport, status, visibility,
+              start_at as startAt, end_at as endAt, timezone, court_count as courtCount,
+              public_participants as publicParticipants, public_live as publicLive,
+              structure_locked as structureLocked, published_revision as publishedRevision,
+              working_revision as workingRevision
+         FROM tournaments WHERE id=?`,
+    )
+      .bind(tournamentId)
+      .first<TournamentRow>(),
+  ]);
   if (!user) return json({ ok: false, code: "UNAUTHENTICATED" }, { status: 401 });
-  const tournament = await env.HUAU_DB.prepare(
-    `SELECT id, organizer_organization_id as organizerOrganizationId, name, slug, sport, status, visibility,
-            start_at as startAt, end_at as endAt, timezone, court_count as courtCount,
-            public_participants as publicParticipants, public_live as publicLive,
-            structure_locked as structureLocked, published_revision as publishedRevision,
-            working_revision as workingRevision
-       FROM tournaments WHERE id=?`,
-  )
-    .bind(tournamentId)
-    .first<TournamentRow>();
   if (!tournament) return json({ ok: false, code: "TOURNAMENT_NOT_FOUND" }, { status: 404 });
   if (!(await access.isOrgAdmin(user.id, tournament.organizerOrganizationId, env, request))) {
     return json({ ok: false, code: "FORBIDDEN" }, { status: 403 });
@@ -174,21 +176,70 @@ async function categoryForAccess(
   env: Env,
   access: AccessHelpers,
 ): Promise<{ user: CurrentUser; tournament: TournamentRow; category: CategoryRow } | Response> {
-  const category = await env.HUAU_DB.prepare(
-    `SELECT id, tournament_id as tournamentId, name, entry_type as entryType,
-            competition_gender as competitionGender, min_age as minAge, max_age as maxAge,
-            max_entries as maxEntries, registration_status as registrationStatus,
-            price_scope as priceScope, price_minor as priceMinor, currency,
-            scheduled_date as scheduledDate, sort_order as sortOrder,
-            structure_locked as structureLocked, format_version_id as formatVersionId
-       FROM tournament_categories WHERE id=?`,
-  )
-    .bind(categoryId)
-    .first<CategoryRow>();
-  if (!category) return json({ ok: false, code: "CATEGORY_NOT_FOUND" }, { status: 404 });
-  const result = await tournamentForAccess(category.tournamentId, request, env, access);
-  if (result instanceof Response) return result;
-  return { ...result, category };
+  const [user, row] = await Promise.all([
+    access.requireUser(request, env),
+    env.HUAU_DB.prepare(
+      `SELECT tc.id, tc.tournament_id as tournamentId, tc.name, tc.entry_type as entryType,
+              tc.competition_gender as competitionGender, tc.min_age as minAge, tc.max_age as maxAge,
+              tc.max_entries as maxEntries, tc.registration_status as registrationStatus,
+              tc.price_scope as priceScope, tc.price_minor as priceMinor, tc.currency,
+              tc.scheduled_date as scheduledDate, tc.sort_order as sortOrder,
+              tc.structure_locked as structureLocked, tc.format_version_id as formatVersionId,
+              t.organizer_organization_id as tournamentOrganizerOrganizationId,
+              t.name as tournamentName, t.slug as tournamentSlug, t.sport as tournamentSport,
+              t.status as tournamentStatus, t.visibility as tournamentVisibility,
+              t.start_at as tournamentStartAt, t.end_at as tournamentEndAt,
+              t.timezone as tournamentTimezone, t.court_count as tournamentCourtCount,
+              t.public_participants as tournamentPublicParticipants, t.public_live as tournamentPublicLive,
+              t.structure_locked as tournamentStructureLocked, t.published_revision as tournamentPublishedRevision,
+              t.working_revision as tournamentWorkingRevision
+         FROM tournament_categories tc JOIN tournaments t ON t.id=tc.tournament_id
+        WHERE tc.id=?`,
+    )
+      .bind(categoryId)
+      .first<CategoryRow & {
+        tournamentOrganizerOrganizationId: string;
+        tournamentName: string;
+        tournamentSlug: string;
+        tournamentSport: TournamentRow["sport"];
+        tournamentStatus: string;
+        tournamentVisibility: string;
+        tournamentStartAt: number;
+        tournamentEndAt: number | null;
+        tournamentTimezone: string;
+        tournamentCourtCount: number;
+        tournamentPublicParticipants: number;
+        tournamentPublicLive: number;
+        tournamentStructureLocked: number;
+        tournamentPublishedRevision: number;
+        tournamentWorkingRevision: number;
+      }>(),
+  ]);
+  if (!row) return json({ ok: false, code: "CATEGORY_NOT_FOUND" }, { status: 404 });
+  if (!user) return json({ ok: false, code: "UNAUTHENTICATED" }, { status: 401 });
+  if (!(await access.isOrgAdmin(user.id, row.tournamentOrganizerOrganizationId, env, request))) {
+    return json({ ok: false, code: "FORBIDDEN" }, { status: 403 });
+  }
+  const tournament: TournamentRow = {
+    id: row.tournamentId,
+    organizerOrganizationId: row.tournamentOrganizerOrganizationId,
+    name: row.tournamentName,
+    slug: row.tournamentSlug,
+    sport: row.tournamentSport,
+    status: row.tournamentStatus,
+    visibility: row.tournamentVisibility,
+    startAt: row.tournamentStartAt,
+    endAt: row.tournamentEndAt,
+    timezone: row.tournamentTimezone,
+    courtCount: row.tournamentCourtCount,
+    publicParticipants: row.tournamentPublicParticipants,
+    publicLive: row.tournamentPublicLive,
+    structureLocked: row.tournamentStructureLocked,
+    publishedRevision: row.tournamentPublishedRevision,
+    workingRevision: row.tournamentWorkingRevision,
+  };
+  const category: CategoryRow = row;
+  return { user, tournament, category };
 }
 
 type TournamentSettingsRow = {
@@ -527,14 +578,34 @@ async function assertPartnerAvailability(
   profileId: string,
   assignments: PlayerAssignmentInput[],
 ) {
-  for (const assignment of assignments) {
-    if (!assignment.partnerProfileId) continue;
+  const paired = assignments.filter((assignment) => Boolean(assignment.partnerProfileId));
+  for (const assignment of paired) {
     if (assignment.partnerProfileId === profileId) throw new Error("PLAYER_CANNOT_PARTNER_SELF");
-    const category = await env.HUAU_DB.prepare(`SELECT entry_type as entryType FROM tournament_categories WHERE id=?`).bind(assignment.categoryId).first<{entryType:string}>();
-    if (!category || category.entryType !== "pair") throw new Error("PARTNER_ONLY_ALLOWED_FOR_PAIR_CATEGORY");
-    const existing = await env.HUAU_DB.prepare(
-      `SELECT partner_profile_id as partnerId FROM tournament_player_categories WHERE player_profile_id=? AND category_id=?`,
-    ).bind(assignment.partnerProfileId, assignment.categoryId).first<{partnerId:string|null}>();
+  }
+  if (!paired.length) return;
+
+  const categoryIds = [...new Set(paired.map((assignment) => assignment.categoryId))];
+  const partnerIds = [...new Set(paired.map((assignment) => assignment.partnerProfileId!).filter(Boolean))];
+  const categoryPlaceholders = categoryIds.map(() => "?").join(",");
+  const partnerPlaceholders = partnerIds.map(() => "?").join(",");
+
+  const [categoryRows, existingRows] = await Promise.all([
+    env.HUAU_DB.prepare(
+      `SELECT id,entry_type as entryType FROM tournament_categories WHERE id IN (${categoryPlaceholders})`,
+    ).bind(...categoryIds).all<{ id: string; entryType: string }>(),
+    env.HUAU_DB.prepare(
+      `SELECT player_profile_id as playerProfileId,category_id as categoryId,partner_profile_id as partnerId
+         FROM tournament_player_categories
+        WHERE player_profile_id IN (${partnerPlaceholders}) AND category_id IN (${categoryPlaceholders})`,
+    ).bind(...partnerIds, ...categoryIds).all<{ playerProfileId: string; categoryId: string; partnerId: string | null }>(),
+  ]);
+
+  const categoryType = new Map(categoryRows.results.map((row) => [row.id, row.entryType] as const));
+  const existingByKey = new Map(existingRows.results.map((row) => [`${row.playerProfileId}:${row.categoryId}`, row] as const));
+
+  for (const assignment of paired) {
+    if (categoryType.get(assignment.categoryId) !== "pair") throw new Error("PARTNER_ONLY_ALLOWED_FOR_PAIR_CATEGORY");
+    const existing = existingByKey.get(`${assignment.partnerProfileId}:${assignment.categoryId}`);
     if (existing?.partnerId && existing.partnerId !== profileId) throw new Error("PARTNER_ALREADY_ASSIGNED");
   }
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { Locale } from "./i18n";
 
@@ -219,9 +219,21 @@ export function TournamentPaymentsAdmin({ tournamentId, locale }: { tournamentId
   }, [tournamentId]);
   useEffect(() => { void load(true); }, [load]);
 
+  const refreshTimer = useRef<number | null>(null);
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current);
+    refreshTimer.current = window.setTimeout(() => {
+      refreshTimer.current = null;
+      void load(true);
+    }, 180);
+  }, [load]);
+  useEffect(() => () => {
+    if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current);
+  }, []);
+
   const act = async (key: string, fn: () => Promise<unknown>, message = "") => {
     setBusy(key); setError(""); setNotice("");
-    try { await fn(); if (message) setNotice(message); await load(true); }
+    try { await fn(); if (message) setNotice(message); scheduleRefresh(); }
     catch (e) { setError(e instanceof Error ? e.message : "PAYMENT_ERROR"); }
     finally { setBusy(""); }
   };

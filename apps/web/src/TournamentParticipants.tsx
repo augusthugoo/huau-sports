@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { Locale } from "./i18n";
 
@@ -171,6 +171,23 @@ export function TournamentParticipantsAdmin({ tournamentId, locale, players, cat
   }, [tournamentId]);
   useEffect(() => { void load(); }, [load]);
 
+  const refreshTimer = useRef<number | null>(null);
+  const competitionRefreshPending = useRef(false);
+  const scheduleRefresh = useCallback((competitionChanged = false) => {
+    if (competitionChanged) competitionRefreshPending.current = true;
+    if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current);
+    refreshTimer.current = window.setTimeout(() => {
+      refreshTimer.current = null;
+      const refreshCompetition = competitionRefreshPending.current;
+      competitionRefreshPending.current = false;
+      if (refreshCompetition) void onCompetitionChanged();
+      void load();
+    }, 180);
+  }, [load, onCompetitionChanged]);
+  useEffect(() => () => {
+    if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current);
+  }, []);
+
   const participants = useMemo(() => {
     const map = new Map<string, Participant>();
     const ensure = (key: string, seed: Omit<Participant, "key" | "registrations" | "orders">) => {
@@ -225,9 +242,8 @@ export function TournamentParticipantsAdmin({ tournamentId, locale, players, cat
     setBusy(key); setError(""); setNotice("");
     try {
       await fn();
-      if (competitionChanged) await onCompetitionChanged();
-      await load();
       if (message) setNotice(message);
+      scheduleRefresh(competitionChanged);
       return true;
     } catch (e) { setError(e instanceof Error ? e.message : "PARTICIPANT_ACTION_FAILED"); return false; }
     finally { setBusy(""); }
