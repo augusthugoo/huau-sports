@@ -19,6 +19,7 @@ import {
   withEncounterResult,
   type Competition,
   type CompetitionEncounter,
+  type EncounterResultInput,
   type LegacySeedingMethod,
   type LiveDrawState,
   type ScheduleCategory,
@@ -1937,6 +1938,7 @@ async function tournamentWorkspaceStandard(env: Env, tournament: TournamentRow) 
 
   const standings:Array<Record<string,unknown>>=[];
   const crossGroup:Array<Record<string,unknown>>=[];
+  const competitionModels:Competition[]=[];
   for (const row of formatRows) {
     if (!row.competitionId || !row.configJson) continue;
     let format:StandardCompetitionFormat;
@@ -1967,6 +1969,7 @@ async function tournamentWorkspaceStandard(env: Env, tournament: TournamentRow) 
       pointTarget:match.pointTarget??(match.stage==="bronze"||match.stage==="final"?format.medal.pointTarget:format.preliminary.pointTarget),
     }));
     const competition:Competition={id:row.competitionId,categoryId:row.id,format,groups:competitionGroups,encounters,finalGenerated:encounters.some((encounter)=>encounter.stage!=="group")};
+    competitionModels.push(competition);
     for (const group of competition.groups) {
       const rows=calculateGroupStandings(competition,group.id);
       standings.push({categoryId:row.id,groupId:group.id,groupName:group.name,rows:rows.map((standing,index)=>({
@@ -1996,10 +1999,461 @@ async function tournamentWorkspaceStandard(env: Env, tournament: TournamentRow) 
   return {
     workingRevision:tournament.workingRevision,
     tournamentPatch:workspaceTournamentPatch(tournament),
-    entries:entries.results,groups:groups.results,matches:matchRows,drawSessions:drawSessions.results,standings,crossGroup,categoryProgress,
+    entries:entries.results,groups:groups.results,matches:matchRows,drawSessions:drawSessions.results,standings,crossGroup,categoryProgress,competitions:competitionModels,
   };
 }
 
+
+
+
+/* phase9-local-workspace-batch */
+type WorkspaceStandardResultOperation = {
+  kind: "standard_result";
+  matchId: string;
+  result: { scoreA: number; scoreB: number } | { sets: Array<{ scoreA: number; scoreB: number }> };
+};
+
+type WorkspaceCommitBody = {
+  baseRevision?: number;
+  operations?: WorkspaceStandardResultOperation[];
+  confirmImpact?: boolean;
+};
+
+async function tournamentWorkspaceBundle(env: Env, tournament: TournamentRow) {
+  const [core, participants, standard, schedule, recovery] = await Promise.all([
+    tournamentWorkspaceCore(env, tournament),
+    tournamentWorkspaceParticipants(env, tournament),
+    tournamentWorkspaceStandard(env, tournament),
+    tournamentWorkspaceSchedule(env, tournament),
+    tournamentWorkspaceRecovery(env, tournament),
+  ]);
+  return {
+    baseRevision: tournament.workingRevision,
+    core,
+    participants,
+    standard,
+    schedule,
+    recovery,
+  };
+}
+
+async function reloadTournamentRow(env: Env, tournamentId: string): Promise<TournamentRow | null> {
+  return env.HUAU_DB.prepare(
+    `SELECT id, organizer_organization_id as organizerOrganizationId, name, slug, sport, status, visibility,
+            start_at as startAt, end_at as endAt, timezone, court_count as courtCount,
+            public_participants as publicParticipants, public_live as publicLive,
+            structure_locked as structureLocked, published_revision as publishedRevision,
+            working_revision as workingRevision
+       FROM tournaments WHERE id=?`,
+  ).bind(tournamentId).first<TournamentRow>();
+}
+
+type WorkspaceMatchMeta = {
+  matchId: string;
+  encounterId: string;
+  categoryId: string;
+  tournamentId: string;
+  stage: string;
+  bestOf: number;
+  hadResult: number;
+  competitionId: string;
+  categoryName: string;
+  entryType: "individual" | "pair";
+  competitionGender: CategoryRow["competitionGender"];
+  minAge: number | null;
+  maxAge: number | null;
+  maxEntries: number | null;
+  registrationStatus: CategoryRow["registrationStatus"];
+  priceScope: CategoryRow["priceScope"];
+  priceMinor: number | null;
+  currency: string | null;
+  scheduledDate: string | null;
+  sortOrder: number;
+  structureLocked: number;
+  formatVersionId: string | null;
+};
+
+function workspaceCategoryFromMatch(row: WorkspaceMatchMeta): CategoryRow {
+  return {
+    id: row.categoryId,
+    tournamentId: row.tournamentId,
+    name: row.categoryName,
+    entryType: row.entryType,
+    competitionGender: row.competitionGender,
+    minAge: row.minAge,
+    maxAge: row.maxAge,
+    maxEntries: row.maxEntries,
+    registrationStatus: row.registrationStatus,
+    priceScope: row.priceScope,
+    priceMinor: row.priceMinor,
+    currency: row.currency,
+    scheduledDate: row.scheduledDate,
+    sortOrder: row.sortOrder,
+    structureLocked: row.structureLocked,
+    formatVersionId: row.formatVersionId,
+  };
+}
+
+function workspaceResultInput(
+  operation: WorkspaceStandardResultOperation,
+  bestOf: number,
+): EncounterResultInput {
+  if (bestOf === 3) {
+    if (!("sets" in operation.result) || !Array.isArray(operation.result.sets)) throw new Error("INVALID_SET_COUNT");
+    const sets = operation.result.sets.map((set) => ({
+      scoreA: Number(set.scoreA),
+      scoreB: Number(set.scoreB),
+    }));
+    if (sets.some((set) => !Number.isInteger(set.scoreA) || !Number.isInteger(set.scoreB) || set.scoreA < 0 || set.scoreB < 0)) {
+      throw new Error("INVALID_SCORE");
+    }
+    return { sets };
+  }
+  if (!("scoreA" in operation.result) || !("scoreB" in operation.result)) throw new Error("INVALID_SCORE");
+  const scoreA = Number(operation.result.scoreA);
+  const scoreB = Number(operation.result.scoreB);
+  if (!Number.isInteger(scoreA) || !Number.isInteger(scoreB) || scoreA < 0 || scoreB < 0) throw new Error("INVALID_SCORE");
+  return { scoreA, scoreB };
+}
+
+async function commitTournamentWorkspace(
+  request: Request,
+  env: Env,
+  accessResult: { user: CurrentUser; tournament: TournamentRow },
+): Promise<Response> {
+  const body: WorkspaceCommitBody = await readJson<WorkspaceCommitBody>(request).catch(() => ({}));
+  const baseRevision = Number(body.baseRevision);
+  if (!Number.isInteger(baseRevision) || baseRevision < 0) {
+    return json({ ok: false, code: "WORKSPACE_BASE_REVISION_REQUIRED" }, { status: 400 });
+  }
+  if (baseRevision !== accessResult.tournament.workingRevision) {
+    return json({
+      ok: false,
+      code: "WORKSPACE_REVISION_CONFLICT",
+      serverRevision: accessResult.tournament.workingRevision,
+      impact: "El torneo cambió en otro dispositivo. Actualizá el workspace antes de guardar para no pisar cambios.",
+    }, { status: 409 });
+  }
+
+  const rawOperations = Array.isArray(body.operations) ? body.operations.slice(0, 150) : [];
+  const byMatch = new Map<string, WorkspaceStandardResultOperation>();
+  for (const operation of rawOperations) {
+    if (!operation || operation.kind !== "standard_result" || typeof operation.matchId !== "string" || !operation.matchId) {
+      return json({ ok: false, code: "INVALID_WORKSPACE_OPERATION" }, { status: 400 });
+    }
+    byMatch.set(operation.matchId, operation);
+  }
+  const operations = [...byMatch.values()];
+  if (!operations.length) {
+    return json({ ok: true, ...(await tournamentWorkspaceBundle(env, accessResult.tournament)) });
+  }
+
+  const matchIds = operations.map((operation) => operation.matchId);
+  const metadata: WorkspaceMatchMeta[] = [];
+  for (let index = 0; index < matchIds.length; index += 50) {
+    const chunk = matchIds.slice(index, index + 50);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = await env.HUAU_DB.prepare(
+      `SELECT m.id as matchId,ce.id as encounterId,tc.id as categoryId,tc.tournament_id as tournamentId,
+              ce.stage,m.best_of as bestOf,CASE WHEN mr.match_id IS NULL THEN 0 ELSE 1 END as hadResult,
+              c.id as competitionId,tc.name as categoryName,tc.entry_type as entryType,
+              tc.competition_gender as competitionGender,tc.min_age as minAge,tc.max_age as maxAge,
+              tc.max_entries as maxEntries,tc.registration_status as registrationStatus,tc.price_scope as priceScope,
+              tc.price_minor as priceMinor,tc.currency,tc.scheduled_date as scheduledDate,tc.sort_order as sortOrder,
+              tc.structure_locked as structureLocked,tc.format_version_id as formatVersionId
+         FROM matches m
+         JOIN competition_encounters ce ON ce.id=m.encounter_id
+         JOIN competitions c ON c.id=ce.competition_id
+         JOIN tournament_categories tc ON tc.id=c.category_id
+         LEFT JOIN match_results mr ON mr.match_id=m.id
+        WHERE tc.tournament_id=? AND tc.entry_type<>'team' AND m.id IN (${placeholders})`,
+    ).bind(accessResult.tournament.id, ...chunk).all<WorkspaceMatchMeta>();
+    metadata.push(...rows.results);
+  }
+  if (metadata.length !== matchIds.length) {
+    return json({ ok: false, code: "WORKSPACE_MATCH_NOT_FOUND" }, { status: 404 });
+  }
+
+  const metaByMatch = new Map(metadata.map((row) => [row.matchId, row] as const));
+  const operationsByCategory = new Map<string, WorkspaceStandardResultOperation[]>();
+  for (const operation of operations) {
+    const meta = metaByMatch.get(operation.matchId);
+    if (!meta) return json({ ok: false, code: "WORKSPACE_MATCH_NOT_FOUND" }, { status: 404 });
+    const list = operationsByCategory.get(meta.categoryId) ?? [];
+    list.push(operation);
+    operationsByCategory.set(meta.categoryId, list);
+  }
+
+  const originalByCategory = new Map<string, Competition>();
+  const workingByCategory = new Map<string, Competition>();
+  const categoryById = new Map<string, CategoryRow>();
+  const resetFinalPhase = new Set<string>();
+  const snapshotBeforeCorrection = new Set<string>();
+
+  for (const [categoryId, categoryOperations] of operationsByCategory) {
+    const firstMeta = metaByMatch.get(categoryOperations[0]!.matchId)!;
+    const category = workspaceCategoryFromMatch(firstMeta);
+    categoryById.set(categoryId, category);
+    const serverCompetition = await loadCompetition(env, categoryId);
+    if (!serverCompetition) return json({ ok: false, code: "COMPETITION_NOT_FOUND" }, { status: 404 });
+
+    const correctingGroupWithFinal = categoryOperations.some((operation) => {
+      const row = metaByMatch.get(operation.matchId)!;
+      return row.stage === "group" && row.hadResult === 1 && serverCompetition.finalGenerated;
+    });
+    if (correctingGroupWithFinal) {
+      if (categoryOperations.some((operation) => metaByMatch.get(operation.matchId)!.stage !== "group")) {
+        return json({
+          ok: false,
+          code: "WORKSPACE_MIXED_FINAL_CORRECTION",
+          impact: "Guardá primero la corrección de grupos y después cargá resultados de la fase final regenerada.",
+        }, { status: 409 });
+      }
+      const finishedFinal = serverCompetition.encounters.some(
+        (encounter) => encounter.stage !== "group" && encounter.status === "finished",
+      );
+      if (finishedFinal && !body.confirmImpact) {
+        return json({
+          ok: false,
+          code: "STRUCTURE_CHANGE_CONFIRM_REQUIRED",
+          impact: "Corregir estos resultados cambia los clasificados y una llave ya iniciada. HUAU guardará un snapshot y regenerará la fase final.",
+        }, { status: 409 });
+      }
+      resetFinalPhase.add(categoryId);
+    }
+    if (categoryOperations.some((operation) => metaByMatch.get(operation.matchId)!.hadResult === 1)) {
+      snapshotBeforeCorrection.add(categoryId);
+    }
+
+    const baseCompetition: Competition = resetFinalPhase.has(categoryId)
+      ? {
+          ...serverCompetition,
+          encounters: serverCompetition.encounters.filter((encounter) => encounter.stage === "group"),
+          finalGenerated: false,
+        }
+      : serverCompetition;
+    originalByCategory.set(categoryId, baseCompetition);
+
+    let working = baseCompetition;
+    try {
+      for (const operation of categoryOperations) {
+        const row = metaByMatch.get(operation.matchId)!;
+        working = withEncounterResult(working, row.encounterId, workspaceResultInput(operation, row.bestOf));
+      }
+    } catch (error) {
+      return json({ ok: false, code: error instanceof Error ? error.message : "INVALID_RESULT" }, { status: 400 });
+    }
+    workingByCategory.set(categoryId, working);
+  }
+
+  // All result validation happens before the first state-changing write.
+  for (const categoryId of snapshotBeforeCorrection) {
+    const category = categoryById.get(categoryId)!;
+    await snapshotCategory(
+      env,
+      accessResult.tournament,
+      category,
+      accessResult.user.id,
+      "Before local workspace result correction",
+    );
+  }
+
+  const stamp = unixNow();
+  const statements: D1PreparedStatement[] = [];
+
+  for (const categoryId of resetFinalPhase) {
+    const firstOperation = operationsByCategory.get(categoryId)![0]!;
+    const meta = metaByMatch.get(firstOperation.matchId)!;
+    statements.push(
+      env.HUAU_DB.prepare(`DELETE FROM schedule_items WHERE category_id=? AND stage!='group'`).bind(categoryId),
+      env.HUAU_DB.prepare(`DELETE FROM competition_encounters WHERE competition_id=? AND stage!='group'`).bind(meta.competitionId),
+      env.HUAU_DB.prepare(
+        `UPDATE competitions SET status='group_stage',updated_at=?,structure_revision=structure_revision+1 WHERE id=?`,
+      ).bind(stamp, meta.competitionId),
+    );
+  }
+
+  for (const [categoryId, working] of workingByCategory) {
+    const before = originalByCategory.get(categoryId)!;
+    for (const encounter of working.encounters) {
+      const previous = before.encounters.find((candidate) => candidate.id === encounter.id);
+      if (!previous) continue;
+      const changed =
+        previous.entryA?.id !== encounter.entryA?.id ||
+        previous.entryB?.id !== encounter.entryB?.id ||
+        previous.status !== encounter.status ||
+        previous.winnerEntryId !== encounter.winnerEntryId;
+      if (!changed) continue;
+      statements.push(
+        env.HUAU_DB.prepare(
+          `UPDATE competition_encounters
+              SET entry_a_id=?,entry_b_id=?,status=?,winner_entry_id=?,updated_at=?,version=version+1
+            WHERE id=?`,
+        ).bind(
+          encounter.entryA?.id ?? null,
+          encounter.entryB?.id ?? null,
+          encounter.status,
+          encounter.winnerEntryId,
+          stamp,
+          encounter.id,
+        ),
+        env.HUAU_DB.prepare(
+          `UPDATE matches
+              SET side_a_label=?,side_b_label=?,
+                  status=CASE WHEN ? IN ('finished','bye','skipped') THEN 'finished' WHEN ?='ready' THEN 'ready' ELSE status END,
+                  updated_at=?,version=version+1
+            WHERE encounter_id=?`,
+        ).bind(
+          encounter.entryA?.name ?? null,
+          encounter.entryB?.name ?? null,
+          encounter.status,
+          encounter.status,
+          stamp,
+          encounter.id,
+        ),
+      );
+    }
+
+    for (const operation of operationsByCategory.get(categoryId) ?? []) {
+      const meta = metaByMatch.get(operation.matchId)!;
+      const target = working.encounters.find((encounter) => encounter.id === meta.encounterId);
+      if (!target || !target.winnerEntryId) {
+        return json({ ok: false, code: "ENCOUNTER_NOT_READY" }, { status: 409 });
+      }
+      const winnerSide = target.winnerEntryId === target.entryA?.id ? "A" : "B";
+      statements.push(
+        env.HUAU_DB.prepare(
+          `UPDATE matches
+              SET status='finished',winner_side=?,side_a_label=?,side_b_label=?,updated_at=?,version=version+1
+            WHERE id=?`,
+        ).bind(
+          winnerSide,
+          target.entryA?.name ?? null,
+          target.entryB?.name ?? null,
+          stamp,
+          operation.matchId,
+        ),
+        env.HUAU_DB.prepare(
+          `INSERT INTO match_results
+           (match_id,score_a,score_b,winner_side,result_status,entered_by_user_id,entered_at,corrected_at,updated_at)
+           VALUES (?,?,?,?, 'final',?,?,NULL,?)
+           ON CONFLICT(match_id) DO UPDATE SET
+             score_a=excluded.score_a,score_b=excluded.score_b,winner_side=excluded.winner_side,
+             result_status='corrected',entered_by_user_id=excluded.entered_by_user_id,
+             corrected_at=excluded.entered_at,updated_at=excluded.updated_at`,
+        ).bind(
+          operation.matchId,
+          target.scoreA,
+          target.scoreB,
+          winnerSide,
+          accessResult.user.id,
+          stamp,
+          stamp,
+        ),
+        env.HUAU_DB.prepare(`DELETE FROM match_sets WHERE match_id=?`).bind(operation.matchId),
+        env.HUAU_DB.prepare(
+          `UPDATE schedule_items SET status='completed',updated_at=?,version=version+1 WHERE match_id=?`,
+        ).bind(stamp, operation.matchId),
+      );
+      target.sets.forEach((set, index) => statements.push(
+        env.HUAU_DB.prepare(
+          `INSERT INTO match_sets (id,match_id,set_number,score_a,score_b,winner_side) VALUES (?,?,?,?,?,?)`,
+        ).bind(
+          uuid(),
+          operation.matchId,
+          index + 1,
+          set.scoreA,
+          set.scoreB,
+          set.scoreA > set.scoreB ? "A" : "B",
+        ),
+      ));
+    }
+
+    if (
+      working.finalGenerated &&
+      working.encounters.every(
+        (encounter) =>
+          encounter.status === "finished" ||
+          encounter.status === "bye" ||
+          encounter.status === "skipped",
+      )
+    ) {
+      statements.push(
+        env.HUAU_DB.prepare(`UPDATE competitions SET status='completed',updated_at=? WHERE id=?`)
+          .bind(stamp, working.id),
+      );
+    }
+  }
+
+  statements.push(
+    env.HUAU_DB.prepare(`UPDATE tournaments SET working_revision=working_revision+1,updated_at=? WHERE id=?`)
+      .bind(stamp, accessResult.tournament.id),
+  );
+  await runBatches(env.HUAU_DB, statements);
+
+  let currentTournament: TournamentRow = {
+    ...accessResult.tournament,
+    workingRevision: accessResult.tournament.workingRevision + 1,
+  };
+
+  for (const [categoryId, working] of workingByCategory) {
+    const groups = working.encounters.filter((encounter) => encounter.stage === "group");
+    const shouldGenerateFinal =
+      groups.length > 0 &&
+      !working.finalGenerated &&
+      groups.every((encounter) => encounter.status === "finished");
+    if (!shouldGenerateFinal) continue;
+    const category = categoryById.get(categoryId)!;
+    await createFinalPhaseForCategory(
+      env,
+      { user: accessResult.user, tournament: currentTournament, category },
+      true,
+    );
+    if (working.format.playoffMode !== "league_only") {
+      currentTournament = {
+        ...currentTournament,
+        workingRevision: currentTournament.workingRevision + 1,
+      };
+    }
+  }
+
+  await env.HUAU_DB.prepare(
+    `UPDATE tournaments
+        SET status=CASE
+          WHEN NOT EXISTS (
+            SELECT 1 FROM competitions c
+            JOIN tournament_categories tc ON tc.id=c.category_id
+            WHERE tc.tournament_id=? AND c.status!='completed'
+          ) AND EXISTS (
+            SELECT 1 FROM competitions c
+            JOIN tournament_categories tc ON tc.id=c.category_id
+            WHERE tc.tournament_id=?
+          )
+          THEN 'completed' ELSE status END,
+            updated_at=?
+      WHERE id=?`,
+  ).bind(
+    accessResult.tournament.id,
+    accessResult.tournament.id,
+    stamp,
+    accessResult.tournament.id,
+  ).run();
+
+  await audit(
+    env,
+    accessResult.tournament,
+    accessResult.user.id,
+    "workspace.commit",
+    `Saved ${operations.length} local workspace result change(s)`,
+    "tournament",
+    accessResult.tournament.id,
+    { resultCount: operations.length, matchIds },
+  );
+
+  const refreshed = await reloadTournamentRow(env, accessResult.tournament.id);
+  if (!refreshed) return json({ ok: false, code: "TOURNAMENT_NOT_FOUND" }, { status: 404 });
+  return json({ ok: true, ...(await tournamentWorkspaceBundle(env, refreshed)) });
+}
 
 async function lightSettingsForTournament(env: Env, tournamentId: string): Promise<TournamentSettingsRow> {
   const row = await env.HUAU_DB.prepare(
@@ -2513,6 +2967,22 @@ export async function handleTournamentAdminApi(
     return json({ ok: true, workingRevision: accessResult.tournament.workingRevision });
   }
 
+
+  const workspaceBootstrapRoute = url.pathname.match(/^\/api\/admin\/tournaments\/([^/]+)\/workspace$/);
+  if (workspaceBootstrapRoute && request.method === "GET") {
+    const tournamentId = decodeURIComponent(workspaceBootstrapRoute[1]!);
+    const accessResult = await tournamentForAccess(tournamentId, request, env, access);
+    if (accessResult instanceof Response) return accessResult;
+    return json({ ok: true, ...(await tournamentWorkspaceBundle(env, accessResult.tournament)) });
+  }
+
+  const workspaceCommitRoute = url.pathname.match(/^\/api\/admin\/tournaments\/([^/]+)\/workspace\/commit$/);
+  if (workspaceCommitRoute && request.method === "POST") {
+    const tournamentId = decodeURIComponent(workspaceCommitRoute[1]!);
+    const accessResult = await tournamentForAccess(tournamentId, request, env, access);
+    if (accessResult instanceof Response) return accessResult;
+    return commitTournamentWorkspace(request, env, accessResult);
+  }
 
   const workspaceRoute = url.pathname.match(/^\/api\/admin\/tournaments\/([^/]+)\/workspace\/(core|participants|standard|schedule|recovery)$/);
   if (workspaceRoute && request.method === "GET") {

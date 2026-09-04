@@ -1289,3 +1289,42 @@ textarea { resize:vertical; }
     grid-template-columns:1fr;
   }
 }
+
+/* phase9-local-workspace */
+.tpw-workspace-bar {
+  position: sticky;
+  top: 78px;
+  z-index: 16;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin: 0 0 16px;
+  padding: 13px 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(13,13,13,.94);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 12px 32px rgba(0,0,0,.28);
+}
+.tpw-workspace-bar.dirty { border-color: #575751; }
+.tpw-workspace-bar.stale { border-color: #8a6e3a; }
+.tpw-workspace-state { display: grid; gap: 4px; min-width: 0; }
+.tpw-workspace-state .eyebrow { margin: 0; font-size: 9px; }
+.tpw-workspace-state strong { font-size: 13px; }
+.tpw-workspace-state small { color: var(--muted); line-height: 1.35; }
+.tpw-workspace-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+@media (max-width: 760px) {
+  .tpw-workspace-bar {
+    top: 72px;
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .tpw-workspace-actions { justify-content: flex-start; }
+}

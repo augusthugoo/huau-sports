@@ -205,7 +205,7 @@ export function MyTournamentPayments({ locale }: { locale: Locale }) {
   </section>;
 }
 
-export function TournamentPaymentsAdmin({ tournamentId, locale }: { tournamentId: string; locale: Locale }) {
+export function TournamentPaymentsAdmin({ tournamentId, locale, manualRefreshOnly = false }: { tournamentId: string; locale: Locale; manualRefreshOnly?: boolean }) {
   const [data, setData] = useState<AdminPayload | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -217,7 +217,7 @@ export function TournamentPaymentsAdmin({ tournamentId, locale }: { tournamentId
       setData(await api<AdminPayload>(`/api/admin/tournaments/${tournamentId}/payments`)); setError("");
     } catch (e) { setError(e instanceof Error ? e.message : "PAYMENTS_ERROR"); }
   }, [tournamentId]);
-  useEffect(() => { void load(true); }, [load]);
+  useEffect(() => { if (!manualRefreshOnly) void load(true); }, [load, manualRefreshOnly]);
 
   const refreshTimer = useRef<number | null>(null);
   const scheduleRefresh = useCallback(() => {
@@ -316,7 +316,7 @@ export function TournamentPaymentsAdmin({ tournamentId, locale }: { tournamentId
     review: data.orders.filter((o) => o.status === "pending_review"), pending: data.orders.filter((o) => ["draft", "awaiting_payment"].includes(o.status)), settled: data.orders.filter((o) => ["paid", "partially_refunded", "refunded"].includes(o.status)),
   } : { review: [], pending: [], settled: [] }, [data]);
 
-  if (!data) return <section className="panel"><h2>{tr(locale, "Pagos", "Payments")}</h2>{error ? <div className="error-box">{error}</div> : <p>{tr(locale, "Cargando…", "Loading…")}</p>}</section>;
+  if (!data) return <section className="panel"><h2>{tr(locale, "Pagos", "Payments")}</h2>{error ? <div className="error-box">{error}</div> : manualRefreshOnly ? <><p>{tr(locale, "Los cobros se cargan bajo demanda para no consultar D1 al navegar.", "Payments load on demand so tab navigation does not query D1.")}</p><button className="light small" disabled={busy !== ""} onClick={() => void load(false)}>{tr(locale, "Cargar pagos", "Load payments")}</button></> : <p>{tr(locale, "Cargando…", "Loading…")}</p>}</section>;
   const settings = data.settings;
   const renderOrder = (order: PaymentOrder) => {
     const submitted = order.attempts.find((a) => a.status === "submitted");

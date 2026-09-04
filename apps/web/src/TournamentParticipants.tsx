@@ -79,6 +79,7 @@ type Props = {
   playerCategories: Assignment[];
   onCompetitionChanged: () => Promise<void>;
   openPayments: () => void;
+  manualRefreshOnly?: boolean;
 };
 
 class ParticipantApiError extends Error {
@@ -145,7 +146,7 @@ function groupingLabel(registration: AdminRegistration, locale: Locale) {
   return registration.entryName ? `${registration.entryName} · ${registration.groupingState}` : tr(locale, "Libre · sin equipo", "Free · no team");
 }
 
-export function TournamentParticipantsAdmin({ tournamentId, locale, players, categories, playerCategories, onCompetitionChanged, openPayments }: Props) {
+export function TournamentParticipantsAdmin({ tournamentId, locale, players, categories, playerCategories, onCompetitionChanged, openPayments, manualRefreshOnly = false }: Props) {
   const [registrations, setRegistrations] = useState<AdminRegistration[]>([]);
   const [orders, setOrders] = useState<PaymentOrder[]>([]);
   const [busy, setBusy] = useState("");
@@ -169,7 +170,7 @@ export function TournamentParticipantsAdmin({ tournamentId, locale, players, cat
       setError(e instanceof Error ? e.message : "PARTICIPANTS_LOAD_FAILED");
     }
   }, [tournamentId]);
-  useEffect(() => { void load(false); }, [load]);
+  useEffect(() => { if (!manualRefreshOnly) void load(false); }, [load, manualRefreshOnly]);
 
   const refreshTimer = useRef<number | null>(null);
   const competitionRefreshPending = useRef(false);
@@ -313,7 +314,7 @@ export function TournamentParticipantsAdmin({ tournamentId, locale, players, cat
 
   return <section className="participant-admin">
     <article className="panel participant-admin-hero">
-      <div className="participant-admin-title"><div><div className="eyebrow">TOURNAMENT PEOPLE</div><h2>{tr(locale, "Participantes", "Participants")}</h2><p className="muted">{tr(locale, "Una sola vista por persona. Inscripción, armado competitivo y pago siguen siendo estados separados, pero ya no tenés que perseguir al jugador por tres pestañas.", "One person-centric view. Registration, competition setup and payment remain separate states without making you chase a player across three tabs.")}</p></div><div className="form-actions"><button className="ghost small" disabled={!publicUrl} onClick={() => { if (publicUrl) void navigator.clipboard.writeText(`${window.location.origin}${publicUrl}`); }}>{tr(locale, "Copiar link de inscripción", "Copy registration link")}</button><button className="ghost small" onClick={openPayments}>{tr(locale, "Abrir bandeja de Pagos", "Open Payments queue")}</button><button className="light small" onClick={() => setShowCreate((value) => !value)}>{showCreate ? tr(locale, "Cerrar alta", "Close form") : tr(locale, "+ Agregar participante", "+ Add participant")}</button></div></div>
+      <div className="participant-admin-title"><div><div className="eyebrow">TOURNAMENT PEOPLE</div><h2>{tr(locale, "Participantes", "Participants")}</h2><p className="muted">{tr(locale, "Una sola vista por persona. Inscripción, armado competitivo y pago siguen siendo estados separados, pero ya no tenés que perseguir al jugador por tres pestañas.", "One person-centric view. Registration, competition setup and payment remain separate states without making you chase a player across three tabs.")}</p></div><div className="form-actions">{manualRefreshOnly && <button className="ghost small" disabled={busy !== ""} onClick={() => void load(false)}>{tr(locale, "Actualizar inscripciones", "Refresh registrations")}</button>}<button className="ghost small" disabled={!publicUrl} onClick={() => { if (publicUrl) void navigator.clipboard.writeText(`${window.location.origin}${publicUrl}`); }}>{tr(locale, "Copiar link de inscripción", "Copy registration link")}</button><button className="ghost small" onClick={openPayments}>{tr(locale, "Abrir bandeja de Pagos", "Open Payments queue")}</button><button className="light small" onClick={() => setShowCreate((value) => !value)}>{showCreate ? tr(locale, "Cerrar alta", "Close form") : tr(locale, "+ Agregar participante", "+ Add participant")}</button></div></div>
       {showCreate && <form className="participant-create-form" onSubmit={createManual}>
         <div className="participant-form-grid four"><ParticipantField name="displayName" label={tr(locale, "Nombre y apellido", "Full name")} required/><ParticipantField name="club" label="Club"/><ParticipantField name="contact" label={tr(locale, "Contacto", "Contact")}/><ParticipantSelect name="sportGender" label={tr(locale, "Género deportivo", "Sport gender")} value="unspecified" options={[["unspecified",tr(locale,"Sin especificar","Unspecified")],["male",tr(locale,"Masculino","Male")],["female",tr(locale,"Femenino","Female")]]}/></div>
         <div className="participant-form-grid three"><ParticipantField name="duprSingles" label="DUPR Singles" type="number" step="0.01"/><ParticipantField name="duprDoubles" label="DUPR Doubles" type="number" step="0.01"/><ParticipantField name="notes" label={tr(locale,"Notas","Notes")}/></div>

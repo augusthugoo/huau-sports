@@ -1,12 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import { LEGACY_CATEGORY_PRESETS, buildLegacyFormatOptions } from "@huau/core";
-import type { LegacyFormatOption, LegacySeedingMethod } from "@huau/core";
+import {
+  LEGACY_CATEGORY_PRESETS,
+  buildLegacyFormatOptions,
+  calculateGroupStandings,
+  crossGroupStatsForEntry,
+  generateFinalPhase,
+  withEncounterResult,
+} from "@huau/core";
+import type {
+  Competition as CoreCompetition,
+  LegacyFormatOption,
+  LegacySeedingMethod,
+} from "@huau/core";
 import type { Locale } from "./i18n";
 import { TeamCompetitionPanel, TeamResultsPanel, TeamTVPanel, TeamTournamentPanel } from "./TeamTournamentPanel";
 import { TournamentPaymentsAdmin } from "./TournamentPayments";
 import { TournamentParticipantsAdmin } from "./TournamentParticipants";
 import { FormatExplanationPanel, explanationForPersistedFormat } from "./FormatExplanationPanel";
+import { clearTournamentWorkspaceDraft, loadTournamentWorkspaceDraft, saveTournamentWorkspaceDraft } from "./TournamentWorkspaceStorage";
 
 type Props = { organizationId: string; tournamentId: string; locale: Locale; go: (path: string) => void };
 type Tab = "overview"|"participants"|"categories"|"payments"|"teams"|"format"|"draw"|"competition"|"schedule"|"results"|"tv"|"settings"|"recovery";
@@ -82,104 +94,729 @@ async function withImpactMethod<T>(locale:Locale,path:string,method:"PUT"|"DELET
   }
 }
 
-export function TournamentParityWorkspace({organizationId,tournamentId,locale,go}:Props){
-  const [detail,setDetail]=useState<Detail|null>(null);const [tab,setTab]=useState<Tab>("overview");const [busy,setBusy]=useState(false);const [error,setError]=useState("");
-  const refreshTimer=useRef<number|null>(null);
-  const fullRevision=useRef<number|null>(null);
-  const participantsRevision=useRef<number|null>(null);
 
-  const loadCore=useCallback(async()=>{
-    const result=await request<{ok:true;tournament:Detail["tournament"];settings:Settings;categories:Category[];summary:WorkspaceSummary}>(`/api/admin/tournaments/${tournamentId}/core`);
-    setDetail(current=>({
-      tournament:result.tournament,
-      settings:result.settings,
-      summary:result.summary,
-      categories:result.categories,
-      entries:current?.entries??[],
-      players:current?.players??[],
-      playerCategories:current?.playerCategories??[],
-      groups:current?.groups??[],
-      matches:current?.matches??[],
-      schedule:current?.schedule??[],
-      standings:current?.standings??[],
-      crossGroup:current?.crossGroup??[],
-      drawSessions:current?.drawSessions??[],
-      snapshots:current?.snapshots??[],
+type StandardResultInput =
+  | { scoreA: number; scoreB: number }
+  | { sets: Array<{ scoreA: number; scoreB: number }> };
+
+type WorkspaceOperation = {
+  kind: "standard_result";
+  matchId: string;
+  result: StandardResultInput;
+};
+
+type WorkspaceBootstrap = {
+  ok: true;
+  baseRevision: number;
+  core: {
+    tournament: Detail["tournament"];
+    settings: Settings;
+    categories: Category[];
+    summary: WorkspaceSummary;
+  };
+  participants: {
+    workingRevision: number;
+    players: Player[];
+    playerCategories: Assignment[];
+  };
+  standard: {
+    workingRevision: number;
+    entries: Entry[];
+    groups: GroupRow[];
+    matches: Match[];
+    drawSessions: DrawSession[];
+    standings: Standing[];
+    crossGroup: CrossRow[];
+    categoryProgress: Array<
+      Pick<
+        Category,
+        "id" | "formatVersionId" | "configJson" | "competitionStatus" |
+        "groupMatchCount" | "finishedGroupMatchCount" | "finalMatchCount"
+      >
+    >;
+    competitions: CoreCompetition[];
+  };
+  schedule: {
+    workingRevision: number;
+    schedule: ScheduleRow[];
+  };
+  recovery: {
+    workingRevision: number;
+    snapshots: Snapshot[];
+  };
+};
+
+function detailFromWorkspace(bundle: WorkspaceBootstrap): Detail {
+  const progress = new Map(bundle.standard.categoryProgress.map((row) => [row.id, row] as const));
+  const categories = bundle.core.categories.map((category) => ({
+    ...category,
+    ...(progress.get(category.id) ?? {}),
+  }));
+  return {
+    tournament: bundle.core.tournament,
+    settings: bundle.core.settings,
+    summary: bundle.core.summary,
+    categories,
+    entries: bundle.standard.entries,
+    players: bundle.participants.players,
+    playerCategories: bundle.participants.playerCategories,
+    groups: bundle.standard.groups,
+    matches: bundle.standard.matches,
+    schedule: bundle.schedule.schedule,
+    standings: bundle.standard.standings,
+    crossGroup: bundle.standard.crossGroup,
+    drawSessions: bundle.standard.drawSessions,
+    snapshots: bundle.recovery.snapshots,
+  };
+}
+
+function rebuildStandardViews(
+  detail: Detail,
+  competition: CoreCompetition,
+  targetMatchId: string,
+): Detail {
+  const category = detail.categories.find((candidate) => candidate.id === competition.categoryId);
+  const previousByEncounter = new Map(
+    detail.matches
+      .filter((match) => match.categoryId === competition.categoryId)
+      .map((match) => [match.encounterId, match] as const),
+  );
+
+  const categoryMatches: Match[] = competition.encounters.map((encounter) => {
+    const previous = previousByEncounter.get(encounter.id);
+    const sets = encounter.sets.map((set, index) => ({
+      setNumber: index + 1,
+      scoreA: set.scoreA,
+      scoreB: set.scoreB,
+      winnerSide: set.scoreA > set.scoreB ? "A" : "B",
     }));
+    if (previous) {
+      return {
+        ...previous,
+        entryAId: encounter.entryA?.id ?? null,
+        sideA: encounter.entryA?.name ?? null,
+        entryBId: encounter.entryB?.id ?? null,
+        sideB: encounter.entryB?.name ?? null,
+        status: encounter.status,
+        winnerEntryId: encounter.winnerEntryId,
+        scoreA: encounter.scoreA,
+        scoreB: encounter.scoreB,
+        resultStatus:
+          previous.matchId === targetMatchId
+            ? previous.resultStatus ? "corrected" : "final"
+            : previous.resultStatus,
+        sets,
+      };
+    }
+    return {
+      encounterId: encounter.id,
+      categoryId: competition.categoryId,
+      categoryName: category?.name ?? "",
+      stage: encounter.stage,
+      groupId: encounter.groupId,
+      groupName: encounter.groupName,
+      roundLabel: encounter.roundLabel,
+      roundNumber: encounter.roundNumber,
+      legNumber: encounter.legNumber,
+      entryAId: encounter.entryA?.id ?? null,
+      sideA: encounter.entryA?.name ?? null,
+      entryBId: encounter.entryB?.id ?? null,
+      sideB: encounter.entryB?.name ?? null,
+      status: encounter.status,
+      winnerEntryId: encounter.winnerEntryId,
+      matchId: null,
+      bestOf: encounter.bestOf,
+      pointTarget: encounter.pointTarget,
+      scoreA: encounter.scoreA,
+      scoreB: encounter.scoreB,
+      resultStatus: null,
+      scheduleStart: null,
+      scheduleEnd: null,
+      courtLabel: null,
+      sets,
+    };
+  });
+
+  const matches = [
+    ...detail.matches.filter((match) => match.categoryId !== competition.categoryId),
+    ...categoryMatches,
+  ];
+  const matchById = new Map(
+    matches.filter((match) => match.matchId).map((match) => [match.matchId!, match] as const),
+  );
+  const schedule = detail.schedule.map((row) => {
+    if (row.categoryId !== competition.categoryId || !row.matchId) return row;
+    const match = matchById.get(row.matchId);
+    if (!match) return row;
+    return {
+      ...row,
+      sideA: match.sideA,
+      sideB: match.sideB,
+      status: match.status === "finished" ? "completed" : row.status,
+    };
+  });
+
+  const standings: Standing[] = detail.standings.filter(
+    (row) => row.categoryId !== competition.categoryId,
+  );
+  const crossGroup: CrossRow[] = detail.crossGroup.filter(
+    (row) => row.categoryId !== competition.categoryId,
+  );
+
+  for (const group of competition.groups) {
+    const rows = calculateGroupStandings(competition, group.id);
+    standings.push({
+      categoryId: competition.categoryId,
+      groupId: group.id,
+      groupName: group.name,
+      rows: rows.map((standing, index) => ({
+        position: index + 1,
+        entryId: standing.entry.id,
+        name: standing.entry.name,
+        played: standing.played,
+        wins: standing.wins,
+        losses: standing.losses,
+        scored: standing.scored,
+        conceded: standing.conceded,
+        diff: standing.diff,
+        rating: standing.entry.rating,
+      })),
+    });
+
+    rows.forEach((standing, index) => {
+      const stats = crossGroupStatsForEntry(competition, group.id, standing.entry.id);
+      if (!stats) return;
+      crossGroup.push({
+        categoryId: competition.categoryId,
+        groupId: group.id,
+        groupName: group.name,
+        position: index + 1,
+        entryId: standing.entry.id,
+        name: standing.entry.name,
+        played: stats.played,
+        wins: stats.wins,
+        winRate: stats.winRate,
+        diff: stats.diff,
+        diffPerMatch: stats.diffPerMatch,
+        scored: stats.scored,
+        scoredPerMatch: stats.scoredPerMatch,
+        method: stats.method,
+        ignoredEncounterIds: stats.ignoredEncounterIds,
+      });
+    });
+  }
+
+  const groupMatchCount = competition.encounters.filter(
+    (encounter) => encounter.stage === "group",
+  ).length;
+  const finishedGroupMatchCount = competition.encounters.filter(
+    (encounter) => encounter.stage === "group" && encounter.status === "finished",
+  ).length;
+  const finalMatchCount = competition.encounters.filter(
+    (encounter) => encounter.stage !== "group",
+  ).length;
+
+  const categories = detail.categories.map((candidate) =>
+    candidate.id === competition.categoryId
+      ? { ...candidate, groupMatchCount, finishedGroupMatchCount, finalMatchCount }
+      : candidate,
+  );
+
+  return {
+    ...detail,
+    categories,
+    matches,
+    schedule,
+    standings,
+    crossGroup,
+    summary: {
+      ...detail.summary,
+      completedStandardMatches: matches.filter((match) => match.status === "finished").length,
+    },
+  };
+}
+
+export function TournamentParityWorkspace({organizationId,tournamentId,locale,go}:Props){
+  const [detail,setDetail]=useState<Detail|null>(null);
+  const [pendingOperations,setPendingOperations]=useState<WorkspaceOperation[]>([]);
+  const [baseRevision,setBaseRevision]=useState(0);
+  const [tab,setTab]=useState<Tab>("overview");
+  const [busy,setBusy]=useState(false);
+  const [error,setError]=useState("");
+  const [notice,setNotice]=useState("");
+  const [staleDraft,setStaleDraft]=useState(false);
+
+  const detailRef=useRef<Detail|null>(null);
+  const competitionsRef=useRef<CoreCompetition[]>([]);
+  const operationsRef=useRef<WorkspaceOperation[]>([]);
+  const baseRevisionRef=useRef(0);
+  const cleanRef=useRef<{detail:Detail;competitions:CoreCompetition[];baseRevision:number}|null>(null);
+
+  const installState=useCallback((
+    nextDetail:Detail,
+    nextCompetitions:CoreCompetition[],
+    nextOperations:WorkspaceOperation[],
+    revision:number,
+  )=>{
+    detailRef.current=nextDetail;
+    competitionsRef.current=nextCompetitions;
+    operationsRef.current=nextOperations;
+    baseRevisionRef.current=revision;
+    setDetail(nextDetail);
+    setPendingOperations(nextOperations);
+    setBaseRevision(revision);
+  },[]);
+
+  const persistDraft=useCallback((
+    nextDetail:Detail,
+    nextCompetitions:CoreCompetition[],
+    nextOperations:WorkspaceOperation[],
+    revision:number,
+  )=>{
+    if(!nextOperations.length){
+      void clearTournamentWorkspaceDraft(tournamentId);
+      return;
+    }
+    void saveTournamentWorkspaceDraft({
+      schemaVersion:1,
+      tournamentId,
+      baseRevision:revision,
+      snapshot:{detail:nextDetail,competitions:nextCompetitions},
+      operations:nextOperations,
+      savedAt:Date.now(),
+    }).catch(()=>setError(text(
+      locale,
+      "No se pudo guardar el borrador local en este navegador.",
+      "The local browser draft could not be saved.",
+    )));
+  },[locale,tournamentId]);
+
+  const installServerBundle=useCallback(async(bundle:WorkspaceBootstrap,recoverDraft:boolean)=>{
+    const serverDetail=detailFromWorkspace(bundle);
+    cleanRef.current={
+      detail:serverDetail,
+      competitions:bundle.standard.competitions,
+      baseRevision:bundle.baseRevision,
+    };
+    setStaleDraft(false);
+
+    if(recoverDraft){
+      const draft=await loadTournamentWorkspaceDraft<Detail,CoreCompetition,WorkspaceOperation>(tournamentId).catch(()=>null);
+      if(draft?.operations.length){
+        if(draft.baseRevision===bundle.baseRevision){
+          installState(
+            draft.snapshot.detail,
+            draft.snapshot.competitions,
+            draft.operations,
+            draft.baseRevision,
+          );
+          setNotice(text(
+            locale,
+            `Recuperamos ${draft.operations.length} cambio(s) local(es) que todavía no se habían guardado.`,
+            `Recovered ${draft.operations.length} local change(s) that had not been saved yet.`,
+          ));
+          return;
+        }
+        setStaleDraft(true);
+        setNotice(text(
+          locale,
+          "Hay un borrador local de una revisión anterior. No se aplicó automáticamente para evitar pisar cambios del servidor.",
+          "There is a local draft from an older revision. It was not applied automatically to avoid overwriting server changes.",
+        ));
+      }
+    }else{
+      await clearTournamentWorkspaceDraft(tournamentId).catch(()=>undefined);
+    }
+
+    installState(
+      serverDetail,
+      bundle.standard.competitions,
+      [],
+      bundle.baseRevision,
+    );
+  },[installState,locale,tournamentId]);
+
+  const loadWorkspace=useCallback(async(recoverDraft=true)=>{
     setError("");
-    return result.tournament.workingRevision;
-  },[tournamentId]);
-
-  const loadParticipantsCore=useCallback(async(revision?:number)=>{
-    const result=await request<{ok:true;workingRevision:number;players:Player[];playerCategories:Assignment[]}>(`/api/admin/tournaments/${tournamentId}/participants-core`);
-    setDetail(current=>current?{...current,players:result.players,playerCategories:result.playerCategories,tournament:{...current.tournament,workingRevision:Math.max(current.tournament.workingRevision,result.workingRevision)}}:current);
-    participantsRevision.current=revision??result.workingRevision;
-    setError("");
-  },[tournamentId]);
-
-  const loadFull=useCallback(async(revision?:number)=>{
-    const result=await request<{ok:true}&Omit<Detail,"summary">>(`/api/admin/tournaments/${tournamentId}`);
-    setDetail(current=>({...result,summary:current?.summary??{playerCount:result.players.length,completedStandardMatches:result.matches.filter(match=>match.status==="finished").length,pairIssueCount:0}}));
-    fullRevision.current=revision??result.tournament.workingRevision;
-    participantsRevision.current=revision??result.tournament.workingRevision;
-    setError("");
-  },[tournamentId]);
-
-  const heavyTab=(target:Tab)=>target==="draw"||target==="competition"||target==="schedule"||target==="results"||target==="tv"||target==="recovery";
-  const participantTab=(target:Tab)=>target==="participants"||target==="categories";
-
-  const refreshForTab=useCallback(async(target:Tab,force=false)=>{
     try{
-      const revision=await loadCore();
-      if(participantTab(target)&&(force||participantsRevision.current!==revision))await loadParticipantsCore(revision);
-      if(heavyTab(target)&&(force||fullRevision.current!==revision))await loadFull(revision);
-    }catch(e){setError(e instanceof Error?e.message:"error");}
-  },[loadCore,loadFull,loadParticipantsCore]);
+      const bundle=await request<WorkspaceBootstrap>(
+        `/api/admin/tournaments/${tournamentId}/workspace`,
+      );
+      await installServerBundle(bundle,recoverDraft);
+    }catch(e){
+      setError(e instanceof Error?e.message:"WORKSPACE_LOAD_FAILED");
+    }
+  },[installServerBundle,tournamentId]);
 
-  const openTab=useCallback(async(target:Tab)=>{
-    await refreshForTab(target);
-    setTab(target);
-  },[refreshForTab]);
+  useEffect(()=>{void loadWorkspace(true);},[loadWorkspace]);
 
-  const scheduleRefresh=useCallback(()=>{
-    if(refreshTimer.current!==null)window.clearTimeout(refreshTimer.current);
-    refreshTimer.current=window.setTimeout(()=>{refreshTimer.current=null;void refreshForTab(tab,true);},220);
-  },[refreshForTab,tab]);
+  const stageStandardResult=useCallback(async(matchId:string,result:StandardResultInput)=>{
+    const currentDetail=detailRef.current;
+    const currentCompetitions=competitionsRef.current;
+    if(!currentDetail)return false;
 
-  useEffect(()=>{void refreshForTab("overview",true);return()=>{if(refreshTimer.current!==null)window.clearTimeout(refreshTimer.current);};},[refreshForTab]);
+    const match=currentDetail.matches.find(candidate=>candidate.matchId===matchId);
+    if(!match){
+      setError("MATCH_NOT_FOUND");
+      return false;
+    }
+    const competitionIndex=currentCompetitions.findIndex(
+      candidate=>candidate.categoryId===match.categoryId,
+    );
+    if(competitionIndex<0){
+      setError("COMPETITION_NOT_FOUND");
+      return false;
+    }
+
+    try{
+      const currentCompetition=currentCompetitions[competitionIndex]!;
+      const baseCompetition=
+        match.stage==="group" &&
+        match.status==="finished" &&
+        currentCompetition.finalGenerated
+          ?{
+              ...currentCompetition,
+              encounters:currentCompetition.encounters.filter(
+                encounter=>encounter.stage==="group",
+              ),
+              finalGenerated:false,
+            }
+          :currentCompetition;
+
+      let nextCompetition="sets" in result
+        ?withEncounterResult(baseCompetition,match.encounterId,{sets:result.sets})
+        :withEncounterResult(
+            baseCompetition,
+            match.encounterId,
+            {scoreA:result.scoreA,scoreB:result.scoreB},
+          );
+
+      const groupEncounters=nextCompetition.encounters.filter(
+        encounter=>encounter.stage==="group",
+      );
+      if(
+        groupEncounters.length>0 &&
+        !nextCompetition.finalGenerated &&
+        nextCompetition.format.playoffMode!=="league_only" &&
+        groupEncounters.every(encounter=>encounter.status==="finished")
+      ){
+        nextCompetition=generateFinalPhase(nextCompetition);
+      }
+
+      const nextCompetitions=currentCompetitions.map(
+        (candidate,index)=>index===competitionIndex?nextCompetition:candidate,
+      );
+      const nextDetail=rebuildStandardViews(currentDetail,nextCompetition,matchId);
+      const operation:WorkspaceOperation={kind:"standard_result",matchId,result};
+      const nextOperations=[
+        ...operationsRef.current.filter(
+          candidate=>!(candidate.kind==="standard_result"&&candidate.matchId===matchId),
+        ),
+        operation,
+      ];
+      installState(
+        nextDetail,
+        nextCompetitions,
+        nextOperations,
+        baseRevisionRef.current,
+      );
+      persistDraft(
+        nextDetail,
+        nextCompetitions,
+        nextOperations,
+        baseRevisionRef.current,
+      );
+      setError("");
+      setNotice(text(
+        locale,
+        "Resultado guardado localmente. Todavía no se escribió en D1.",
+        "Result saved locally. It has not been written to D1 yet.",
+      ));
+      return true;
+    }catch(e){
+      setError(e instanceof Error?e.message:"INVALID_RESULT");
+      return false;
+    }
+  },[installState,locale,persistDraft]);
+
+  const commitWorkspace=useCallback(async()=>{
+    const operations=operationsRef.current;
+    if(!operations.length)return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+
+    const send=(confirmImpact:boolean)=>request<WorkspaceBootstrap>(
+      `/api/admin/tournaments/${tournamentId}/workspace/commit`,
+      {
+        method:"POST",
+        body:JSON.stringify({
+          baseRevision:baseRevisionRef.current,
+          operations,
+          confirmImpact,
+        }),
+      },
+    );
+
+    try{
+      let bundle:WorkspaceBootstrap;
+      try{
+        bundle=await send(false);
+      }catch(e){
+        if(e instanceof ApiError&&e.code==="STRUCTURE_CHANGE_CONFIRM_REQUIRED"){
+          const proceed=window.confirm(
+            e.impact||
+            text(
+              locale,
+              "Guardar estos cambios obliga a regenerar parte de la competencia. ¿Continuar?",
+              "Saving these changes requires regenerating part of the competition. Continue?",
+            ),
+          );
+          if(!proceed)return;
+          bundle=await send(true);
+        }else{
+          throw e;
+        }
+      }
+      await installServerBundle(bundle,false);
+      setNotice(text(
+        locale,
+        `${operations.length} cambio(s) guardado(s) en el torneo.`,
+        `${operations.length} change(s) saved to the tournament.`,
+      ));
+    }catch(e){
+      if(e instanceof ApiError&&e.code==="WORKSPACE_REVISION_CONFLICT"){
+        setError(
+          e.impact||
+          text(
+            locale,
+            "El torneo cambió en otro dispositivo. No se guardó nada: recargá el workspace antes de continuar.",
+            "The tournament changed on another device. Nothing was saved: reload the workspace before continuing.",
+          ),
+        );
+      }else{
+        setError(e instanceof Error?e.message:"WORKSPACE_COMMIT_FAILED");
+      }
+    }finally{
+      setBusy(false);
+    }
+  },[installServerBundle,locale,tournamentId]);
+
+  const discardLocal=useCallback(()=>{
+    const clean=cleanRef.current;
+    if(!clean)return;
+    if(
+      operationsRef.current.length &&
+      !window.confirm(text(
+        locale,
+        "¿Descartar todos los cambios locales sin guardar?",
+        "Discard all unsaved local changes?",
+      ))
+    )return;
+    installState(clean.detail,clean.competitions,[],clean.baseRevision);
+    setStaleDraft(false);
+    setNotice(text(locale,"Cambios locales descartados.","Local changes discarded."));
+    void clearTournamentWorkspaceDraft(tournamentId);
+  },[installState,locale,tournamentId]);
+
+  const reloadServer=useCallback(async()=>{
+    if(operationsRef.current.length){
+      setError(text(
+        locale,
+        "Tenés cambios locales sin guardar. Guardalos o descartalos antes de recargar desde el servidor.",
+        "You have unsaved local changes. Save or discard them before reloading from the server.",
+      ));
+      return;
+    }
+    await loadWorkspace(false);
+  },[loadWorkspace,locale]);
 
   const act:ActionRunner=async(fn,afterMutation,refreshMode="background")=>{
-    setBusy(true);setError("");
+    if(operationsRef.current.length){
+      setError(text(
+        locale,
+        "Guardá o descartá los resultados locales antes de hacer una modificación estructural.",
+        "Save or discard local results before making a structural change.",
+      ));
+      return undefined;
+    }
+    setBusy(true);
+    setError("");
+    setNotice("");
     try{
       const result=await fn();
-      fullRevision.current=null;
-      participantsRevision.current=null;
       afterMutation?.(result);
-      if(refreshMode==="blocking")await refreshForTab(tab,true);
-      else if(refreshMode==="background")scheduleRefresh();
+      if(refreshMode!=="none")await loadWorkspace(false);
       return result;
-    }catch(e){setError(e instanceof Error?e.message:"error");return undefined;}
-    finally{setBusy(false);}
+    }catch(e){
+      setError(e instanceof Error?e.message:"error");
+      return undefined;
+    }finally{
+      setBusy(false);
+    }
   };
-  if(!detail)return <main className="tpw"><div className="tpw-loading">{error||"Loading…"}</div></main>;
-  const tabs:Array<[Tab,string]>=[["overview",text(locale,"Resumen","Overview")],["participants",text(locale,"Participantes","Participants")],["categories",text(locale,"Categorías","Categories")],["payments",text(locale,"Pagos","Payments")],["teams",text(locale,"Equipos","Teams")],["format",text(locale,"Formato","Format")],["draw",text(locale,"Sorteo","Draw")],["competition",text(locale,"Competencia","Competition")],["schedule",text(locale,"Cronograma","Schedule")],["results",text(locale,"Resultados","Results")],["tv","Modo TV"],["settings",text(locale,"Configuración","Settings")],["recovery",text(locale,"Recuperación","Recovery")]];
+
+  if(!detail){
+    return <main className="tpw"><div className="tpw-loading">{error||"Loading workspace…"}</div></main>;
+  }
+
+  const tabs:Array<[Tab,string]>=[
+    ["overview",text(locale,"Resumen","Overview")],
+    ["participants",text(locale,"Participantes","Participants")],
+    ["categories",text(locale,"Categorías","Categories")],
+    ["payments",text(locale,"Pagos","Payments")],
+    ["teams",text(locale,"Equipos","Teams")],
+    ["format",text(locale,"Formato","Format")],
+    ["draw",text(locale,"Sorteo","Draw")],
+    ["competition",text(locale,"Competencia","Competition")],
+    ["schedule",text(locale,"Cronograma","Schedule")],
+    ["results",text(locale,"Resultados","Results")],
+    ["tv","Modo TV"],
+    ["settings",text(locale,"Configuración","Settings")],
+    ["recovery",text(locale,"Recuperación","Recovery")],
+  ];
+  const pendingCount=pendingOperations.length;
+  const serverMutationTabs=new Set<Tab>([
+    "participants","categories","payments","teams","format","draw","settings","recovery",
+  ]);
+  const openTab=(target:Tab)=>{
+    if(pendingCount>0&&serverMutationTabs.has(target)){
+      setError(text(
+        locale,
+        "Guardá o descartá los resultados locales antes de abrir una sección que puede modificar el servidor.",
+        "Save or discard local results before opening a section that can modify the server.",
+      ));
+      return;
+    }
+    setTab(target);
+  };
+
   return <main className="tpw">
-    <button className="section-back" onClick={()=>go(`/admin/organizations/${organizationId}/tournaments`)}>← HUAU Tournament</button>
-    <header className="tpw-hero"><div><div className="eyebrow">{detail.tournament.sport.toUpperCase()} · {detail.tournament.status.replaceAll("_"," ")}</div><h1>{detail.tournament.name}</h1><p>{date(detail.tournament.startAt)} · {detail.tournament.courtCount} {text(locale,"canchas","courts")} · rev. {detail.tournament.workingRevision}</p></div><div className="tpw-badges"><span className="pill">{detail.tournament.structureLocked?text(locale,"ESTRUCTURA BLOQUEADA","STRUCTURE LOCKED"):text(locale,"EN PREPARACIÓN","IN SETUP")}</span><button className="light small" onClick={()=>void openTab("tv")}>Modo TV</button></div></header>
-    <nav className="tpw-tabs">{tabs.map(([key,label])=><button key={key} className={tab===key?"active":""} onClick={()=>void openTab(key)}>{label}</button>)}</nav>
+    <button
+      className="section-back"
+      onClick={()=>go(`/admin/organizations/${organizationId}/tournaments`)}
+    >
+      ← HUAU Tournament
+    </button>
+
+    <header className="tpw-hero">
+      <div>
+        <div className="eyebrow">
+          {detail.tournament.sport.toUpperCase()} · {detail.tournament.status.replaceAll("_"," ")}
+        </div>
+        <h1>{detail.tournament.name}</h1>
+        <p>
+          {date(detail.tournament.startAt)} · {detail.tournament.courtCount} {text(locale,"canchas","courts")} · rev. {baseRevision}
+          {pendingCount?` + ${pendingCount} local`:""}
+        </p>
+      </div>
+      <div className="tpw-badges">
+        <span className="pill">
+          {detail.tournament.structureLocked
+            ?text(locale,"ESTRUCTURA BLOQUEADA","STRUCTURE LOCKED")
+            :text(locale,"EN PREPARACIÓN","IN SETUP")}
+        </span>
+        <button className="light small" onClick={()=>openTab("tv")}>Modo TV</button>
+      </div>
+    </header>
+
+    <section className={`tpw-workspace-bar ${pendingCount?"dirty":"clean"} ${staleDraft?"stale":""}`}>
+      <div className="tpw-workspace-state">
+        <span className="eyebrow">LOCAL WORKSPACE</span>
+        <strong>
+          {staleDraft
+            ?text(locale,"Borrador anterior pendiente de resolver","Older local draft needs attention")
+            :pendingCount
+              ?text(locale,`${pendingCount} cambio(s) sin guardar`,`${pendingCount} unsaved change(s)`)
+              :text(locale,"Workspace sincronizado","Workspace synced")}
+        </strong>
+        <small>
+          {pendingCount
+            ?text(
+                locale,
+                "Resultados, tablas, cuadro y TV Standard usan esta copia local. D1 se actualiza recién con Guardar cambios.",
+                "Standard results, standings, bracket and TV use this local copy. D1 updates only with Save changes.",
+              )
+            :text(
+                locale,
+                "Sin polling Standard: si no hacés nada, Tournament queda quieto después de la carga inicial.",
+                "No Standard polling: if you do nothing, Tournament stays idle after the initial load.",
+              )}
+        </small>
+      </div>
+      <div className="tpw-workspace-actions">
+        {staleDraft&&
+          <button className="ghost small" disabled={busy} onClick={discardLocal}>
+            {text(locale,"Descartar borrador anterior","Discard older draft")}
+          </button>}
+        {pendingCount>0&&
+          <button className="ghost small" disabled={busy} onClick={discardLocal}>
+            {text(locale,"Descartar cambios","Discard changes")}
+          </button>}
+        {pendingCount>0&&
+          <button className="light small" disabled={busy} onClick={()=>void commitWorkspace()}>
+            {busy?"…":text(locale,"Guardar cambios","Save changes")}
+          </button>}
+      </div>
+    </section>
+
+    <nav className="tpw-tabs">
+      {tabs.map(([key,label])=>
+        <button
+          key={key}
+          className={tab===key?"active":""}
+          disabled={pendingCount>0&&serverMutationTabs.has(key)}
+          onClick={()=>openTab(key)}
+        >
+          {label}
+        </button>
+      )}
+    </nav>
+
     {error&&<div className="tpw-alert">{error}</div>}
-    {tab==="overview"&&<Overview detail={detail} locale={locale} setTab={target=>void openTab(target)}/>}
-    {tab==="participants"&&<TournamentParticipantsAdmin tournamentId={detail.tournament.id} locale={locale} players={detail.players} categories={detail.categories} playerCategories={detail.playerCategories} onCompetitionChanged={()=>refreshForTab("participants",true)} openPayments={()=>void openTab("payments")}/>}
+    {notice&&<div className="notice-box">{notice}</div>}
+
+    {tab==="overview"&&<Overview detail={detail} locale={locale} setTab={openTab}/>}
+    {tab==="participants"&&
+      <TournamentParticipantsAdmin
+        tournamentId={detail.tournament.id}
+        locale={locale}
+        players={detail.players}
+        categories={detail.categories}
+        playerCategories={detail.playerCategories}
+        onCompetitionChanged={reloadServer}
+        openPayments={()=>openTab("payments")}
+        manualRefreshOnly
+      />}
     {tab==="categories"&&<Categories detail={detail} locale={locale} busy={busy} act={act}/>}
-        {tab==="payments"&&<TournamentPaymentsAdmin tournamentId={detail.tournament.id} locale={locale}/>} 
+    {tab==="payments"&&
+      <TournamentPaymentsAdmin
+        tournamentId={detail.tournament.id}
+        locale={locale}
+        manualRefreshOnly
+      />}
     {tab==="teams"&&<TeamTournamentPanel tournamentId={detail.tournament.id} locale={locale}/>}
     {tab==="format"&&<Formats detail={detail} locale={locale} busy={busy} act={act}/>}
     {tab==="draw"&&<Draw detail={detail} locale={locale} busy={busy} act={act}/>}
     {tab==="competition"&&<Competition detail={detail} locale={locale}/>}
     {tab==="schedule"&&<Schedule detail={detail} locale={locale} busy={busy} act={act}/>}
-    {tab==="results"&&<Results detail={detail} locale={locale} busy={busy} act={act}/>}
-    {tab==="tv"&&<TV detail={detail} locale={locale} reload={loadFull}/>}
-    {tab==="settings"&&<SettingsPanel detail={detail} locale={locale} organizationId={organizationId} busy={busy} act={act} go={go}/>}
+    {tab==="results"&&
+      <Results
+        detail={detail}
+        locale={locale}
+        busy={busy}
+        stageResult={stageStandardResult}
+      />}
+    {tab==="tv"&&<TV detail={detail} locale={locale}/>}
+    {tab==="settings"&&
+      <SettingsPanel
+        detail={detail}
+        locale={locale}
+        organizationId={organizationId}
+        busy={busy}
+        act={act}
+        go={go}
+      />}
     {tab==="recovery"&&<Recovery detail={detail} locale={locale} busy={busy} act={act}/>}
   </main>;
 }
@@ -314,32 +951,357 @@ function Schedule({detail,locale,busy,act}:{detail:Detail;locale:Locale;busy:boo
   return <section className="tpw-stack"><article className="panel"><div className="panel-title"><div><h2>{text(locale,"Cronograma operativo","Operational schedule")}</h2><p>{text(locale,"Partidos reales, reservas de fase final, horarios y canchas en orden cronológico. El descanso es global, como en Tournament V2.4.2.","Real matches, final reservations, times and courts in chronological order. Rest is tournament-wide, as in Tournament V2.4.2.")}</p></div><div className="form-actions"><label className="compact-select"><span>{text(locale,"Descanso","Rest")}</span><select value={String(detail.settings.minimumRestSlots)} onChange={e=>void saveRest(Number(e.target.value))} disabled={busy}><option value="0">0</option><option value="1">1</option><option value="2">2</option></select></label><button className="ghost small" disabled={busy} onClick={()=>void act(()=>request(`/api/admin/tournaments/${detail.tournament.id}/schedule/regenerate`,{method:"POST",body:"{}"}))}>{text(locale,"Regenerar","Regenerate")}</button></div></div></article>{byCategory.map(({category,rows})=><article className="panel schedule-category" key={category.id}><div className="panel-title"><div><h2>{category.name}</h2><span>{rows.length} {text(locale,"bloques","slots")}</span></div><div className="form-actions"><strong>{dt(rows[0]!.startAt)} → {time(rows[rows.length-1]!.endAt)}</strong><button className="ghost small" onClick={()=>downloadScheduleImages(detail,locale,category.id)}>{text(locale,"Imagen","Image")}</button></div></div><div className="schedule-list">{rows.map(row=><div className={`schedule-row ${row.status==="reserved"?"reserved":""} ${row.categoryEntryType==="team"?"team-schedule-row":""}`} key={row.id}><time>{dt(row.startAt)}</time><b>{row.courtLabel}</b><div><strong>{row.sideA&&row.sideB?`${row.sideA} — ${row.sideB}`:text(locale,"Reserva de fase","Stage reservation")}</strong><span>{row.categoryEntryType==="team"?`TEAM · ${row.groupName?`${text(locale,"Grupo","Group")} ${row.groupName} · `:""}${row.roundLabel||row.rubberKey||"Rubber"}${row.bestOf?` · BO${row.bestOf}`:""}`:`${row.groupName?`${text(locale,"Grupo","Group")} ${row.groupName}`:row.roundLabel||row.stage}${row.legNumber&&row.legNumber>1?` · V${row.legNumber}`:""}`}</span></div><small>{row.status}</small></div>)}</div></article>)}{!byCategory.length&&<div className="empty-state">{text(locale,"Generá grupos para construir el cronograma.","Generate groups to build the schedule.")}</div>}</section>
 }
 
-function Results({detail,locale,busy,act}:{detail:Detail;locale:Locale;busy:boolean;act:ActionRunner}){const playable=detail.matches.filter(m=>m.matchId&&m.sideA&&m.sideB&&m.status!=="bye");const pending=playable.filter(m=>m.status!=="finished");const completed=playable.filter(m=>m.status==="finished").sort((a,b)=>Number(b.scheduleStart??0)-Number(a.scheduleStart??0));return <section className="tpw-stack"><article className="panel"><div className="panel-title"><div><h2>{text(locale,"Resultados por cronograma","Results by schedule")}</h2><p>{text(locale,"El primer pendiente es el próximo partido operativo. Las categorías Team aparecen debajo con sus rubbers en el mismo orden del cronograma global.","The first pending match is the next operational match. Team categories appear below with rubbers in the same global schedule order.")}</p></div><span>{completed.length}/{playable.length}</span></div><div className="results-section"><h3>{text(locale,"Pendientes estándar","Standard pending")}</h3>{pending.length?pending.map((m,i)=><ScoreRow key={m.encounterId} match={m} next={i===0} locale={locale} busy={busy} act={act}/>):<div className="empty-state">{text(locale,"No quedan partidos estándar pendientes.","No pending standard matches.")}</div>}</div>{completed.length>0&&<details className="completed-results"><summary>{text(locale,"Resultados estándar cargados","Completed standard results")} · {completed.length}</summary>{completed.map(m=><ScoreRow key={m.encounterId} match={m} locale={locale} busy={busy} act={act}/>)}</details>}</article><TeamResultsPanel tournamentId={detail.tournament.id} locale={locale}/>{detail.categories.filter(c=>c.entryType!=="team").map(c=>{const groups=grouped(detail,c.id);return groups.length?<article className="panel" key={c.id}><h2>{c.name} · {text(locale,"Tablas en vivo","Live standings")}</h2><div className="competition-groups">{groups.map(g=><StandingsCard key={g.id} detail={detail} categoryId={c.id} groupId={g.id} groupName={g.name} entries={g.entries} locale={locale}/>)}</div>{groups.length>1&&<CrossTable detail={detail} categoryId={c.id} locale={locale}/>}</article>:null})}</section>}
-function ScoreRow({match,next=false,locale,busy,act}:{match:Match;next?:boolean;locale:Locale;busy:boolean;act:ActionRunner}){const [a,setA]=useState(match.scoreA===null?"":String(match.scoreA));const [b,setB]=useState(match.scoreB===null?"":String(match.scoreB));const [sets,setSets]=useState(()=>[0,1,2].map(i=>({a:match.sets?.[i]?.scoreA===undefined?"":String(match.sets[i]!.scoreA),b:match.sets?.[i]?.scoreB===undefined?"":String(match.sets[i]!.scoreB)})));const save=async(e:FormEvent)=>{e.preventDefault();const body=match.bestOf===3?{sets:sets.filter(s=>s.a!==""&&s.b!=="").map(s=>({scoreA:Number(s.a),scoreB:Number(s.b)}))}:{scoreA:Number(a),scoreB:Number(b)};await act(()=>withImpact(locale,`/api/admin/matches/${match.matchId}/result`,body));};return <form className={`score-row ${next?"next":""}`} onSubmit={save}><div className="match-meta">{next&&<span className="next-label">{text(locale,"SIGUIENTE","NEXT")}</span>}<strong>{match.scheduleStart?dt(match.scheduleStart):match.categoryName}</strong><span>{match.courtLabel||""} · {match.groupName?`${text(locale,"Grupo","Group")} ${match.groupName}`:match.roundLabel||match.stage}</span></div><div className="score-sides"><b>{match.sideA}</b>{match.bestOf===3?<div className="set-inline">{sets.map((s,i)=><span key={i}><small>S{i+1}</small><input type="number" min="0" value={s.a} onChange={e=>setSets(v=>v.map((x,j)=>j===i?{...x,a:e.target.value}:x))}/><i>—</i><input type="number" min="0" value={s.b} onChange={e=>setSets(v=>v.map((x,j)=>j===i?{...x,b:e.target.value}:x))}/></span>)}</div>:<div className="score-pair"><input type="number" min="0" value={a} onChange={e=>setA(e.target.value)}/><i>—</i><input type="number" min="0" value={b} onChange={e=>setB(e.target.value)}/></div>}<b>{match.sideB}</b></div><button className={match.status==="finished"?"ghost small":"light small"} disabled={busy}>{match.status==="finished"?text(locale,"Corregir","Correct"):text(locale,"Guardar","Save")}</button></form>}
 
-function TV({detail,locale,reload}:{detail:Detail;locale:Locale;reload:()=>Promise<void>}){
-  const categories=detail.categories;
-  const categoryIncomplete=(c:Category)=>Number(c.finishedGroupMatchCount)<Number(c.groupMatchCount)||detail.matches.some(m=>m.categoryId===c.id&&m.status!=="finished"&&m.status!=="bye"&&m.status!=="skipped");
-  const incomplete=categories.find(categoryIncomplete)||categories[0];
-  const [categoryId,setCategoryId]=useState(incomplete?.id||"");const [auto,setAuto]=useState(true);const [teamRefreshToken,setTeamRefreshToken]=useState(0);
-  const revisionRef=useRef(detail.tournament.workingRevision);
-  useEffect(()=>{revisionRef.current=detail.tournament.workingRevision;},[detail.tournament.workingRevision]);
-  const refreshVisible=useCallback(async()=>{
-    const selected=categories.find(c=>c.id===categoryId)||incomplete;
-    if(selected?.entryType!=="team")await reload();
-    setTeamRefreshToken(value=>value+1);
-  },[categories,categoryId,incomplete,reload]);
-  const tvRootRef=useRef<HTMLElement|null>(null);const enterTvFullscreen=useCallback(()=>{const node=tvRootRef.current;if(node?.requestFullscreen)void node.requestFullscreen();},[]);
-  useEffect(()=>{if(!auto)return;let cancelled=false;const check=async()=>{try{const result=await request<{ok:true;workingRevision:number}>(`/api/admin/tournaments/${detail.tournament.id}/revision`);if(cancelled||result.workingRevision===revisionRef.current)return;revisionRef.current=result.workingRevision;await refreshVisible();}catch{/* Keep last TV frame on transient revision-check failure. */}};const timer=window.setInterval(()=>void check(),5000);return()=>{cancelled=true;window.clearInterval(timer)}},[auto,detail.tournament.id,refreshVisible]);
-  useEffect(()=>{if(!auto)return;const selected=categories.find(c=>c.id===categoryId);if(!selected||!categoryIncomplete(selected)){const next=categories.find(categoryIncomplete)||categories[categories.length-1];if(next&&next.id!==categoryId)setCategoryId(next.id);}},[auto,categoryId,categories,detail.matches]);
-  const category=categories.find(c=>c.id===categoryId)||incomplete;
-  if(category?.entryType==="team")return <section ref={tvRootRef} className="tpw-stack tv-fullscreen-root"><article className="panel tv-team-selector"><div className="form-actions"><select value={category.id} onChange={e=>{setCategoryId(e.target.value);setAuto(false)}}>{categories.map(c=><option key={c.id} value={c.id}>{c.entryType==="team"?"TEAM · ":""}{c.name}</option>)}</select><button onClick={()=>setAuto(v=>!v)}>{auto?"AUTO ON":"AUTO OFF"}</button><button onClick={()=>void refreshVisible()}>{text(locale,"Actualizar","Refresh")}</button><button onClick={enterTvFullscreen}>⛶</button></div></article><TeamTVPanel tournamentId={detail.tournament.id} categoryId={category.id} locale={locale} tournamentName={detail.tournament.name} refreshToken={teamRefreshToken}/></section>;
-  const upcoming=detail.schedule.filter(s=>s.categoryId===category?.id&&s.matchId&&detail.matches.find(m=>m.matchId===s.matchId)?.status!=="finished").slice(0,5);
-  const recent=detail.matches.filter(m=>m.categoryId===category?.id&&m.status==="finished").sort((a,b)=>Number(b.scheduleStart??0)-Number(a.scheduleStart??0)).slice(0,5);
-  const finals=detail.matches.filter(m=>m.categoryId===category?.id&&m.stage!=="group");
-  const groupsComplete=category?Number(category.groupMatchCount)>0&&Number(category.finishedGroupMatchCount)>=Number(category.groupMatchCount):false;
-  return <section ref={tvRootRef} className="tv-shell tv-fullscreen-root"><header><div><span>HUAU TOURNAMENT</span><h2>{detail.tournament.name}</h2></div><div className="form-actions"><select value={category?.id||""} onChange={e=>{setCategoryId(e.target.value);setAuto(false)}}>{categories.map(c=><option key={c.id} value={c.id}>{c.entryType==="team"?"TEAM · ":""}{c.name}</option>)}</select><button onClick={()=>setAuto(v=>!v)}>{auto?"AUTO ON":"AUTO OFF"}</button><button onClick={()=>void refreshVisible()}>{text(locale,"Actualizar","Refresh")}</button><button onClick={enterTvFullscreen}>⛶</button></div></header><div className="tv-category"><div><span>{groupsComplete&&finals.length?text(locale,"FASE FINAL","FINAL PHASE"):category?.competitionStatus||""}</span><h1>{category?.name||"—"}</h1></div><strong>{new Date().toLocaleTimeString("es-UY",{hour:"2-digit",minute:"2-digit"})}</strong></div><div className="tv-grid"><div className="tv-main">{groupsComplete&&finals.length?<div className="bracket tv-bracket"><h3>{text(locale,"Fase final","Final phase")}</h3>{finals.map(m=><div className="bracket-row" key={m.encounterId}><span>{m.roundLabel||m.stage}</span><strong>{m.sideA||"TBD"} <em>vs</em> {m.sideB||"TBD"}</strong><small>{m.status}</small></div>)}</div>:<div className="competition-groups">{grouped(detail,category?.id||"").map(g=><StandingsCard key={g.id} detail={detail} categoryId={category?.id||""} groupId={g.id} groupName={g.name} entries={g.entries} locale={locale}/>)}</div>}</div><aside><h3>{text(locale,"Próximos partidos","Upcoming matches")}</h3>{upcoming.map(s=><div className="tv-match" key={s.id}><b>{time(s.startAt)} · {s.courtLabel}</b><span>{s.sideA} — {s.sideB}</span></div>)}<h3>{text(locale,"Últimos resultados","Latest results")}</h3>{recent.map(m=><div className="tv-match" key={m.encounterId}><b>{m.scoreA} — {m.scoreB}</b><span>{m.sideA} / {m.sideB}</span></div>)}</aside></div></section>
+function Results({
+  detail,
+  locale,
+  busy,
+  stageResult,
+}:{
+  detail:Detail;
+  locale:Locale;
+  busy:boolean;
+  stageResult:(matchId:string,result:StandardResultInput)=>Promise<boolean>;
+}){
+  const playable=detail.matches.filter(
+    match=>match.matchId&&match.sideA&&match.sideB&&match.status!=="bye",
+  );
+  const pending=playable.filter(match=>match.status!=="finished");
+  const completed=playable
+    .filter(match=>match.status==="finished")
+    .sort((a,b)=>Number(b.scheduleStart??0)-Number(a.scheduleStart??0));
+  const hasTeam=detail.categories.some(category=>category.entryType==="team");
+
+  return <section className="tpw-stack">
+    <article className="panel">
+      <div className="panel-title">
+        <div>
+          <h2>{text(locale,"Resultados por cronograma","Results by schedule")}</h2>
+          <p>
+            {text(
+              locale,
+              "Los resultados Standard se guardan primero en el workspace local. Tablas, cuadro y TV cambian al instante; D1 se actualiza cuando usás Guardar cambios.",
+              "Standard results are saved to the local workspace first. Standings, bracket and TV update instantly; D1 updates when you use Save changes.",
+            )}
+          </p>
+        </div>
+        <span>{completed.length}/{playable.length}</span>
+      </div>
+
+      <div className="results-section">
+        <h3>{text(locale,"Pendientes estándar","Standard pending")}</h3>
+        {pending.length
+          ?pending.map((match,index)=>
+            <ScoreRow
+              key={match.encounterId}
+              match={match}
+              next={index===0}
+              locale={locale}
+              busy={busy}
+              stageResult={stageResult}
+            />)
+          :<div className="empty-state">
+            {text(locale,"No quedan partidos estándar pendientes.","No pending standard matches.")}
+          </div>}
+      </div>
+
+      {completed.length>0&&
+        <details className="completed-results">
+          <summary>
+            {text(locale,"Resultados estándar cargados","Completed standard results")} · {completed.length}
+          </summary>
+          {completed.map(match=>
+            <ScoreRow
+              key={match.encounterId}
+              match={match}
+              locale={locale}
+              busy={busy}
+              stageResult={stageResult}
+            />)}
+        </details>}
+    </article>
+
+    {hasTeam&&<TeamResultsPanel tournamentId={detail.tournament.id} locale={locale}/>}
+
+    {detail.categories
+      .filter(category=>category.entryType!=="team")
+      .map(category=>{
+        const groups=grouped(detail,category.id);
+        return groups.length
+          ?<article className="panel" key={category.id}>
+            <h2>{category.name} · {text(locale,"Tablas en vivo","Live standings")}</h2>
+            <div className="competition-groups">
+              {groups.map(group=>
+                <StandingsCard
+                  key={group.id}
+                  detail={detail}
+                  categoryId={category.id}
+                  groupId={group.id}
+                  groupName={group.name}
+                  entries={group.entries}
+                  locale={locale}
+                />)}
+            </div>
+            {groups.length>1&&<CrossTable detail={detail} categoryId={category.id} locale={locale}/>}
+          </article>
+          :null;
+      })}
+  </section>;
 }
+
+function ScoreRow({
+  match,
+  next=false,
+  locale,
+  busy,
+  stageResult,
+}:{
+  match:Match;
+  next?:boolean;
+  locale:Locale;
+  busy:boolean;
+  stageResult:(matchId:string,result:StandardResultInput)=>Promise<boolean>;
+}){
+  const [a,setA]=useState(match.scoreA===null?"":String(match.scoreA));
+  const [b,setB]=useState(match.scoreB===null?"":String(match.scoreB));
+  const [sets,setSets]=useState(()=>[0,1,2].map(index=>({
+    a:match.sets?.[index]?.scoreA===undefined?"":String(match.sets[index]!.scoreA),
+    b:match.sets?.[index]?.scoreB===undefined?"":String(match.sets[index]!.scoreB),
+  })));
+
+  useEffect(()=>{
+    setA(match.scoreA===null?"":String(match.scoreA));
+    setB(match.scoreB===null?"":String(match.scoreB));
+    setSets([0,1,2].map(index=>({
+      a:match.sets?.[index]?.scoreA===undefined?"":String(match.sets[index]!.scoreA),
+      b:match.sets?.[index]?.scoreB===undefined?"":String(match.sets[index]!.scoreB),
+    })));
+  },[match.scoreA,match.scoreB,match.sets]);
+
+  const save=async(event:FormEvent)=>{
+    event.preventDefault();
+    if(!match.matchId)return;
+    const result:StandardResultInput=match.bestOf===3
+      ?{
+          sets:sets
+            .filter(set=>set.a!==""&&set.b!=="")
+            .map(set=>({scoreA:Number(set.a),scoreB:Number(set.b)})),
+        }
+      :{scoreA:Number(a),scoreB:Number(b)};
+    await stageResult(match.matchId,result);
+  };
+
+  return <form className={`score-row ${next?"next":""}`} onSubmit={save}>
+    <div className="match-meta">
+      {next&&<span className="next-label">{text(locale,"SIGUIENTE","NEXT")}</span>}
+      <strong>{match.scheduleStart?dt(match.scheduleStart):match.categoryName}</strong>
+      <span>
+        {match.courtLabel||""} · {match.groupName
+          ?`${text(locale,"Grupo","Group")} ${match.groupName}`
+          :match.roundLabel||match.stage}
+      </span>
+    </div>
+
+    <div className="score-sides">
+      <b>{match.sideA}</b>
+      {match.bestOf===3
+        ?<div className="set-inline">
+          {sets.map((set,index)=>
+            <span key={index}>
+              <small>S{index+1}</small>
+              <input
+                type="number"
+                min="0"
+                value={set.a}
+                onChange={event=>setSets(current=>current.map(
+                  (candidate,candidateIndex)=>
+                    candidateIndex===index?{...candidate,a:event.target.value}:candidate,
+                ))}
+              />
+              <i>—</i>
+              <input
+                type="number"
+                min="0"
+                value={set.b}
+                onChange={event=>setSets(current=>current.map(
+                  (candidate,candidateIndex)=>
+                    candidateIndex===index?{...candidate,b:event.target.value}:candidate,
+                ))}
+              />
+            </span>)}
+        </div>
+        :<div className="score-pair">
+          <input type="number" min="0" value={a} onChange={event=>setA(event.target.value)}/>
+          <i>—</i>
+          <input type="number" min="0" value={b} onChange={event=>setB(event.target.value)}/>
+        </div>}
+      <b>{match.sideB}</b>
+    </div>
+
+    <button className={match.status==="finished"?"ghost small":"light small"} disabled={busy}>
+      {match.status==="finished"
+        ?text(locale,"Corregir local","Correct locally")
+        :text(locale,"Guardar local","Save locally")}
+    </button>
+  </form>;
+}
+
+
+function TV({detail,locale}:{detail:Detail;locale:Locale}){
+  const categories=detail.categories;
+  const categoryIncomplete=(category:Category)=>
+    Number(category.finishedGroupMatchCount)<Number(category.groupMatchCount)||
+    detail.matches.some(
+      match=>
+        match.categoryId===category.id&&
+        match.status!=="finished"&&
+        match.status!=="bye"&&
+        match.status!=="skipped",
+    );
+  const incomplete=categories.find(categoryIncomplete)||categories[0];
+  const [categoryId,setCategoryId]=useState(incomplete?.id||"");
+  const [teamRefreshToken,setTeamRefreshToken]=useState(0);
+  const tvRootRef=useRef<HTMLElement|null>(null);
+  const enterTvFullscreen=useCallback(()=>{
+    const node=tvRootRef.current;
+    if(node?.requestFullscreen)void node.requestFullscreen();
+  },[]);
+
+  useEffect(()=>{
+    const selected=categories.find(category=>category.id===categoryId);
+    if(!selected||!categoryIncomplete(selected)){
+      const next=categories.find(categoryIncomplete)||categories[categories.length-1];
+      if(next&&next.id!==categoryId)setCategoryId(next.id);
+    }
+  },[categoryId,categories,detail.matches]);
+
+  const category=categories.find(candidate=>candidate.id===categoryId)||incomplete;
+
+  if(category?.entryType==="team"){
+    return <section ref={tvRootRef} className="tpw-stack tv-fullscreen-root">
+      <article className="panel tv-team-selector">
+        <div className="form-actions">
+          <select value={category.id} onChange={event=>setCategoryId(event.target.value)}>
+            {categories.map(candidate=>
+              <option key={candidate.id} value={candidate.id}>
+                {candidate.entryType==="team"?"TEAM · ":""}{candidate.name}
+              </option>)}
+          </select>
+          <span className="pill">TEAM · SERVER</span>
+          <button onClick={()=>setTeamRefreshToken(value=>value+1)}>
+            {text(locale,"Actualizar","Refresh")}
+          </button>
+          <button onClick={enterTvFullscreen}>⛶</button>
+        </div>
+      </article>
+      <TeamTVPanel
+        tournamentId={detail.tournament.id}
+        categoryId={category.id}
+        locale={locale}
+        tournamentName={detail.tournament.name}
+        refreshToken={teamRefreshToken}
+      />
+    </section>;
+  }
+
+  const upcoming=detail.schedule
+    .filter(
+      row=>
+        row.categoryId===category?.id&&
+        row.matchId&&
+        detail.matches.find(match=>match.matchId===row.matchId)?.status!=="finished",
+    )
+    .slice(0,5);
+  const recent=detail.matches
+    .filter(match=>match.categoryId===category?.id&&match.status==="finished")
+    .sort((a,b)=>Number(b.scheduleStart??0)-Number(a.scheduleStart??0))
+    .slice(0,5);
+  const finals=detail.matches.filter(
+    match=>match.categoryId===category?.id&&match.stage!=="group",
+  );
+  const groupsComplete=category
+    ?Number(category.groupMatchCount)>0&&
+      Number(category.finishedGroupMatchCount)>=Number(category.groupMatchCount)
+    :false;
+
+  return <section ref={tvRootRef} className="tv-shell tv-fullscreen-root">
+    <header>
+      <div>
+        <span>HUAU TOURNAMENT</span>
+        <h2>{detail.tournament.name}</h2>
+      </div>
+      <div className="form-actions">
+        <select value={category?.id||""} onChange={event=>setCategoryId(event.target.value)}>
+          {categories.map(candidate=>
+            <option key={candidate.id} value={candidate.id}>
+              {candidate.entryType==="team"?"TEAM · ":""}{candidate.name}
+            </option>)}
+        </select>
+        <span className="pill strong">LOCAL</span>
+        <button onClick={enterTvFullscreen}>⛶</button>
+      </div>
+    </header>
+
+    <div className="tv-category">
+      <div>
+        <span>
+          {groupsComplete&&finals.length
+            ?text(locale,"FASE FINAL","FINAL PHASE")
+            :category?.competitionStatus||""}
+        </span>
+        <h1>{category?.name||"—"}</h1>
+      </div>
+      <strong>
+        {new Date().toLocaleTimeString("es-UY",{hour:"2-digit",minute:"2-digit"})}
+      </strong>
+    </div>
+
+    <div className="tv-grid">
+      <div className="tv-main">
+        {groupsComplete&&finals.length
+          ?<div className="bracket tv-bracket">
+            <h3>{text(locale,"Fase final","Final phase")}</h3>
+            {finals.map(match=>
+              <div className="bracket-row" key={match.encounterId}>
+                <span>{match.roundLabel||match.stage}</span>
+                <strong>
+                  {match.sideA||"TBD"} <em>vs</em> {match.sideB||"TBD"}
+                </strong>
+                <small>{match.status}</small>
+              </div>)}
+          </div>
+          :<div className="competition-groups">
+            {grouped(detail,category?.id||"").map(group=>
+              <StandingsCard
+                key={group.id}
+                detail={detail}
+                categoryId={category?.id||""}
+                groupId={group.id}
+                groupName={group.name}
+                entries={group.entries}
+                locale={locale}
+              />)}
+          </div>}
+      </div>
+
+      <aside>
+        <h3>{text(locale,"Próximos partidos","Upcoming matches")}</h3>
+        {upcoming.map(row=>
+          <div className="tv-match" key={row.id}>
+            <b>{time(row.startAt)} · {row.courtLabel}</b>
+            <span>{row.sideA} — {row.sideB}</span>
+          </div>)}
+        <h3>{text(locale,"Últimos resultados","Latest results")}</h3>
+        {recent.map(match=>
+          <div className="tv-match" key={match.encounterId}>
+            <b>{match.scoreA} — {match.scoreB}</b>
+            <span>{match.sideA} / {match.sideB}</span>
+          </div>)}
+      </aside>
+    </div>
+  </section>;
+}
+
 function SettingsPanel({detail,locale,organizationId,busy,act,go}:{detail:Detail;locale:Locale;organizationId:string;busy:boolean;act:ActionRunner;go:(p:string)=>void}){
   const save=async(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();const f=new FormData(e.currentTarget);const close=String(f.get("registrationClose")||"");await act(()=>request(`/api/admin/tournaments/${detail.tournament.id}/settings`,{method:"PUT",body:JSON.stringify({club:f.get("club"),city:f.get("city"),location:f.get("location"),description:f.get("description"),contact:f.get("contact"),startDate:f.get("startDate"),endDate:f.get("endDate")||null,dailyStart:f.get("dailyStart"),dailyEnd:f.get("dailyEnd"),courtCount:Number(f.get("courtCount")),defaultMatchMinutes:Number(f.get("defaultMatchMinutes")),paymentType:f.get("paymentType"),entryFeeMinor:moneyMinor(f.get("entryFee")),baseFeeMinor:moneyMinor(f.get("baseFee")),extraCategoryFeeMinor:moneyMinor(f.get("extraCategoryFee")),registrationCloseAt:close?Math.floor(new Date(close).getTime()/1000):null,maxCategoriesPerPlayer:String(f.get("maxCategoriesPerPlayer")||"").trim()?Number(f.get("maxCategoriesPerPlayer")):null,teamIndividualFeeMinor:moneyMinor(f.get("teamIndividualFee")),teamFullFeeMinor:moneyMinor(f.get("teamFullFee")),teamAdditionalParticipationMode:f.get("teamAdditionalParticipationMode"),teamAdditionalFeeMinor:moneyMinor(f.get("teamAdditionalFee")),allowTeamAgeDivisionOverlap:Number(f.get("allowTeamAgeDivisionOverlap")),minimumGroup:Number(f.get("minimumGroup")),preferredGroup:Number(f.get("preferredGroup")),maximumGroup:Number(f.get("maximumGroup")),suggestedQualifiersPerGroup:Number(f.get("suggestedQualifiersPerGroup")),seedingMethod:f.get("seedingMethod"),minimumRestSlots:Number(f.get("minimumRestSlots"))})}));};
   const heroMutation=async(method:"PUT"|"DELETE",file?:File)=>{const init:RequestInit={method};if(file){const form=new FormData();form.append("file",file);init.body=form;}const response=await fetch(`/api/admin/tournaments/${detail.tournament.id}/public-hero`,init);const payload=await response.json() as {ok?:boolean;code?:string};if(!response.ok)throw new ApiError(payload.code||`HTTP_${response.status}`);return payload;};
