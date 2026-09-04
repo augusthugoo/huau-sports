@@ -31,9 +31,10 @@ type Snapshot = {id:string;scopeType:string;scopeId:string|null;reason:string;re
 type RefreshMode = "background"|"blocking"|"none";
 type ActionRunner = <T=unknown>(fn:()=>Promise<T>, afterMutation?:(result:T)=>void, refreshMode?:RefreshMode)=>Promise<T|undefined>;
 
+type WorkspaceSummary = {playerCount:number;completedStandardMatches:number;pairIssueCount:number};
 type Detail = {
   tournament:{id:string;name:string;slug:string;sport:string;status:string;visibility:string;startAt:number;endAt:number|null;timezone:string;courtCount:number;publicParticipants:number;publicLive:number;publicHeroR2Key:string|null;structureLocked:number;publishedRevision:number;workingRevision:number};
-  settings:Settings;categories:Category[];entries:Entry[];players:Player[];playerCategories:Assignment[];groups:GroupRow[];matches:Match[];schedule:ScheduleRow[];standings:Standing[];crossGroup:CrossRow[];drawSessions:DrawSession[];snapshots:Snapshot[];
+  settings:Settings;summary:WorkspaceSummary;categories:Category[];entries:Entry[];players:Player[];playerCategories:Assignment[];groups:GroupRow[];matches:Match[];schedule:ScheduleRow[];standings:Standing[];crossGroup:CrossRow[];drawSessions:DrawSession[];snapshots:Snapshot[];
 };
 
 class ApiError extends Error { code:string; impact:string|undefined; constructor(code:string,impact?:string){super(code);this.code=code;this.impact=impact;} }
@@ -83,20 +84,92 @@ async function withImpactMethod<T>(locale:Locale,path:string,method:"PUT"|"DELET
 
 export function TournamentParityWorkspace({organizationId,tournamentId,locale,go}:Props){
   const [detail,setDetail]=useState<Detail|null>(null);const [tab,setTab]=useState<Tab>("overview");const [busy,setBusy]=useState(false);const [error,setError]=useState("");
-  const refreshTimer=useRef<number|null>(null);const stateEpoch=useRef(0);
-  const load=useCallback(async()=>{const epoch=++stateEpoch.current;try{const result=await request<{ok:true}&Detail>(`/api/admin/tournaments/${tournamentId}`);if(epoch!==stateEpoch.current)return;setDetail(result);setError("");}catch(e){if(epoch===stateEpoch.current)setError(e instanceof Error?e.message:"error");}},[tournamentId]);
-  const scheduleRefresh=useCallback(()=>{if(refreshTimer.current!==null)window.clearTimeout(refreshTimer.current);refreshTimer.current=window.setTimeout(()=>{refreshTimer.current=null;void load();},220);},[load]);
-  useEffect(()=>{void load();return()=>{if(refreshTimer.current!==null)window.clearTimeout(refreshTimer.current);};},[load]);
-  const act:ActionRunner=async(fn,afterMutation,refreshMode="background")=>{setBusy(true);setError("");try{const result=await fn();stateEpoch.current+=1;afterMutation?.(result);if(refreshMode==="blocking")await load();else if(refreshMode==="background")scheduleRefresh();return result;}catch(e){setError(e instanceof Error?e.message:"error");return undefined;}finally{setBusy(false);}};
+  const refreshTimer=useRef<number|null>(null);
+  const fullRevision=useRef<number|null>(null);
+  const participantsRevision=useRef<number|null>(null);
+
+  const loadCore=useCallback(async()=>{
+    const result=await request<{ok:true;tournament:Detail["tournament"];settings:Settings;categories:Category[];summary:WorkspaceSummary}>(`/api/admin/tournaments/${tournamentId}/core`);
+    setDetail(current=>({
+      tournament:result.tournament,
+      settings:result.settings,
+      summary:result.summary,
+      categories:result.categories,
+      entries:current?.entries??[],
+      players:current?.players??[],
+      playerCategories:current?.playerCategories??[],
+      groups:current?.groups??[],
+      matches:current?.matches??[],
+      schedule:current?.schedule??[],
+      standings:current?.standings??[],
+      crossGroup:current?.crossGroup??[],
+      drawSessions:current?.drawSessions??[],
+      snapshots:current?.snapshots??[],
+    }));
+    setError("");
+    return result.tournament.workingRevision;
+  },[tournamentId]);
+
+  const loadParticipantsCore=useCallback(async(revision?:number)=>{
+    const result=await request<{ok:true;workingRevision:number;players:Player[];playerCategories:Assignment[]}>(`/api/admin/tournaments/${tournamentId}/participants-core`);
+    setDetail(current=>current?{...current,players:result.players,playerCategories:result.playerCategories,tournament:{...current.tournament,workingRevision:Math.max(current.tournament.workingRevision,result.workingRevision)}}:current);
+    participantsRevision.current=revision??result.workingRevision;
+    setError("");
+  },[tournamentId]);
+
+  const loadFull=useCallback(async(revision?:number)=>{
+    const result=await request<{ok:true}&Omit<Detail,"summary">>(`/api/admin/tournaments/${tournamentId}`);
+    setDetail(current=>({...result,summary:current?.summary??{playerCount:result.players.length,completedStandardMatches:result.matches.filter(match=>match.status==="finished").length,pairIssueCount:0}}));
+    fullRevision.current=revision??result.tournament.workingRevision;
+    participantsRevision.current=revision??result.tournament.workingRevision;
+    setError("");
+  },[tournamentId]);
+
+  const heavyTab=(target:Tab)=>target==="draw"||target==="competition"||target==="schedule"||target==="results"||target==="tv"||target==="recovery";
+  const participantTab=(target:Tab)=>target==="participants"||target==="categories";
+
+  const refreshForTab=useCallback(async(target:Tab,force=false)=>{
+    try{
+      const revision=await loadCore();
+      if(participantTab(target)&&(force||participantsRevision.current!==revision))await loadParticipantsCore(revision);
+      if(heavyTab(target)&&(force||fullRevision.current!==revision))await loadFull(revision);
+    }catch(e){setError(e instanceof Error?e.message:"error");}
+  },[loadCore,loadFull,loadParticipantsCore]);
+
+  const openTab=useCallback(async(target:Tab)=>{
+    await refreshForTab(target);
+    setTab(target);
+  },[refreshForTab]);
+
+  const scheduleRefresh=useCallback(()=>{
+    if(refreshTimer.current!==null)window.clearTimeout(refreshTimer.current);
+    refreshTimer.current=window.setTimeout(()=>{refreshTimer.current=null;void refreshForTab(tab,true);},220);
+  },[refreshForTab,tab]);
+
+  useEffect(()=>{void refreshForTab("overview",true);return()=>{if(refreshTimer.current!==null)window.clearTimeout(refreshTimer.current);};},[refreshForTab]);
+
+  const act:ActionRunner=async(fn,afterMutation,refreshMode="background")=>{
+    setBusy(true);setError("");
+    try{
+      const result=await fn();
+      fullRevision.current=null;
+      participantsRevision.current=null;
+      afterMutation?.(result);
+      if(refreshMode==="blocking")await refreshForTab(tab,true);
+      else if(refreshMode==="background")scheduleRefresh();
+      return result;
+    }catch(e){setError(e instanceof Error?e.message:"error");return undefined;}
+    finally{setBusy(false);}
+  };
   if(!detail)return <main className="tpw"><div className="tpw-loading">{error||"Loading…"}</div></main>;
   const tabs:Array<[Tab,string]>=[["overview",text(locale,"Resumen","Overview")],["participants",text(locale,"Participantes","Participants")],["categories",text(locale,"Categorías","Categories")],["payments",text(locale,"Pagos","Payments")],["teams",text(locale,"Equipos","Teams")],["format",text(locale,"Formato","Format")],["draw",text(locale,"Sorteo","Draw")],["competition",text(locale,"Competencia","Competition")],["schedule",text(locale,"Cronograma","Schedule")],["results",text(locale,"Resultados","Results")],["tv","Modo TV"],["settings",text(locale,"Configuración","Settings")],["recovery",text(locale,"Recuperación","Recovery")]];
   return <main className="tpw">
     <button className="section-back" onClick={()=>go(`/admin/organizations/${organizationId}/tournaments`)}>← HUAU Tournament</button>
-    <header className="tpw-hero"><div><div className="eyebrow">{detail.tournament.sport.toUpperCase()} · {detail.tournament.status.replaceAll("_"," ")}</div><h1>{detail.tournament.name}</h1><p>{date(detail.tournament.startAt)} · {detail.tournament.courtCount} {text(locale,"canchas","courts")} · rev. {detail.tournament.workingRevision}</p></div><div className="tpw-badges"><span className="pill">{detail.tournament.structureLocked?text(locale,"ESTRUCTURA BLOQUEADA","STRUCTURE LOCKED"):text(locale,"EN PREPARACIÓN","IN SETUP")}</span><button className="light small" onClick={()=>setTab("tv")}>Modo TV</button></div></header>
-    <nav className="tpw-tabs">{tabs.map(([key,label])=><button key={key} className={tab===key?"active":""} onClick={()=>setTab(key)}>{label}</button>)}</nav>
+    <header className="tpw-hero"><div><div className="eyebrow">{detail.tournament.sport.toUpperCase()} · {detail.tournament.status.replaceAll("_"," ")}</div><h1>{detail.tournament.name}</h1><p>{date(detail.tournament.startAt)} · {detail.tournament.courtCount} {text(locale,"canchas","courts")} · rev. {detail.tournament.workingRevision}</p></div><div className="tpw-badges"><span className="pill">{detail.tournament.structureLocked?text(locale,"ESTRUCTURA BLOQUEADA","STRUCTURE LOCKED"):text(locale,"EN PREPARACIÓN","IN SETUP")}</span><button className="light small" onClick={()=>void openTab("tv")}>Modo TV</button></div></header>
+    <nav className="tpw-tabs">{tabs.map(([key,label])=><button key={key} className={tab===key?"active":""} onClick={()=>void openTab(key)}>{label}</button>)}</nav>
     {error&&<div className="tpw-alert">{error}</div>}
-    {tab==="overview"&&<Overview detail={detail} locale={locale} setTab={setTab}/>}
-    {tab==="participants"&&<TournamentParticipantsAdmin tournamentId={detail.tournament.id} locale={locale} players={detail.players} categories={detail.categories} playerCategories={detail.playerCategories} onCompetitionChanged={load} openPayments={()=>setTab("payments")}/>}
+    {tab==="overview"&&<Overview detail={detail} locale={locale} setTab={target=>void openTab(target)}/>}
+    {tab==="participants"&&<TournamentParticipantsAdmin tournamentId={detail.tournament.id} locale={locale} players={detail.players} categories={detail.categories} playerCategories={detail.playerCategories} onCompetitionChanged={()=>refreshForTab("participants",true)} openPayments={()=>void openTab("payments")}/>}
     {tab==="categories"&&<Categories detail={detail} locale={locale} busy={busy} act={act}/>}
         {tab==="payments"&&<TournamentPaymentsAdmin tournamentId={detail.tournament.id} locale={locale}/>} 
     {tab==="teams"&&<TeamTournamentPanel tournamentId={detail.tournament.id} locale={locale}/>}
@@ -105,17 +178,17 @@ export function TournamentParityWorkspace({organizationId,tournamentId,locale,go
     {tab==="competition"&&<Competition detail={detail} locale={locale}/>}
     {tab==="schedule"&&<Schedule detail={detail} locale={locale} busy={busy} act={act}/>}
     {tab==="results"&&<Results detail={detail} locale={locale} busy={busy} act={act}/>}
-    {tab==="tv"&&<TV detail={detail} locale={locale} reload={load}/>}
+    {tab==="tv"&&<TV detail={detail} locale={locale} reload={loadFull}/>}
     {tab==="settings"&&<SettingsPanel detail={detail} locale={locale} organizationId={organizationId} busy={busy} act={act} go={go}/>}
     {tab==="recovery"&&<Recovery detail={detail} locale={locale} busy={busy} act={act}/>}
   </main>;
 }
 
 function Overview({detail,locale,setTab}:{detail:Detail;locale:Locale;setTab:(tab:Tab)=>void}){
-  const incompletePairs=detail.categories.filter(c=>c.entryType==="pair").reduce((sum,c)=>sum+pairIssues(detail,c).length,0);
-  const generated=detail.categories.filter(c=>c.competitionStatus).length;const completed=detail.matches.filter(m=>m.status==="finished").length;const hasTeam=detail.categories.some(c=>c.entryType==="team");const hasStandard=detail.categories.some(c=>c.entryType!=="team");
+  const incompletePairs=detail.summary.pairIssueCount;
+  const generated=detail.categories.filter(c=>c.competitionStatus).length;const completed=detail.summary.completedStandardMatches;const hasTeam=detail.categories.some(c=>c.entryType==="team");const hasStandard=detail.categories.some(c=>c.entryType!=="team");
   let step=3;
-  return <section className="tpw-grid"><article className="panel wide"><div className="eyebrow">{text(locale,"PREPARACIÓN","SETUP")}</div><h2>{text(locale,"Estado operativo","Operational status")}</h2><div className="tpw-kpis"><Kpi n={detail.players.length} label={text(locale,"fichas competitivas","competition profiles")}/><Kpi n={detail.categories.length} label={text(locale,"categorías","categories")}/><Kpi n={generated} label={text(locale,"estructuras","structures")}/><Kpi n={detail.schedule.length} label={text(locale,"bloques","slots")}/><Kpi n={completed} label={text(locale,"resultados estándar","standard results")}/></div>{incompletePairs>0&&<p className="warning-line">{incompletePairs} {text(locale,"vínculos de pareja incompletos. Revisalos antes del sorteo.","incomplete partner links. Review them before the draw.")}</p>}</article><article className="panel"><h2>{text(locale,"Flujo recomendado","Recommended flow")}</h2><div className="tpw-flow"><button onClick={()=>setTab("participants")}>1 · {text(locale,"Participantes","Participants")}</button><button onClick={()=>setTab("categories")}>2 · {text(locale,"Categorías","Categories")}</button>{hasStandard&&<><button onClick={()=>setTab("format")}>{step++} · {text(locale,"Formato estándar","Standard format")}</button><button onClick={()=>setTab("draw")}>{step++} · {text(locale,"Sorteo estándar","Standard draw")}</button></>}{hasTeam&&<button onClick={()=>setTab("teams")}>{step++} · {text(locale,"Equipos y alineaciones","Teams & lineups")}</button>}<button onClick={()=>setTab("schedule")}>{step++} · {text(locale,"Cronograma","Schedule")}</button><button onClick={()=>setTab("results")}>{step} · {text(locale,"Resultados","Results")}</button></div></article></section>;
+  return <section className="tpw-grid"><article className="panel wide"><div className="eyebrow">{text(locale,"PREPARACIÓN","SETUP")}</div><h2>{text(locale,"Estado operativo","Operational status")}</h2><div className="tpw-kpis"><Kpi n={detail.summary.playerCount} label={text(locale,"fichas competitivas","competition profiles")}/><Kpi n={detail.categories.length} label={text(locale,"categorías","categories")}/><Kpi n={generated} label={text(locale,"estructuras","structures")}/><Kpi n={detail.schedule.length} label={text(locale,"bloques","slots")}/><Kpi n={completed} label={text(locale,"resultados estándar","standard results")}/></div>{incompletePairs>0&&<p className="warning-line">{incompletePairs} {text(locale,"vínculos de pareja incompletos. Revisalos antes del sorteo.","incomplete partner links. Review them before the draw.")}</p>}</article><article className="panel"><h2>{text(locale,"Flujo recomendado","Recommended flow")}</h2><div className="tpw-flow"><button onClick={()=>setTab("participants")}>1 · {text(locale,"Participantes","Participants")}</button><button onClick={()=>setTab("categories")}>2 · {text(locale,"Categorías","Categories")}</button>{hasStandard&&<><button onClick={()=>setTab("format")}>{step++} · {text(locale,"Formato estándar","Standard format")}</button><button onClick={()=>setTab("draw")}>{step++} · {text(locale,"Sorteo estándar","Standard draw")}</button></>}{hasTeam&&<button onClick={()=>setTab("teams")}>{step++} · {text(locale,"Equipos y alineaciones","Teams & lineups")}</button>}<button onClick={()=>setTab("schedule")}>{step++} · {text(locale,"Cronograma","Schedule")}</button><button onClick={()=>setTab("results")}>{step} · {text(locale,"Resultados","Results")}</button></div></article></section>;
 }
 function Kpi({n,label}:{n:number;label:string}){return <div><strong>{n}</strong><span>{label}</span></div>}
 
@@ -251,16 +324,21 @@ function TV({detail,locale,reload}:{detail:Detail;locale:Locale;reload:()=>Promi
   const [categoryId,setCategoryId]=useState(incomplete?.id||"");const [auto,setAuto]=useState(true);const [teamRefreshToken,setTeamRefreshToken]=useState(0);
   const revisionRef=useRef(detail.tournament.workingRevision);
   useEffect(()=>{revisionRef.current=detail.tournament.workingRevision;},[detail.tournament.workingRevision]);
-  const refreshVisible=useCallback(async()=>{await reload();setTeamRefreshToken(value=>value+1);},[reload]);
+  const refreshVisible=useCallback(async()=>{
+    const selected=categories.find(c=>c.id===categoryId)||incomplete;
+    if(selected?.entryType!=="team")await reload();
+    setTeamRefreshToken(value=>value+1);
+  },[categories,categoryId,incomplete,reload]);
+  const tvRootRef=useRef<HTMLElement|null>(null);const enterTvFullscreen=useCallback(()=>{const node=tvRootRef.current;if(node?.requestFullscreen)void node.requestFullscreen();},[]);
   useEffect(()=>{if(!auto)return;let cancelled=false;const check=async()=>{try{const result=await request<{ok:true;workingRevision:number}>(`/api/admin/tournaments/${detail.tournament.id}/revision`);if(cancelled||result.workingRevision===revisionRef.current)return;revisionRef.current=result.workingRevision;await refreshVisible();}catch{/* Keep last TV frame on transient revision-check failure. */}};const timer=window.setInterval(()=>void check(),5000);return()=>{cancelled=true;window.clearInterval(timer)}},[auto,detail.tournament.id,refreshVisible]);
   useEffect(()=>{if(!auto)return;const selected=categories.find(c=>c.id===categoryId);if(!selected||!categoryIncomplete(selected)){const next=categories.find(categoryIncomplete)||categories[categories.length-1];if(next&&next.id!==categoryId)setCategoryId(next.id);}},[auto,categoryId,categories,detail.matches]);
   const category=categories.find(c=>c.id===categoryId)||incomplete;
-  if(category?.entryType==="team")return <section className="tpw-stack"><article className="panel tv-team-selector"><div className="form-actions"><select value={category.id} onChange={e=>{setCategoryId(e.target.value);setAuto(false)}}>{categories.map(c=><option key={c.id} value={c.id}>{c.entryType==="team"?"TEAM · ":""}{c.name}</option>)}</select><button onClick={()=>setAuto(v=>!v)}>{auto?"AUTO ON":"AUTO OFF"}</button><button onClick={()=>void document.documentElement.requestFullscreen?.()}>⛶</button></div></article><TeamTVPanel tournamentId={detail.tournament.id} categoryId={category.id} locale={locale} tournamentName={detail.tournament.name} refreshToken={teamRefreshToken}/></section>;
+  if(category?.entryType==="team")return <section ref={tvRootRef} className="tpw-stack tv-fullscreen-root"><article className="panel tv-team-selector"><div className="form-actions"><select value={category.id} onChange={e=>{setCategoryId(e.target.value);setAuto(false)}}>{categories.map(c=><option key={c.id} value={c.id}>{c.entryType==="team"?"TEAM · ":""}{c.name}</option>)}</select><button onClick={()=>setAuto(v=>!v)}>{auto?"AUTO ON":"AUTO OFF"}</button><button onClick={()=>void refreshVisible()}>{text(locale,"Actualizar","Refresh")}</button><button onClick={enterTvFullscreen}>⛶</button></div></article><TeamTVPanel tournamentId={detail.tournament.id} categoryId={category.id} locale={locale} tournamentName={detail.tournament.name} refreshToken={teamRefreshToken}/></section>;
   const upcoming=detail.schedule.filter(s=>s.categoryId===category?.id&&s.matchId&&detail.matches.find(m=>m.matchId===s.matchId)?.status!=="finished").slice(0,5);
   const recent=detail.matches.filter(m=>m.categoryId===category?.id&&m.status==="finished").sort((a,b)=>Number(b.scheduleStart??0)-Number(a.scheduleStart??0)).slice(0,5);
   const finals=detail.matches.filter(m=>m.categoryId===category?.id&&m.stage!=="group");
   const groupsComplete=category?Number(category.groupMatchCount)>0&&Number(category.finishedGroupMatchCount)>=Number(category.groupMatchCount):false;
-  return <section className="tv-shell"><header><div><span>HUAU TOURNAMENT</span><h2>{detail.tournament.name}</h2></div><div className="form-actions"><select value={category?.id||""} onChange={e=>{setCategoryId(e.target.value);setAuto(false)}}>{categories.map(c=><option key={c.id} value={c.id}>{c.entryType==="team"?"TEAM · ":""}{c.name}</option>)}</select><button onClick={()=>setAuto(v=>!v)}>{auto?"AUTO ON":"AUTO OFF"}</button><button onClick={()=>void document.documentElement.requestFullscreen?.()}>⛶</button></div></header><div className="tv-category"><div><span>{groupsComplete&&finals.length?text(locale,"FASE FINAL","FINAL PHASE"):category?.competitionStatus||""}</span><h1>{category?.name||"—"}</h1></div><strong>{new Date().toLocaleTimeString("es-UY",{hour:"2-digit",minute:"2-digit"})}</strong></div><div className="tv-grid"><div className="tv-main">{groupsComplete&&finals.length?<div className="bracket tv-bracket"><h3>{text(locale,"Fase final","Final phase")}</h3>{finals.map(m=><div className="bracket-row" key={m.encounterId}><span>{m.roundLabel||m.stage}</span><strong>{m.sideA||"TBD"} <em>vs</em> {m.sideB||"TBD"}</strong><small>{m.status}</small></div>)}</div>:<div className="competition-groups">{grouped(detail,category?.id||"").map(g=><StandingsCard key={g.id} detail={detail} categoryId={category?.id||""} groupId={g.id} groupName={g.name} entries={g.entries} locale={locale}/>)}</div>}</div><aside><h3>{text(locale,"Próximos partidos","Upcoming matches")}</h3>{upcoming.map(s=><div className="tv-match" key={s.id}><b>{time(s.startAt)} · {s.courtLabel}</b><span>{s.sideA} — {s.sideB}</span></div>)}<h3>{text(locale,"Últimos resultados","Latest results")}</h3>{recent.map(m=><div className="tv-match" key={m.encounterId}><b>{m.scoreA} — {m.scoreB}</b><span>{m.sideA} / {m.sideB}</span></div>)}</aside></div></section>
+  return <section ref={tvRootRef} className="tv-shell tv-fullscreen-root"><header><div><span>HUAU TOURNAMENT</span><h2>{detail.tournament.name}</h2></div><div className="form-actions"><select value={category?.id||""} onChange={e=>{setCategoryId(e.target.value);setAuto(false)}}>{categories.map(c=><option key={c.id} value={c.id}>{c.entryType==="team"?"TEAM · ":""}{c.name}</option>)}</select><button onClick={()=>setAuto(v=>!v)}>{auto?"AUTO ON":"AUTO OFF"}</button><button onClick={()=>void refreshVisible()}>{text(locale,"Actualizar","Refresh")}</button><button onClick={enterTvFullscreen}>⛶</button></div></header><div className="tv-category"><div><span>{groupsComplete&&finals.length?text(locale,"FASE FINAL","FINAL PHASE"):category?.competitionStatus||""}</span><h1>{category?.name||"—"}</h1></div><strong>{new Date().toLocaleTimeString("es-UY",{hour:"2-digit",minute:"2-digit"})}</strong></div><div className="tv-grid"><div className="tv-main">{groupsComplete&&finals.length?<div className="bracket tv-bracket"><h3>{text(locale,"Fase final","Final phase")}</h3>{finals.map(m=><div className="bracket-row" key={m.encounterId}><span>{m.roundLabel||m.stage}</span><strong>{m.sideA||"TBD"} <em>vs</em> {m.sideB||"TBD"}</strong><small>{m.status}</small></div>)}</div>:<div className="competition-groups">{grouped(detail,category?.id||"").map(g=><StandingsCard key={g.id} detail={detail} categoryId={category?.id||""} groupId={g.id} groupName={g.name} entries={g.entries} locale={locale}/>)}</div>}</div><aside><h3>{text(locale,"Próximos partidos","Upcoming matches")}</h3>{upcoming.map(s=><div className="tv-match" key={s.id}><b>{time(s.startAt)} · {s.courtLabel}</b><span>{s.sideA} — {s.sideB}</span></div>)}<h3>{text(locale,"Últimos resultados","Latest results")}</h3>{recent.map(m=><div className="tv-match" key={m.encounterId}><b>{m.scoreA} — {m.scoreB}</b><span>{m.sideA} / {m.sideB}</span></div>)}</aside></div></section>
 }
 function SettingsPanel({detail,locale,organizationId,busy,act,go}:{detail:Detail;locale:Locale;organizationId:string;busy:boolean;act:ActionRunner;go:(p:string)=>void}){
   const save=async(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();const f=new FormData(e.currentTarget);const close=String(f.get("registrationClose")||"");await act(()=>request(`/api/admin/tournaments/${detail.tournament.id}/settings`,{method:"PUT",body:JSON.stringify({club:f.get("club"),city:f.get("city"),location:f.get("location"),description:f.get("description"),contact:f.get("contact"),startDate:f.get("startDate"),endDate:f.get("endDate")||null,dailyStart:f.get("dailyStart"),dailyEnd:f.get("dailyEnd"),courtCount:Number(f.get("courtCount")),defaultMatchMinutes:Number(f.get("defaultMatchMinutes")),paymentType:f.get("paymentType"),entryFeeMinor:moneyMinor(f.get("entryFee")),baseFeeMinor:moneyMinor(f.get("baseFee")),extraCategoryFeeMinor:moneyMinor(f.get("extraCategoryFee")),registrationCloseAt:close?Math.floor(new Date(close).getTime()/1000):null,maxCategoriesPerPlayer:String(f.get("maxCategoriesPerPlayer")||"").trim()?Number(f.get("maxCategoriesPerPlayer")):null,teamIndividualFeeMinor:moneyMinor(f.get("teamIndividualFee")),teamFullFeeMinor:moneyMinor(f.get("teamFullFee")),teamAdditionalParticipationMode:f.get("teamAdditionalParticipationMode"),teamAdditionalFeeMinor:moneyMinor(f.get("teamAdditionalFee")),allowTeamAgeDivisionOverlap:Number(f.get("allowTeamAgeDivisionOverlap")),minimumGroup:Number(f.get("minimumGroup")),preferredGroup:Number(f.get("preferredGroup")),maximumGroup:Number(f.get("maximumGroup")),suggestedQualifiersPerGroup:Number(f.get("suggestedQualifiersPerGroup")),seedingMethod:f.get("seedingMethod"),minimumRestSlots:Number(f.get("minimumRestSlots"))})}));};

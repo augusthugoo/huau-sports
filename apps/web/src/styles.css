@@ -1232,3 +1232,60 @@ textarea { resize:vertical; }
     border-bottom: 0;
   }
 }
+
+/* Phase 9 — TV isolated fullscreen */
+.tv-fullscreen-root:fullscreen {
+  width:100vw;
+  height:100vh;
+  max-width:none;
+  min-height:100vh;
+  margin:0;
+  padding:0;
+  border:0;
+  border-radius:0;
+  background:#070707;
+  overflow:auto;
+}
+.tv-shell.tv-fullscreen-root:fullscreen {
+  display:flex;
+  flex-direction:column;
+}
+.tv-shell.tv-fullscreen-root:fullscreen > .tv-grid {
+  flex:1;
+  min-height:0;
+}
+.tpw-stack.tv-fullscreen-root:fullscreen {
+  display:grid;
+  grid-template-rows:auto minmax(0,1fr);
+  gap:0;
+}
+.tpw-stack.tv-fullscreen-root:fullscreen > .tv-team-selector {
+  margin:0;
+  border-width:0 0 1px;
+  border-radius:0;
+}
+.tpw-stack.tv-fullscreen-root:fullscreen > .team-tv-shell {
+  min-height:0;
+  height:100%;
+  border:0;
+  border-radius:0;
+}
+.tv-fullscreen-root:fullscreen .tv-category {
+  padding-block:clamp(18px,3vh,34px);
+}
+.tv-fullscreen-root:fullscreen .tv-category h1 {
+  font-size:clamp(34px,5vw,76px);
+}
+.tv-fullscreen-root:fullscreen .tv-main,
+.tv-fullscreen-root:fullscreen .tv-grid aside {
+  padding:clamp(16px,2.2vw,30px);
+}
+.tv-fullscreen-root:fullscreen .team-tv-grid {
+  grid-template-columns:minmax(0,1.7fr) minmax(280px,.7fr);
+}
+@media (max-width:1100px) {
+  .tv-fullscreen-root:fullscreen .team-tv-grid,
+  .tv-fullscreen-root:fullscreen .tv-grid {
+    grid-template-columns:1fr;
+  }
+}

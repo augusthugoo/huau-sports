@@ -463,23 +463,59 @@ async function detailedOrders(env: Env, whereSql: string, values: unknown[]) {
             t.name as tournamentName,t.slug,t.organizer_organization_id as organizerOrganizationId
        FROM payment_orders po JOIN tournaments t ON t.id=po.tournament_id ${whereSql} ORDER BY po.updated_at DESC`,
   ).bind(...values).all<PaymentOrderRow & { tournamentName: string; slug: string; organizerOrganizationId: string }>();
-  return Promise.all(orders.results.map(async (order) => {
-    const [items, attempts, refunds] = await Promise.all([
+
+  const orderRows = orders.results;
+  if (!orderRows.length) return [];
+
+  type ItemRow = { id:string;orderId:string;registrationId:string|null;playerProfileId:string|null;categoryId:string|null;label:string;amountMinor:number };
+  type AttemptRow = { orderId:string;id:string;method:string;status:string;amountMinor:number;externalId:string|null;externalStatus:string|null;externalReference:string|null;note:string|null;submittedAt:number|null;reviewedAt:number|null;createdAt:number;proofId:string|null;proofName:string|null;proofContentType:string|null;proofSizeBytes:number|null };
+  type RefundRow = { orderId:string;id:string;registrationId:string|null;amountMinor:number;method:string;status:string;externalId:string|null;note:string|null;createdAt:number;completedAt:number|null };
+
+  const itemRows:ItemRow[]=[];
+  const attemptRows:AttemptRow[]=[];
+  const refundRows:RefundRow[]=[];
+  const orderIds=orderRows.map(order=>order.id);
+
+  for(let index=0;index<orderIds.length;index+=50){
+    const batch=orderIds.slice(index,index+50);
+    const placeholders=batch.map(()=>"?").join(",");
+    const [items,attempts,refunds]=await Promise.all([
       env.HUAU_DB.prepare(
-        `SELECT id,registration_id as registrationId,player_profile_id as playerProfileId,category_id as categoryId,label,amount_minor as amountMinor FROM payment_order_items WHERE order_id=? ORDER BY created_at,id`,
-      ).bind(order.id).all(),
+        `SELECT id,order_id as orderId,registration_id as registrationId,player_profile_id as playerProfileId,category_id as categoryId,label,amount_minor as amountMinor
+           FROM payment_order_items WHERE order_id IN (${placeholders}) ORDER BY created_at,id`,
+      ).bind(...batch).all<ItemRow>(),
       env.HUAU_DB.prepare(
-        `SELECT pa.id,pa.method,pa.status,pa.amount_minor as amountMinor,pa.external_id as externalId,pa.external_status as externalStatus,
+        `SELECT pa.order_id as orderId,pa.id,pa.method,pa.status,pa.amount_minor as amountMinor,pa.external_id as externalId,pa.external_status as externalStatus,
                 pa.external_reference as externalReference,pa.note,pa.submitted_at as submittedAt,pa.reviewed_at as reviewedAt,pa.created_at as createdAt,
                 pp.id as proofId,pp.original_name as proofName,pp.content_type as proofContentType,pp.size_bytes as proofSizeBytes
-           FROM payment_attempts pa LEFT JOIN payment_proofs pp ON pp.attempt_id=pa.id WHERE pa.order_id=? ORDER BY pa.created_at DESC`,
-      ).bind(order.id).all(),
+           FROM payment_attempts pa LEFT JOIN payment_proofs pp ON pp.attempt_id=pa.id
+          WHERE pa.order_id IN (${placeholders}) ORDER BY pa.created_at DESC`,
+      ).bind(...batch).all<AttemptRow>(),
       env.HUAU_DB.prepare(
-        `SELECT id,registration_id as registrationId,amount_minor as amountMinor,method,status,external_id as externalId,note,created_at as createdAt,completed_at as completedAt FROM payment_refunds WHERE order_id=? ORDER BY created_at DESC`,
-      ).bind(order.id).all(),
+        `SELECT order_id as orderId,id,registration_id as registrationId,amount_minor as amountMinor,method,status,external_id as externalId,note,created_at as createdAt,completed_at as completedAt
+           FROM payment_refunds WHERE order_id IN (${placeholders}) ORDER BY created_at DESC`,
+      ).bind(...batch).all<RefundRow>(),
     ]);
-    const settings = await paymentSettings(env, order.tournamentId, order.currency);
-    return { ...order, items: items.results, attempts: attempts.results, refunds: refunds.results, settings };
+    itemRows.push(...items.results);
+    attemptRows.push(...attempts.results);
+    refundRows.push(...refunds.results);
+  }
+
+  const tournamentIds=[...new Set(orderRows.map(order=>order.tournamentId))];
+  const currencyByTournament=new Map<string,string>();
+  orderRows.forEach(order=>{if(!currencyByTournament.has(order.tournamentId))currencyByTournament.set(order.tournamentId,order.currency);});
+  const settingsPairs=await Promise.all(tournamentIds.map(async tournamentId=>[
+    tournamentId,
+    await paymentSettings(env,tournamentId,currencyByTournament.get(tournamentId)??"UYU"),
+  ] as const));
+  const settingsByTournament=new Map(settingsPairs);
+
+  return orderRows.map(order=>({
+    ...order,
+    items:itemRows.filter(item=>item.orderId===order.id),
+    attempts:attemptRows.filter(attempt=>attempt.orderId===order.id),
+    refunds:refundRows.filter(refund=>refund.orderId===order.id),
+    settings:settingsByTournament.get(order.tournamentId)!,
   }));
 }
 

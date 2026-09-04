@@ -935,13 +935,13 @@ function TeamRubberResultEditor({
   );
 }
 
-function useTeamSnapshot(tournamentId: string, pollMs = 0) {
+function useTeamSnapshot(tournamentId: string, pollMs = 0, mode: "full"|"results" = "full") {
   const [detail, setDetail] = useState<TeamDetail | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const load = useCallback(async () => {
     try {
-      const result = await api<TeamDetail>(`/api/admin/tournaments/${tournamentId}/team`);
+      const result = await api<TeamDetail>(mode==="results"?`/api/admin/tournaments/${tournamentId}/team/results`:`/api/admin/tournaments/${tournamentId}/team`);
       setDetail(result);
       setError("");
     } catch (loadError) {
@@ -949,7 +949,7 @@ function useTeamSnapshot(tournamentId: string, pollMs = 0) {
     } finally {
       setLoading(false);
     }
-  }, [tournamentId]);
+  }, [mode, tournamentId]);
   useEffect(() => {
     void load();
     if (!pollMs) return;
@@ -1012,7 +1012,7 @@ function teamResultItems(detail: TeamDetail): TeamResultItem[] {
 }
 
 export function TeamResultsPanel({ tournamentId, locale }: Props) {
-  const { detail, error, loading, reload } = useTeamSnapshot(tournamentId);
+  const { detail, error, loading, reload } = useTeamSnapshot(tournamentId,0,"results");
   const [busy,setBusy]=useState(false);
   const [mutationError,setMutationError]=useState("");
   if (loading) return <article className="panel"><p className="muted">{tr(locale,"Cargando resultados Team…","Loading Team results…")}</p></article>;

@@ -1361,6 +1361,84 @@ async function saveTeamMatchResult(
   return json({ ok: true, score });
 }
 
+
+async function teamResultsDetail(
+  request: Request,
+  env: Env,
+  tournamentId: string,
+  access: AccessHelpers,
+): Promise<Response> {
+  const accessResult = await tournamentForAccess(tournamentId, request, env, access);
+  if (accessResult instanceof Response) return accessResult;
+  const [categories, encounters, matches, lineups, sets] = await Promise.all([
+    env.HUAU_DB.prepare(
+      `SELECT tc.id,tc.name,tc.scheduled_date as scheduledDate,tc.structure_locked as structureLocked,tc.format_version_id as formatVersionId,
+              c.status as competitionStatus,f.config_json as configJson,
+              (SELECT COUNT(*) FROM tournament_entries e WHERE e.category_id=tc.id AND e.status IN ('ready','confirmed')) as entryCount
+         FROM tournament_categories tc LEFT JOIN competition_format_versions f ON f.id=tc.format_version_id
+         LEFT JOIN competitions c ON c.category_id=tc.id
+        WHERE tc.tournament_id=? AND tc.entry_type='team' ORDER BY tc.sort_order,tc.name`,
+    ).bind(tournamentId).all(),
+    env.HUAU_DB.prepare(
+      `SELECT ce.id,c.category_id as categoryId,ce.stage,ce.round_label as roundLabel,ce.round_number as roundNumber,ce.group_id as groupId,g.name as groupName,ce.leg_number as legNumber,
+              ce.entry_a_id as entryAId,ea.display_name as sideA,ce.entry_b_id as entryBId,eb.display_name as sideB,
+              ce.status,ce.winner_entry_id as winnerEntryId
+         FROM competition_encounters ce JOIN competitions c ON c.id=ce.competition_id JOIN tournament_categories tc ON tc.id=c.category_id
+         LEFT JOIN competition_groups g ON g.id=ce.group_id LEFT JOIN tournament_entries ea ON ea.id=ce.entry_a_id LEFT JOIN tournament_entries eb ON eb.id=ce.entry_b_id
+        WHERE tc.tournament_id=? AND tc.entry_type='team' ORDER BY c.category_id,g.sort_order,ce.leg_number,ce.round_number,ce.created_at`,
+    ).bind(tournamentId).all(),
+    env.HUAU_DB.prepare(
+      `SELECT m.id,m.encounter_id as encounterId,m.rubber_key as rubberKey,m.rubber_order as rubberOrder,m.mode,m.competition_gender as competitionGender,
+              m.best_of as bestOf,m.point_target as pointTarget,m.status,m.winner_side as winnerSide,
+              mr.score_a as scoreA,mr.score_b as scoreB,mr.result_status as resultStatus,
+              si.start_at as scheduleStart,si.end_at as scheduleEnd,si.court_label as courtLabel,si.status as scheduleStatus
+         FROM matches m JOIN competition_encounters ce ON ce.id=m.encounter_id JOIN competitions c ON c.id=ce.competition_id
+         JOIN tournament_categories tc ON tc.id=c.category_id LEFT JOIN match_results mr ON mr.match_id=m.id
+         LEFT JOIN schedule_items si ON si.match_id=m.id
+        WHERE tc.tournament_id=? AND tc.entry_type='team' ORDER BY COALESCE(si.start_at,9223372036854775807),m.encounter_id,m.rubber_order`,
+    ).bind(tournamentId).all(),
+    env.HUAU_DB.prepare(
+      `SELECT tl.id,tl.encounter_id as encounterId,tl.entry_id as entryId,tl.status,tl.locked_at as lockedAt
+         FROM team_encounter_lineups tl JOIN competition_encounters ce ON ce.id=tl.encounter_id JOIN competitions c ON c.id=ce.competition_id
+         JOIN tournament_categories tc ON tc.id=c.category_id
+        WHERE tc.tournament_id=? AND tc.entry_type='team' ORDER BY tl.encounter_id,tl.entry_id`,
+    ).bind(tournamentId).all(),
+    env.HUAU_DB.prepare(
+      `SELECT s.match_id as matchId,s.set_number as setNumber,s.score_a as scoreA,s.score_b as scoreB,s.winner_side as winnerSide
+         FROM match_sets s JOIN matches m ON m.id=s.match_id JOIN competition_encounters ce ON ce.id=m.encounter_id JOIN competitions c ON c.id=ce.competition_id
+         JOIN tournament_categories tc ON tc.id=c.category_id WHERE tc.tournament_id=? AND tc.entry_type='team' ORDER BY s.match_id,s.set_number`,
+    ).bind(tournamentId).all(),
+  ]);
+
+  type ResultCategoryRow = { id:string;name:string;scheduledDate:string|null;structureLocked:number;formatVersionId:string|null;competitionStatus:string|null;configJson:string|null;entryCount:number };
+  type ResultEncounterRow = { id:string;categoryId:string;stage:"group"|"playoff"|"bronze"|"final";roundLabel:string|null;roundNumber:number|null;groupId:string|null;groupName:string|null;legNumber:number;entryAId:string;sideA:string;entryBId:string;sideB:string;status:string;winnerEntryId:string|null };
+  type ResultMatchRow = { id:string;encounterId:string;rubberKey:string;rubberOrder:number;mode:string;competitionGender:string;bestOf:number;pointTarget:number;status:string;winnerSide:"A"|"B"|null;scoreA:number|null;scoreB:number|null;resultStatus:string|null;scheduleStart:number|null;scheduleEnd:number|null;courtLabel:string|null;scheduleStatus:string|null };
+  type ResultLineupRow = { id:string;encounterId:string;entryId:string;status:"draft"|"locked";lockedAt:number|null };
+  type ResultSetRow = { matchId:string;setNumber:number;scoreA:number;scoreB:number;winnerSide:string };
+
+  const categoryRows=categories.results as ResultCategoryRow[];
+  const encounterRows=encounters.results as ResultEncounterRow[];
+  const matchRows=matches.results as ResultMatchRow[];
+  const lineupRows=lineups.results as ResultLineupRow[];
+  const setRows=sets.results as ResultSetRow[];
+
+  const serializedCategories=categoryRows.map(category=>{
+    let format:TeamFormat|null=null;
+    try{format=category.configJson?parseTeamFormat(JSON.parse(category.configJson) as unknown):null;}catch{format=null;}
+    const categoryEncounters=encounterRows.filter(encounter=>encounter.categoryId===category.id).map(encounter=>({
+      ...encounter,
+      matches:matchRows.filter(match=>match.encounterId===encounter.id).map(match=>({
+        ...match,
+        sets:setRows.filter(set=>set.matchId===match.id),
+      })),
+      lineups:lineupRows.filter(lineup=>lineup.encounterId===encounter.id).map(lineup=>({...lineup,assignments:[]})),
+    }));
+    return {...category,format,entries:[],groups:[],encounters:categoryEncounters,standings:[]};
+  });
+
+  return json({ok:true,profiles:[],categories:serializedCategories});
+}
+
 async function teamDetail(
   request: Request,
   env: Env,
@@ -1524,6 +1602,9 @@ export async function handleTeamAdminApi(
   url: URL,
   access: AccessHelpers,
 ): Promise<Response | null> {
+  const resultsDetailRoute = url.pathname.match(/^\/api\/admin\/tournaments\/([^/]+)\/team\/results$/);
+  if (resultsDetailRoute && request.method === "GET") return teamResultsDetail(request, env, decodeURIComponent(resultsDetailRoute[1]!), access);
+
   const detailRoute = url.pathname.match(/^\/api\/admin\/tournaments\/([^/]+)\/team$/);
   if (detailRoute && request.method === "GET") return teamDetail(request, env, decodeURIComponent(detailRoute[1]!), access);
 

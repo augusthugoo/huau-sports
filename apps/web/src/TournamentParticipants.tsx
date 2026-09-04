@@ -156,12 +156,12 @@ export function TournamentParticipantsAdmin({ tournamentId, locale, players, cat
   const [showCreate, setShowCreate] = useState(false);
   const [publicUrl, setPublicUrl] = useState("");
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (syncPayments = false) => {
     try {
       const registrationData = await api<{ ok: true; registrations: AdminRegistration[]; publicUrl: string }>(`/api/admin/tournaments/${tournamentId}/registrations`);
       setRegistrations(registrationData.registrations);
       setPublicUrl(registrationData.publicUrl);
-      try { await api(`/api/admin/tournaments/${tournamentId}/payments/sync`, { method: "POST", body: "{}" }); } catch { /* Payments can be unavailable in old test data; participant administration still loads. */ }
+      if (syncPayments) { try { await api(`/api/admin/tournaments/${tournamentId}/payments/sync`, { method: "POST", body: "{}" }); } catch { /* Payment sync is mutation-driven; participant administration still loads if payments are unavailable. */ } }
       const paymentData = await api<{ ok: true; orders: PaymentOrder[] }>(`/api/admin/tournaments/${tournamentId}/payments`);
       setOrders(paymentData.orders);
       setError("");
@@ -169,7 +169,7 @@ export function TournamentParticipantsAdmin({ tournamentId, locale, players, cat
       setError(e instanceof Error ? e.message : "PARTICIPANTS_LOAD_FAILED");
     }
   }, [tournamentId]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(false); }, [load]);
 
   const refreshTimer = useRef<number | null>(null);
   const competitionRefreshPending = useRef(false);
@@ -181,7 +181,7 @@ export function TournamentParticipantsAdmin({ tournamentId, locale, players, cat
       const refreshCompetition = competitionRefreshPending.current;
       competitionRefreshPending.current = false;
       if (refreshCompetition) void onCompetitionChanged();
-      void load();
+      void load(true);
     }, 180);
   }, [load, onCompetitionChanged]);
   useEffect(() => () => {
