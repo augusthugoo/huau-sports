@@ -14,7 +14,7 @@ import type {
   LegacySeedingMethod,
 } from "@huau/core";
 import type { Locale } from "./i18n";
-import { TeamCompetitionPanel, TeamResultsPanel, TeamTVPanel, TeamTournamentPanel } from "./TeamTournamentPanel";
+import { TeamCompetitionPanel, TeamResultsPanel, TeamTVPanel, TeamTournamentPanel, preloadTeamSnapshot } from "./TeamTournamentPanel";
 import { TournamentPaymentsAdmin } from "./TournamentPayments";
 import { TournamentParticipantsAdmin } from "./TournamentParticipants";
 import { FormatExplanationPanel, explanationForPersistedFormat } from "./FormatExplanationPanel";
@@ -436,19 +436,22 @@ export function TournamentParityWorkspace({organizationId,tournamentId,locale,go
     );
   },[installState,locale,tournamentId]);
 
-  const loadWorkspace=useCallback(async(recoverDraft=true)=>{
+  const loadWorkspace=useCallback(async(recoverDraft=true,refreshTeam=false)=>{
     setError("");
     try{
       const bundle=await request<WorkspaceBootstrap>(
         `/api/admin/tournaments/${tournamentId}/workspace`,
       );
+      if(bundle.core.categories.some(category=>category.entryType==="team")){
+        await preloadTeamSnapshot(tournamentId,refreshTeam);
+      }
       await installServerBundle(bundle,recoverDraft);
     }catch(e){
       setError(e instanceof Error?e.message:"WORKSPACE_LOAD_FAILED");
     }
   },[installServerBundle,tournamentId]);
 
-  useEffect(()=>{void loadWorkspace(true);},[loadWorkspace]);
+  useEffect(()=>{void loadWorkspace(true,false);},[loadWorkspace]);
 
   const stageStandardResult=useCallback(async(matchId:string,result:StandardResultInput)=>{
     const currentDetail=detailRef.current;
@@ -628,7 +631,7 @@ export function TournamentParityWorkspace({organizationId,tournamentId,locale,go
       ));
       return;
     }
-    await loadWorkspace(false);
+    await loadWorkspace(false,true);
   },[loadWorkspace,locale]);
 
   const act:ActionRunner=async(fn,afterMutation,refreshMode="background")=>{
@@ -646,7 +649,7 @@ export function TournamentParityWorkspace({organizationId,tournamentId,locale,go
     try{
       const result=await fn();
       afterMutation?.(result);
-      if(refreshMode!=="none")await loadWorkspace(false);
+      if(refreshMode!=="none")await loadWorkspace(false,true);
       return result;
     }catch(e){
       setError(e instanceof Error?e.message:"error");

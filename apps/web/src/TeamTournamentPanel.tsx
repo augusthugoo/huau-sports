@@ -147,6 +147,63 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return payload;
 }
 
+type TeamSnapshotMode = "full" | "results";
+
+const teamSnapshotCache = new Map<string, TeamDetail>();
+const teamSnapshotInflight = new Map<string, Promise<TeamDetail>>();
+
+function teamSnapshotKey(tournamentId: string, mode: TeamSnapshotMode) {
+  return `${tournamentId}:${mode}`;
+}
+
+async function fetchTeamSnapshot(
+  tournamentId: string,
+  mode: TeamSnapshotMode = "full",
+  force = false,
+): Promise<TeamDetail> {
+  const fullKey = teamSnapshotKey(tournamentId, "full");
+  const resultsKey = teamSnapshotKey(tournamentId, "results");
+  const key = teamSnapshotKey(tournamentId, mode);
+
+  if (force) {
+    teamSnapshotCache.delete(fullKey);
+    teamSnapshotCache.delete(resultsKey);
+  } else {
+    if (mode === "results") {
+      const full = teamSnapshotCache.get(fullKey);
+      if (full) return full;
+    }
+    const cached = teamSnapshotCache.get(key);
+    if (cached) return cached;
+
+    const pendingFull = mode === "results" ? teamSnapshotInflight.get(fullKey) : undefined;
+    if (pendingFull) return pendingFull;
+    const pending = teamSnapshotInflight.get(key);
+    if (pending) return pending;
+  }
+
+  const promise = api<TeamDetail>(
+    mode === "results"
+      ? `/api/admin/tournaments/${tournamentId}/team/results`
+      : `/api/admin/tournaments/${tournamentId}/team`,
+  )
+    .then((result) => {
+      teamSnapshotCache.set(key, result);
+      if (mode === "full") teamSnapshotCache.set(resultsKey, result);
+      return result;
+    })
+    .finally(() => {
+      teamSnapshotInflight.delete(key);
+    });
+
+  teamSnapshotInflight.set(key, promise);
+  return promise;
+}
+
+export async function preloadTeamSnapshot(tournamentId: string, force = false) {
+  return fetchTeamSnapshot(tournamentId, "full", force);
+}
+
 async function impactApi<T>(locale: Locale, path: string, method: "POST" | "PUT" | "DELETE", body: Record<string, unknown>): Promise<T> {
   try {
     return await api<T>(path, { method, body: JSON.stringify(body) });
@@ -172,9 +229,9 @@ export function TeamTournamentPanel({ tournamentId, locale }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (force = false) => {
     try {
-      const result = await api<TeamDetail>(`/api/admin/tournaments/${tournamentId}/team`);
+      const result = await fetchTeamSnapshot(tournamentId, "full", force);
       setDetail(result);
       setSelectedCategoryId((current) => {
         if (current && result.categories.some((category) => category.id === current)) return current;
@@ -187,7 +244,7 @@ export function TeamTournamentPanel({ tournamentId, locale }: Props) {
   }, [tournamentId]);
 
   useEffect(() => {
-    void load();
+    void load(false);
   }, [load]);
 
   const mutate = async (fn: () => Promise<unknown>) => {
@@ -203,7 +260,7 @@ export function TeamTournamentPanel({ tournamentId, locale }: Props) {
     } finally {
       setBusy(false);
     }
-    if (refresh) void load();
+    if (refresh) void load(true);
   };
 
   const applyLineupState = (
@@ -939,9 +996,9 @@ function useTeamSnapshot(tournamentId: string, pollMs = 0, mode: "full"|"results
   const [detail, setDetail] = useState<TeamDetail | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const load = useCallback(async () => {
+  const load = useCallback(async (force = false) => {
     try {
-      const result = await api<TeamDetail>(mode==="results"?`/api/admin/tournaments/${tournamentId}/team/results`:`/api/admin/tournaments/${tournamentId}/team`);
+      const result = await fetchTeamSnapshot(tournamentId, mode, force);
       setDetail(result);
       setError("");
     } catch (loadError) {
@@ -950,13 +1007,14 @@ function useTeamSnapshot(tournamentId: string, pollMs = 0, mode: "full"|"results
       setLoading(false);
     }
   }, [mode, tournamentId]);
+  const reload = useCallback(() => load(true), [load]);
   useEffect(() => {
-    void load();
+    void load(false);
     if (!pollMs) return;
-    const timer = window.setInterval(() => void load(), pollMs);
+    const timer = window.setInterval(() => void load(true), pollMs);
     return () => window.clearInterval(timer);
   }, [load, pollMs]);
-  return { detail, error, loading, reload: load };
+  return { detail, error, loading, reload };
 }
 
 function encounterDisplayScore(category:TeamCategory,encounter:TeamEncounter){const weights=new Map<string,number>(category.format?.encounter.rubbers.map(rubber=>[rubber.key,rubber.weight] as const)??[]);return {a:encounter.matches.filter(match=>match.winnerSide==="A").reduce((sum,match)=>sum+(weights.get(match.rubberKey)??1),0),b:encounter.matches.filter(match=>match.winnerSide==="B").reduce((sum,match)=>sum+(weights.get(match.rubberKey)??1),0)};}
