@@ -1738,12 +1738,36 @@ async function syncFinalizedSnapshot(
       stamp,
     ),
     env.HUAU_DB.prepare(
+      `UPDATE tournament_settings
+          SET daily_start=?,daily_end=?,default_match_minutes=?,
+              minimum_group=?,preferred_group=?,maximum_group=?,
+              suggested_qualifiers_per_group=?,seeding_method=?,minimum_rest_slots=?,
+              updated_at=?
+        WHERE tournament_id=?`,
+    ).bind(
+      stringValue(snapshot.workspace.core.settings.dailyStart, "09:00"),
+      stringValue(snapshot.workspace.core.settings.dailyEnd, "20:00"),
+      Math.max(5, Math.trunc(numberValue(snapshot.workspace.core.settings.defaultMatchMinutes, 30))),
+      Math.max(2, Math.trunc(numberValue(snapshot.workspace.core.settings.minimumGroup, 3))),
+      Math.max(2, Math.trunc(numberValue(snapshot.workspace.core.settings.preferredGroup, 4))),
+      Math.max(2, Math.trunc(numberValue(snapshot.workspace.core.settings.maximumGroup, 4))),
+      Math.max(0, Math.min(2, Math.trunc(numberValue(snapshot.workspace.core.settings.suggestedQualifiersPerGroup, 2)))),
+      allowed(snapshot.workspace.core.settings.seedingMethod, ["snake","manual","random","live"] as const, "snake"),
+      Math.max(0, Math.min(4, Math.trunc(numberValue(snapshot.workspace.core.settings.minimumRestSlots, 1)))),
+      stamp,
+      tournamentId,
+    ),
+    env.HUAU_DB.prepare(
       `UPDATE tournaments
-          SET status='completed',structure_locked=1,
+          SET status='completed',structure_locked=1,court_count=?,
               working_revision=working_revision+1,published_revision=published_revision+1,
               updated_at=?
         WHERE id=?`,
-    ).bind(stamp, tournamentId),
+    ).bind(
+      Math.max(1, Math.trunc(numberValue(snapshot.workspace.core.tournament.courtCount, 1))),
+      stamp,
+      tournamentId,
+    ),
     env.HUAU_DB.prepare(
       `INSERT INTO critical_audit_events
        (id,organization_id,tournament_id,actor_user_id,actor_type,action,entity_type,entity_id,

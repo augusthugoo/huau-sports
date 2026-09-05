@@ -3,7 +3,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 import type { Locale } from "./i18n";
 import {
-  addLocalCategory,
   addLocalPlayer,
   addLocalStandardEntry,
   advanceLocalLiveDraw,
@@ -50,6 +49,7 @@ type Props = {
 type Tab =
   | "overview"
   | "participants"
+  | "format"
   | "competition"
   | "team"
   | "schedule"
@@ -513,8 +513,9 @@ export function TournamentDayWorkspace(props: Props) {
   const tabs: Array<[Tab, string]> = [
     ["overview", tr(locale, "Resumen", "Overview")],
     ["participants", tr(locale, "Participantes", "Participants")],
+    ["format", tr(locale, "Formato", "Format")],
+    ["team", tr(locale, "Equipos", "Teams")],
     ["competition", tr(locale, "Competencia", "Competition")],
-    ["team", "Team"],
     ["schedule", tr(locale, "Cronograma", "Schedule")],
     ["results", tr(locale, "Resultados", "Results")],
     ["tv", "TV"],
@@ -608,6 +609,10 @@ export function TournamentDayWorkspace(props: Props) {
         <DayParticipants locale={locale} snapshot={snapshot} mutate={mutate} />
       ) : null}
 
+      {tab === "format" ? (
+        <DayFormat locale={locale} snapshot={snapshot} mutate={mutate} />
+      ) : null}
+
       {tab === "competition" ? (
         <DayStandardCompetition locale={locale} snapshot={snapshot} mutate={mutate} />
       ) : null}
@@ -685,6 +690,8 @@ function DayOverview({
         <h2>{tr(locale, "Accesos rápidos", "Quick actions")}</h2>
         <div className="td-quick">
           <button onClick={() => setTab("participants")}>{tr(locale, "Participantes", "Participants")} →</button>
+          <button onClick={() => setTab("format")}>{tr(locale, "Formato", "Format")} →</button>
+          <button onClick={() => setTab("team")}>{tr(locale, "Equipos", "Teams")} →</button>
           <button onClick={() => setTab("competition")}>{tr(locale, "Competencia", "Competition")} →</button>
           <button onClick={() => setTab("results")}>{tr(locale, "Resultados", "Results")} →</button>
           <button onClick={() => setTab("tv")}>TV →</button>
@@ -790,6 +797,370 @@ function DayParticipants({
   );
 }
 
+function DayFormat({
+  locale,
+  snapshot,
+  mutate,
+}: {
+  locale: Locale;
+  snapshot: TournamentDaySnapshot;
+  mutate: (fn: (snapshot: TournamentDaySnapshot) => void, message?: string) => Promise<void>;
+}) {
+  const settings = snapshot.workspace.core.settings as any;
+  const tournament = snapshot.workspace.core.tournament as any;
+  const standardCategories = (snapshot.workspace.core.categories as any[]).filter(
+    (category) => category.entryType !== "team",
+  );
+  const teamCategories = snapshot.team.categories as any[];
+  const [standardCategoryId, setStandardCategoryId] = useState(standardCategories[0]?.id ?? "");
+  const [teamCategoryId, setTeamCategoryId] = useState(teamCategories[0]?.id ?? "");
+
+  const standardCategory =
+    standardCategories.find((category) => category.id === standardCategoryId) ?? standardCategories[0];
+  const standardCompetition = (snapshot.workspace.standard.competitions as any[]).find(
+    (competition) => competition.categoryId === standardCategory?.id,
+  );
+  const standardFormat = standardCompetition?.format ?? (() => {
+    try {
+      return standardCategory?.configJson ? JSON.parse(standardCategory.configJson) as any : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  const teamCategory =
+    teamCategories.find((category) => category.id === teamCategoryId) ?? teamCategories[0];
+  const teamFormat = (teamCategory?.format ?? null) as TeamFormat | null;
+
+  useEffect(() => {
+    if (!standardCategoryId && standardCategories[0]?.id) setStandardCategoryId(standardCategories[0].id);
+    if (standardCategoryId && !standardCategories.some((category) => category.id === standardCategoryId)) {
+      setStandardCategoryId(standardCategories[0]?.id ?? "");
+    }
+  }, [standardCategories, standardCategoryId]);
+
+  useEffect(() => {
+    if (!teamCategoryId && teamCategories[0]?.id) setTeamCategoryId(teamCategories[0].id);
+    if (teamCategoryId && !teamCategories.some((category) => category.id === teamCategoryId)) {
+      setTeamCategoryId(teamCategories[0]?.id ?? "");
+    }
+  }, [teamCategories, teamCategoryId]);
+
+  const saveOperational = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    await mutate((next) => {
+      const nextSettings = next.workspace.core.settings as any;
+      const nextTournament = next.workspace.core.tournament as any;
+      nextSettings.dailyStart = String(data.get("dailyStart") ?? "09:00");
+      nextSettings.dailyEnd = String(data.get("dailyEnd") ?? "20:00");
+      nextSettings.defaultMatchMinutes = Math.max(5, Number(data.get("defaultMatchMinutes") ?? 30));
+      nextSettings.minimumGroup = Math.max(2, Number(data.get("minimumGroup") ?? 3));
+      nextSettings.preferredGroup = Math.max(nextSettings.minimumGroup, Number(data.get("preferredGroup") ?? 4));
+      nextSettings.maximumGroup = Math.max(nextSettings.preferredGroup, Number(data.get("maximumGroup") ?? 4));
+      nextSettings.suggestedQualifiersPerGroup = Math.max(0, Math.min(2, Number(data.get("suggestedQualifiersPerGroup") ?? 2)));
+      nextSettings.seedingMethod = String(data.get("seedingMethod") ?? "snake");
+      nextSettings.minimumRestSlots = Math.max(0, Math.min(4, Number(data.get("minimumRestSlots") ?? 1)));
+      nextTournament.courtCount = Math.max(1, Number(data.get("courtCount") ?? 1));
+      next.workspace.schedule.schedule = [];
+    }, tr(locale, "Parámetros operativos guardados localmente.", "Operational parameters saved locally."));
+  };
+
+  const saveStandard = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!standardCategory) return;
+    const data = new FormData(event.currentTarget);
+    await mutate((next) => {
+      saveLocalStandardFormat(next, standardCategory.id, {
+        groupRounds: Number(data.get("groupRounds")) === 2 ? 2 : 1,
+        qualifiersPerGroup: Math.max(1, Number(data.get("qualifiersPerGroup") ?? 2)),
+        wildcardQualifiers: Math.max(0, Number(data.get("wildcardQualifiers") ?? 0)),
+        playoffMode: String(data.get("playoffMode") ?? "standard") as any,
+        crossGroupMethod: String(data.get("crossGroupMethod") ?? "normalized") as any,
+        consolationMode: String(data.get("consolationMode") ?? "none") as any,
+        avoidGroupRematches: data.get("avoidGroupRematches") === "on",
+        bronzeMatch: data.get("bronzeMatch") === "on",
+        medalSchedule: String(data.get("medalSchedule") ?? "sequential") as any,
+        finalDrawMethod: String(data.get("finalDrawMethod") ?? "performance") as any,
+        preferredRestSlots: Math.max(0, Number(data.get("preferredRestSlots") ?? 1)),
+        preliminary: {
+          bestOf: Number(data.get("preBestOf")) === 3 ? 3 : 1,
+          pointTarget: Math.max(1, Number(data.get("preTarget") ?? 15)),
+        },
+        medal: {
+          bestOf: Number(data.get("medalBestOf")) === 3 ? 3 : 1,
+          pointTarget: Math.max(1, Number(data.get("medalTarget") ?? 11)),
+        },
+      });
+    }, tr(locale, "Formato Standard guardado localmente.", "Standard format saved locally."));
+  };
+
+  const saveTeam = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!teamCategory) return;
+    const data = new FormData(event.currentTarget);
+    await mutate((next) => {
+      const currentCategory = (next.team.categories as any[]).find((category) => category.id === teamCategory.id);
+      const base = cloneDay((currentCategory?.format ?? teamFormatPreset("generic")) as TeamFormat);
+      base.roster.min = Math.max(1, Number(data.get("rosterMin") ?? base.roster.min));
+      base.roster.max = Math.max(base.roster.min, Number(data.get("rosterMax") ?? base.roster.max));
+      base.roster.composition = String(data.get("composition") ?? base.roster.composition) as TeamFormat["roster"]["composition"];
+      base.roster.rules.maleMin = Math.max(0, Number(data.get("maleMin") ?? base.roster.rules.maleMin));
+      base.roster.rules.femaleMin = Math.max(0, Number(data.get("femaleMin") ?? base.roster.rules.femaleMin));
+      base.roster.rules.maleMax = String(data.get("maleMax") ?? "").trim() ? Math.max(0, Number(data.get("maleMax"))) : null;
+      base.roster.rules.femaleMax = String(data.get("femaleMax") ?? "").trim() ? Math.max(0, Number(data.get("femaleMax"))) : null;
+      base.roster.substitutesAllowed = data.get("substitutesAllowed") === "on";
+      base.roster.captainRequired = data.get("captainRequired") === "on";
+
+      base.encounter.winnerRule = String(data.get("winnerRule") ?? base.encounter.winnerRule) as TeamFormat["encounter"]["winnerRule"];
+      base.encounter.targetWins = String(data.get("targetWins") ?? "").trim()
+        ? Math.max(1, Number(data.get("targetWins")))
+        : null;
+      base.encounter.playRemainingAfterClinched = data.get("playRemainingAfterClinched") === "on";
+
+      base.competition.groupRounds = Number(data.get("teamGroupRounds")) === 2 ? 2 : 1;
+      base.competition.playoffMode = String(data.get("teamPlayoffMode") ?? "standard") as any;
+      base.competition.qualifiersPerGroup = Math.max(1, Number(data.get("teamQualifiersPerGroup") ?? 2));
+      base.competition.wildcardQualifiers = Math.max(0, Number(data.get("teamWildcardQualifiers") ?? 0));
+      base.competition.bronzeMatch = data.get("teamBronzeMatch") === "on";
+
+      const criteria = ["standing_points","encounter_wins","head_to_head","rubber_diff","point_diff","points_for"]
+        .filter((criterion) => data.get(`criterion:${criterion}`) === "on");
+      base.standings.criteria = (criteria.length ? criteria : ["standing_points","head_to_head","rubber_diff","point_diff"]) as TeamFormat["standings"]["criteria"];
+
+      base.encounter.rubbers = base.encounter.rubbers.map((rubber, index) => ({
+        ...rubber,
+        label: String(data.get(`rubber:${rubber.key}:label`) ?? rubber.label).trim() || rubber.label,
+        order: index + 1,
+        mode: String(data.get(`rubber:${rubber.key}:mode`) ?? rubber.mode) as any,
+        gender: String(data.get(`rubber:${rubber.key}:gender`) ?? rubber.gender) as any,
+        play: String(data.get(`rubber:${rubber.key}:play`) ?? rubber.play) as any,
+        isTiebreaker: data.get(`rubber:${rubber.key}:tiebreaker`) === "on",
+        weight: Math.max(0, Number(data.get(`rubber:${rubber.key}:weight`) ?? rubber.weight)),
+        bestOf: Number(data.get(`rubber:${rubber.key}:bestOf`)) === 3 ? 3 : 1,
+        pointTarget: Math.max(1, Number(data.get(`rubber:${rubber.key}:target`) ?? rubber.pointTarget)),
+        scoringMode: String(data.get(`rubber:${rubber.key}:scoringMode`) ?? "").trim() || null,
+      }));
+      setLocalTeamFormat(next, teamCategory.id, base);
+    }, tr(locale, "Formato Team guardado localmente.", "Team format saved locally."));
+  };
+
+  const applyPreset = (preset: "senior_cup_2026" | "generic") => {
+    if (!teamCategory) return;
+    void mutate(
+      (next) => applyLocalTeamPreset(next, teamCategory.id, preset),
+      preset === "senior_cup_2026"
+        ? tr(locale, "Preset Senior Cup 2026 aplicado localmente.", "Senior Cup 2026 preset applied locally.")
+        : tr(locale, "Preset Team configurable aplicado localmente.", "Configurable Team preset applied locally."),
+    );
+  };
+
+  const addRubber = () => {
+    if (!teamCategory) return;
+    void mutate((next) => {
+      const currentCategory = (next.team.categories as any[]).find((category) => category.id === teamCategory.id);
+      const base = cloneDay((currentCategory?.format ?? teamFormatPreset("generic")) as TeamFormat);
+      const order = base.encounter.rubbers.length + 1;
+      base.encounter.rubbers.push({
+        key: `r${Date.now()}`,
+        label: `${tr(locale, "Partido", "Rubber")} ${order}`,
+        order,
+        mode: "doubles",
+        gender: "open",
+        play: "always",
+        isTiebreaker: false,
+        weight: 1,
+        bestOf: 1,
+        pointTarget: 15,
+        scoringMode: null,
+      });
+      setLocalTeamFormat(next, teamCategory.id, base);
+    }, tr(locale, "Rubber agregado localmente.", "Rubber added locally."));
+  };
+
+  const mutateRubber = (key: string, action: "up" | "down" | "remove") => {
+    if (!teamCategory) return;
+    void mutate((next) => {
+      const currentCategory = (next.team.categories as any[]).find((category) => category.id === teamCategory.id);
+      const base = cloneDay((currentCategory?.format ?? teamFormatPreset("generic")) as TeamFormat);
+      const index = base.encounter.rubbers.findIndex((rubber) => rubber.key === key);
+      if (index < 0) return;
+      if (action === "remove") {
+        if (base.encounter.rubbers.length <= 1) throw new Error("TEAM_RUBBER_REQUIRED");
+        base.encounter.rubbers.splice(index, 1);
+      } else {
+        const target = action === "up" ? index - 1 : index + 1;
+        if (target < 0 || target >= base.encounter.rubbers.length) return;
+        [base.encounter.rubbers[index], base.encounter.rubbers[target]] =
+          [base.encounter.rubbers[target]!, base.encounter.rubbers[index]!];
+      }
+      base.encounter.rubbers = base.encounter.rubbers.map((rubber, rubberIndex) => ({
+        ...rubber,
+        order: rubberIndex + 1,
+      }));
+      setLocalTeamFormat(next, teamCategory.id, base);
+    }, tr(locale, "Rubbers actualizados localmente.", "Rubbers updated locally."));
+  };
+
+  return (
+    <section className="td-stack">
+      <article className="panel">
+        <div className="panel-title">
+          <div>
+            <div className="eyebrow">TOURNAMENT DAY · LOCAL</div>
+            <h2>{tr(locale, "Parámetros operativos", "Operational parameters")}</h2>
+            <p className="muted">{tr(
+              locale,
+              "Estos valores determinan cómo se ejecuta la jornada y no cambian la inscripción pública. Al modificarlos se invalida el cronograma local para regenerarlo.",
+              "These values control event operation and do not change public registration. Changing them clears the local schedule so it can be regenerated."
+            )}</p>
+          </div>
+        </div>
+        <form className="td-format-grid" onSubmit={saveOperational}>
+          <label><span>{tr(locale,"Inicio jornada","Day start")}</span><input name="dailyStart" type="time" defaultValue={settings.dailyStart ?? "09:00"} /></label>
+          <label><span>{tr(locale,"Fin objetivo","Target end")}</span><input name="dailyEnd" type="time" defaultValue={settings.dailyEnd ?? "20:00"} /></label>
+          <label><span>{tr(locale,"Canchas","Courts")}</span><input name="courtCount" type="number" min="1" defaultValue={tournament.courtCount ?? 1} /></label>
+          <label><span>{tr(locale,"Min/partido","Min/match")}</span><input name="defaultMatchMinutes" type="number" min="5" defaultValue={settings.defaultMatchMinutes ?? 30} /></label>
+          <label><span>{tr(locale,"Grupo mínimo","Min group")}</span><input name="minimumGroup" type="number" min="2" defaultValue={settings.minimumGroup ?? 3} /></label>
+          <label><span>{tr(locale,"Grupo preferido","Preferred group")}</span><input name="preferredGroup" type="number" min="2" defaultValue={settings.preferredGroup ?? 4} /></label>
+          <label><span>{tr(locale,"Grupo máximo","Max group")}</span><input name="maximumGroup" type="number" min="2" defaultValue={settings.maximumGroup ?? 4} /></label>
+          <label><span>{tr(locale,"Clasificados sugeridos","Suggested qualifiers")}</span><select name="suggestedQualifiersPerGroup" defaultValue={String(settings.suggestedQualifiersPerGroup ?? 2)}><option value="0">Auto</option><option value="1">1</option><option value="2">2</option></select></label>
+          <label><span>{tr(locale,"Siembra default","Default seeding")}</span><select name="seedingMethod" defaultValue={settings.seedingMethod ?? "snake"}><option value="snake">DUPR / snake</option><option value="random">{tr(locale,"Aleatorio","Random")}</option><option value="manual">{tr(locale,"Manual","Manual")}</option><option value="live">{tr(locale,"Sorteo en vivo","Live draw")}</option></select></label>
+          <label><span>{tr(locale,"Descanso mínimo","Minimum rest")}</span><select name="minimumRestSlots" defaultValue={String(settings.minimumRestSlots ?? 1)}><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label>
+          <button className="light">{tr(locale,"Guardar parámetros locales","Save local parameters")}</button>
+        </form>
+      </article>
+
+      {standardCategories.length ? (
+        <article className="panel">
+          <div className="panel-title">
+            <div><div className="eyebrow">STANDARD FORMAT</div><h2>{tr(locale,"Formato por categoría","Format by category")}</h2></div>
+          </div>
+          <div className="td-category-tabs">
+            {standardCategories.map((category) => <button type="button" key={category.id} className={category.id===standardCategory?.id?"light small":"ghost small"} onClick={()=>setStandardCategoryId(category.id)}>{category.name}</button>)}
+          </div>
+          {standardCategory ? (
+            <form className="td-format-grid" onSubmit={saveStandard}>
+              <label><span>{tr(locale,"Vueltas de grupo","Group rounds")}</span><select name="groupRounds" defaultValue={standardFormat?.groupRounds ?? 1}><option value="1">1</option><option value="2">2</option></select></label>
+              <label><span>{tr(locale,"Clasifican/grupo","Qualifiers/group")}</span><input name="qualifiersPerGroup" type="number" min="1" defaultValue={standardFormat?.qualifiersPerGroup ?? 2} /></label>
+              <label><span>Wildcards</span><input name="wildcardQualifiers" type="number" min="0" defaultValue={standardFormat?.wildcardQualifiers ?? 0} /></label>
+              <label><span>Playoff</span><select name="playoffMode" defaultValue={standardFormat?.playoffMode ?? "standard"}><option value="standard">Standard</option><option value="top2_final">Top 2 → Final</option><option value="top4_semis">Top 4 → Semis</option><option value="top3_step">Top 3 ladder</option><option value="league_only">League only</option></select></label>
+              <label><span>{tr(locale,"Comparación grupos","Cross-group")}</span><select name="crossGroupMethod" defaultValue={standardFormat?.crossGroupMethod ?? "normalized"}><option value="normalized">Normalized</option><option value="equalized">Equalized</option></select></label>
+              <label><span>{tr(locale,"Consolación","Consolation")}</span><select name="consolationMode" defaultValue={standardFormat?.consolationMode ?? "none"}><option value="none">{tr(locale,"Sin consolación","None")}</option><option value="knockout">Knockout</option></select></label>
+              <label className="check"><input name="avoidGroupRematches" type="checkbox" defaultChecked={standardFormat?.avoidGroupRematches ?? true}/><span>{tr(locale,"Evitar revancha inmediata","Avoid group rematch")}</span></label>
+              <label className="check"><input name="bronzeMatch" type="checkbox" defaultChecked={standardFormat?.bronzeMatch ?? true}/><span>{tr(locale,"Partido por bronce","Bronze match")}</span></label>
+              <label><span>{tr(locale,"Cruce final","Final draw")}</span><select name="finalDrawMethod" defaultValue={standardFormat?.finalDrawMethod ?? "performance"}><option value="performance">Performance</option><option value="pots">Pots</option></select></label>
+              <label><span>{tr(locale,"Medallas","Medals")}</span><select name="medalSchedule" defaultValue={standardFormat?.medalSchedule ?? "sequential"}><option value="sequential">{tr(locale,"Secuencial","Sequential")}</option><option value="simultaneous">{tr(locale,"Simultáneo","Simultaneous")}</option></select></label>
+              <label><span>{tr(locale,"Descanso preferido","Preferred rest")}</span><input name="preferredRestSlots" type="number" min="0" defaultValue={standardFormat?.preferredRestSlots ?? settings.minimumRestSlots ?? 1}/></label>
+              <label><span>Grupos BO</span><select name="preBestOf" defaultValue={standardFormat?.preliminary?.bestOf ?? 1}><option value="1">BO1</option><option value="3">BO3</option></select></label>
+              <label><span>{tr(locale,"Puntos grupos","Group target")}</span><input name="preTarget" type="number" min="1" defaultValue={standardFormat?.preliminary?.pointTarget ?? 15}/></label>
+              <label><span>Medallas BO</span><select name="medalBestOf" defaultValue={standardFormat?.medal?.bestOf ?? 3}><option value="1">BO1</option><option value="3">BO3</option></select></label>
+              <label><span>{tr(locale,"Puntos medallas","Medal target")}</span><input name="medalTarget" type="number" min="1" defaultValue={standardFormat?.medal?.pointTarget ?? 11}/></label>
+              <button className="light">{tr(locale,"Guardar Standard local","Save Standard locally")}</button>
+            </form>
+          ) : null}
+        </article>
+      ) : null}
+
+      {teamCategories.length ? (
+        <article className="panel team-format-builder">
+          <div className="panel-title">
+            <div><div className="eyebrow">TEAM FORMAT BUILDER</div><h2>{teamCategory?.name ?? "Team"}</h2></div>
+            <div className="form-actions">
+              <button type="button" className="ghost small" onClick={()=>applyPreset("senior_cup_2026")}>Senior Cup 2026</button>
+              <button type="button" className="ghost small" onClick={()=>applyPreset("generic")}>{tr(locale,"Team configurable","Configurable Team")}</button>
+            </div>
+          </div>
+          <div className="td-category-tabs">
+            {teamCategories.map((category) => <button type="button" key={category.id} className={category.id===teamCategory?.id?"light small":"ghost small"} onClick={()=>setTeamCategoryId(category.id)}>{category.name}</button>)}
+          </div>
+          {teamCategory && teamFormat ? (
+            <form className="td-stack" onSubmit={saveTeam}>
+              <section className="team-config-block">
+                <h3>{tr(locale,"Roster","Roster")}</h3>
+                <div className="td-format-grid">
+                  <label><span>{tr(locale,"Mínimo","Minimum")}</span><input name="rosterMin" type="number" min="1" defaultValue={teamFormat.roster.min}/></label>
+                  <label><span>{tr(locale,"Máximo","Maximum")}</span><input name="rosterMax" type="number" min="1" defaultValue={teamFormat.roster.max}/></label>
+                  <label><span>{tr(locale,"Composición","Composition")}</span><select name="composition" defaultValue={teamFormat.roster.composition}><option value="mixed">Mixed</option><option value="open">Open</option><option value="male">Male</option><option value="female">Female</option></select></label>
+                  <label><span>{tr(locale,"Hombres mín.","Men min.")}</span><input name="maleMin" type="number" min="0" defaultValue={teamFormat.roster.rules.maleMin}/></label>
+                  <label><span>{tr(locale,"Hombres máx.","Men max.")}</span><input name="maleMax" type="number" min="0" defaultValue={teamFormat.roster.rules.maleMax ?? ""}/></label>
+                  <label><span>{tr(locale,"Mujeres mín.","Women min.")}</span><input name="femaleMin" type="number" min="0" defaultValue={teamFormat.roster.rules.femaleMin}/></label>
+                  <label><span>{tr(locale,"Mujeres máx.","Women max.")}</span><input name="femaleMax" type="number" min="0" defaultValue={teamFormat.roster.rules.femaleMax ?? ""}/></label>
+                  <label className="check"><input name="substitutesAllowed" type="checkbox" defaultChecked={teamFormat.roster.substitutesAllowed}/><span>{tr(locale,"Permitir suplentes","Allow substitutes")}</span></label>
+                  <label className="check"><input name="captainRequired" type="checkbox" defaultChecked={teamFormat.roster.captainRequired}/><span>{tr(locale,"Capitán obligatorio","Captain required")}</span></label>
+                </div>
+              </section>
+
+              <section className="team-config-block">
+                <h3>{tr(locale,"Serie y clasificación","Encounter & competition")}</h3>
+                <div className="td-format-grid">
+                  <label><span>{tr(locale,"Regla ganador","Winner rule")}</span><select name="winnerRule" defaultValue={teamFormat.encounter.winnerRule}><option value="majority">Majority</option><option value="first_to">First to</option></select></label>
+                  <label><span>{tr(locale,"Objetivo victorias","Target wins")}</span><input name="targetWins" type="number" min="1" defaultValue={teamFormat.encounter.targetWins ?? ""}/></label>
+                  <label className="check"><input name="playRemainingAfterClinched" type="checkbox" defaultChecked={teamFormat.encounter.playRemainingAfterClinched}/><span>{tr(locale,"Jugar restantes tras definir","Play remaining after clinched")}</span></label>
+                  <label><span>{tr(locale,"Vueltas","Group rounds")}</span><select name="teamGroupRounds" defaultValue={teamFormat.competition.groupRounds}><option value="1">1</option><option value="2">2</option></select></label>
+                  <label><span>Playoff</span><select name="teamPlayoffMode" defaultValue={teamFormat.competition.playoffMode}><option value="standard">Standard</option><option value="top2_final">Top 2 → Final</option><option value="top4_semis">Top 4 → Semis</option><option value="top3_step">Top 3 ladder</option><option value="league_only">League only</option></select></label>
+                  <label><span>{tr(locale,"Clasifican/grupo","Qualifiers/group")}</span><input name="teamQualifiersPerGroup" type="number" min="1" defaultValue={teamFormat.competition.qualifiersPerGroup ?? 2}/></label>
+                  <label><span>Wildcards</span><input name="teamWildcardQualifiers" type="number" min="0" defaultValue={teamFormat.competition.wildcardQualifiers ?? 0}/></label>
+                  <label className="check"><input name="teamBronzeMatch" type="checkbox" defaultChecked={Boolean(teamFormat.competition.bronzeMatch)}/><span>{tr(locale,"Bronce","Bronze")}</span></label>
+                </div>
+              </section>
+
+              <section className="team-config-block">
+                <div className="panel-title"><h3>Rubbers</h3><button type="button" className="ghost small" onClick={addRubber}>{tr(locale,"Agregar rubber","Add rubber")}</button></div>
+                <div className="td-team-grid">
+                  {teamFormat.encounter.rubbers.map((rubber,index)=>(
+                    <div className="td-team-card" key={rubber.key}>
+                      <div className="panel-title">
+                        <strong>{index+1}. {rubber.label}</strong>
+                        <div className="form-actions">
+                          <button type="button" className="ghost small" disabled={index===0} onClick={()=>mutateRubber(rubber.key,"up")}>↑</button>
+                          <button type="button" className="ghost small" disabled={index===teamFormat.encounter.rubbers.length-1} onClick={()=>mutateRubber(rubber.key,"down")}>↓</button>
+                          <button type="button" className="danger small" onClick={()=>mutateRubber(rubber.key,"remove")}>×</button>
+                        </div>
+                      </div>
+                      <div className="td-format-grid">
+                        <label><span>{tr(locale,"Nombre","Name")}</span><input name={`rubber:${rubber.key}:label`} defaultValue={rubber.label}/></label>
+                        <label><span>{tr(locale,"Modalidad","Mode")}</span><select name={`rubber:${rubber.key}:mode`} defaultValue={rubber.mode}><option value="singles">Singles</option><option value="doubles">Doubles</option></select></label>
+                        <label><span>{tr(locale,"Género","Gender")}</span><select name={`rubber:${rubber.key}:gender`} defaultValue={rubber.gender}><option value="open">Open</option><option value="male">Male</option><option value="female">Female</option><option value="mixed">Mixed</option></select></label>
+                        <label><span>{tr(locale,"Se juega","Play")}</span><select name={`rubber:${rubber.key}:play`} defaultValue={rubber.play}><option value="always">{tr(locale,"Siempre","Always")}</option><option value="if_tied">{tr(locale,"Si empatan","If tied")}</option></select></label>
+                        <label><span>{tr(locale,"Peso","Weight")}</span><input name={`rubber:${rubber.key}:weight`} type="number" min="0" defaultValue={rubber.weight}/></label>
+                        <label><span>BO</span><select name={`rubber:${rubber.key}:bestOf`} defaultValue={rubber.bestOf}><option value="1">BO1</option><option value="3">BO3</option></select></label>
+                        <label><span>{tr(locale,"Puntos","Target")}</span><input name={`rubber:${rubber.key}:target`} type="number" min="1" defaultValue={rubber.pointTarget}/></label>
+                        <label><span>Scoring mode</span><input name={`rubber:${rubber.key}:scoringMode`} defaultValue={rubber.scoringMode ?? ""} placeholder="rally-win-by-2-cap-21"/></label>
+                        <label className="check"><input name={`rubber:${rubber.key}:tiebreaker`} type="checkbox" defaultChecked={rubber.isTiebreaker}/><span>Tiebreaker</span></label>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section className="team-config-block">
+                <h3>{tr(locale,"Desempates de tabla","Standings criteria")}</h3>
+                <div className="td-chip-list">
+                  {[
+                    ["standing_points",tr(locale,"Puntos de serie","Standing points")],
+                    ["encounter_wins",tr(locale,"Series ganadas","Encounter wins")],
+                    ["head_to_head",tr(locale,"Enfrentamiento directo","Head to head")],
+                    ["rubber_diff",tr(locale,"Diferencia de partidos","Rubber diff")],
+                    ["point_diff",tr(locale,"Diferencia de puntos","Point diff")],
+                    ["points_for",tr(locale,"Puntos a favor","Points for")],
+                  ].map(([value,label])=><label className="check" key={value}><input type="checkbox" name={`criterion:${value}`} defaultChecked={teamFormat.standings.criteria.includes(value as any)}/><span>{label}</span></label>)}
+                </div>
+              </section>
+
+              <button className="light">{tr(locale,"Guardar formato Team local","Save Team format locally")}</button>
+            </form>
+          ) : (
+            <div className="notice-box">
+              {tr(locale,"Esta categoría todavía no tiene formato. Aplicá Senior Cup 2026 o Team configurable para empezar.","This category has no format yet. Apply Senior Cup 2026 or Configurable Team to start.")}
+            </div>
+          )}
+        </article>
+      ) : null}
+    </section>
+  );
+}
+
 function DayStandardCompetition({
   locale,
   snapshot,
@@ -826,9 +1197,6 @@ function DayStandardCompetition({
   const standings = (snapshot.workspace.standard.standings as any[]).filter(
     (standing) => standing.categoryId === category?.id,
   );
-  const format = competition?.format ?? (() => {
-    try { return category?.configJson ? JSON.parse(category.configJson) : null; } catch { return null; }
-  })();
 
   useEffect(() => {
     if (!categoryId && categories[0]?.id) setCategoryId(categories[0].id);
@@ -836,23 +1204,6 @@ function DayStandardCompetition({
       setCategoryId(categories[0]?.id ?? "");
     }
   }, [categories, categoryId]);
-
-  const addCategory = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const data = new FormData(form);
-    let created = "";
-    await mutate((next) => {
-      created = addLocalCategory(next, {
-        name: String(data.get("name") ?? "").trim(),
-        entryType: String(data.get("entryType") ?? "individual") as "individual" | "pair",
-        competitionGender: String(data.get("competitionGender") ?? "open") as "male" | "female" | "mixed" | "open",
-        scheduledDate: String(data.get("scheduledDate") ?? "") || null,
-      });
-    }, tr(locale, "Categoría agregada localmente.", "Category added locally."));
-    form.reset();
-    if (created) setCategoryId(created);
-  };
 
   const addEntry = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -869,30 +1220,6 @@ function DayStandardCompetition({
       });
     }, tr(locale, "Entrada agregada localmente.", "Entry added locally."));
     form.reset();
-  };
-
-  const saveFormat = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!category) return;
-    const data = new FormData(event.currentTarget);
-    await mutate((next) => {
-      saveLocalStandardFormat(next, category.id, {
-        groupRounds: Number(data.get("groupRounds")) === 2 ? 2 : 1,
-        qualifiersPerGroup: Number(data.get("qualifiersPerGroup") ?? 2),
-        wildcardQualifiers: Number(data.get("wildcardQualifiers") ?? 0),
-        playoffMode: String(data.get("playoffMode") ?? "standard") as any,
-        crossGroupMethod: String(data.get("crossGroupMethod") ?? "normalized") as any,
-        bronzeMatch: data.get("bronzeMatch") === "on",
-        preliminary: {
-          bestOf: Number(data.get("preBestOf")) === 3 ? 3 : 1,
-          pointTarget: Number(data.get("preTarget") ?? 15),
-        },
-        medal: {
-          bestOf: Number(data.get("medalBestOf")) === 3 ? 3 : 1,
-          pointTarget: Number(data.get("medalTarget") ?? 11),
-        },
-      });
-    }, tr(locale, "Formato Standard guardado localmente.", "Standard format saved locally."));
   };
 
   const generate = async (event: FormEvent<HTMLFormElement>) => {
@@ -932,16 +1259,6 @@ function DayStandardCompetition({
         <div className="td-category-tabs">
           {categories.map((item) => <button key={item.id} className={item.id === category?.id ? "light small" : "ghost small"} onClick={() => setCategoryId(item.id)}>{item.name}</button>)}
         </div>
-        <details className="td-details">
-          <summary>{tr(locale, "Agregar categoría local", "Add local category")}</summary>
-          <form className="td-inline-form" onSubmit={addCategory}>
-            <label><span>{tr(locale, "Nombre", "Name")}</span><input name="name" required /></label>
-            <label><span>{tr(locale, "Tipo", "Type")}</span><select name="entryType" defaultValue="individual"><option value="individual">Singles</option><option value="pair">Pairs</option></select></label>
-            <label><span>{tr(locale, "Género", "Gender")}</span><select name="competitionGender" defaultValue="open"><option value="open">Open</option><option value="male">Male</option><option value="female">Female</option><option value="mixed">Mixed</option></select></label>
-            <label><span>{tr(locale, "Jornada", "Day")}</span><input name="scheduledDate" type="date" /></label>
-            <button className="light">{tr(locale, "Agregar", "Add")}</button>
-          </form>
-        </details>
       </article>
 
       {category ? (
@@ -957,23 +1274,6 @@ function DayStandardCompetition({
             <div className="td-chip-list">{entries.map((entry) => <span key={entry.id}>{entry.displayName} · {Number(entry.seedRating || 0).toFixed(3)}</span>)}</div>
           </article>
 
-          <article className="panel">
-            <div className="eyebrow">FORMAT</div>
-            <h2>{tr(locale, "Formato competitivo local", "Local competition format")}</h2>
-            <form className="td-format-grid" onSubmit={saveFormat}>
-              <label><span>{tr(locale, "Vueltas", "Group rounds")}</span><select name="groupRounds" defaultValue={format?.groupRounds ?? 1}><option value="1">1</option><option value="2">2</option></select></label>
-              <label><span>{tr(locale, "Clasifican/grupo", "Qualifiers/group")}</span><input name="qualifiersPerGroup" type="number" min="1" defaultValue={format?.qualifiersPerGroup ?? 2} /></label>
-              <label><span>Wildcards</span><input name="wildcardQualifiers" type="number" min="0" defaultValue={format?.wildcardQualifiers ?? 0} /></label>
-              <label><span>Playoff</span><select name="playoffMode" defaultValue={format?.playoffMode ?? "standard"}><option value="standard">Standard</option><option value="top2_final">Top 2 → Final</option><option value="top4_semis">Top 4 → Semis</option><option value="top3_step">Top 3 ladder</option><option value="league_only">League only</option></select></label>
-              <label><span>{tr(locale, "Comparación grupos", "Cross-group")}</span><select name="crossGroupMethod" defaultValue={format?.crossGroupMethod ?? "normalized"}><option value="normalized">Normalized</option><option value="equalized">Equalized</option></select></label>
-              <label className="check"><input name="bronzeMatch" type="checkbox" defaultChecked={Boolean(format?.bronzeMatch ?? true)} /><span>{tr(locale, "Partido por bronce", "Bronze match")}</span></label>
-              <label><span>Grupos BO</span><select name="preBestOf" defaultValue={format?.preliminary?.bestOf ?? 1}><option value="1">BO1</option><option value="3">BO3</option></select></label>
-              <label><span>{tr(locale, "Puntos grupos", "Group target")}</span><input name="preTarget" type="number" min="1" defaultValue={format?.preliminary?.pointTarget ?? 15} /></label>
-              <label><span>Medallas BO</span><select name="medalBestOf" defaultValue={format?.medal?.bestOf ?? 3}><option value="1">BO1</option><option value="3">BO3</option></select></label>
-              <label><span>{tr(locale, "Puntos medallas", "Medal target")}</span><input name="medalTarget" type="number" min="1" defaultValue={format?.medal?.pointTarget ?? 11} /></label>
-              <button className="light">{tr(locale, "Guardar local", "Save locally")}</button>
-            </form>
-          </article>
 
           <article className="panel">
             <div className="panel-title"><div><div className="eyebrow">DRAW / GROUPS</div><h2>{tr(locale, "Generar grupos", "Generate groups")}</h2></div><span>{competition?.groups?.length ?? 0}</span></div>
@@ -1047,69 +1347,23 @@ function DayTeam({
     }
   }, [categories, categoryId]);
 
-  const addCategory = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const data = new FormData(form);
-    let created = "";
-    await mutate((next) => {
-      created = addLocalCategory(next, {
-        name: String(data.get("name") ?? "").trim(),
-        entryType: "team",
-        competitionGender: "mixed",
-        scheduledDate: String(data.get("scheduledDate") ?? "") || null,
-      });
-      if (String(data.get("preset")) === "senior_cup_2026") {
-        applyLocalTeamPreset(next, created, "senior_cup_2026");
-      }
-    }, tr(locale, "Categoría Team creada localmente.", "Team category created locally."));
-    form.reset();
-    if (created) setCategoryId(created);
-  };
-
   if (!categories.length) {
     return (
       <section className="td-stack">
-        <article className="panel">
-          <div className="eyebrow">TEAM</div>
-          <h2>{tr(locale, "Crear categoría Team local", "Create local Team category")}</h2>
-          <form className="td-inline-form" onSubmit={addCategory}>
-            <label><span>{tr(locale, "Nombre", "Name")}</span><input name="name" required /></label>
-            <label><span>{tr(locale, "Jornada", "Day")}</span><input name="scheduledDate" type="date" /></label>
-            <label><span>Preset</span><select name="preset" defaultValue="senior_cup_2026"><option value="senior_cup_2026">Uruguay Senior Team Cup 2026</option><option value="generic">Team configurable</option></select></label>
-            <button className="light">{tr(locale, "Crear local", "Create locally")}</button>
-          </form>
+        <article className="panel team-empty">
+          <div className="eyebrow">TEAM · ADMIN → DAY</div>
+          <h2>{tr(locale, "No hay categorías por equipos", "No Team categories")}</h2>
+          <p>{tr(
+            locale,
+            "Las categorías se crean en Administración porque forman parte de la inscripción pública. Creá allí una categoría con modalidad Equipo y después volvé a Tournament Day para armar equipos, rosters y formato.",
+            "Categories are created in Administration because they belong to public registration. Create a Team-mode category there, then return to Tournament Day to build teams, rosters and format."
+          )}</p>
         </article>
       </section>
     );
   }
 
   const format = category?.format as TeamFormat | null;
-
-  const saveFormat = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!category || !format) return;
-    const data = new FormData(event.currentTarget);
-    await mutate((next) => {
-      const current = teamFormatPreset("generic");
-      const persisted = (next.team.categories as any[]).find((item) => item.id === category.id)?.format as TeamFormat | null;
-      const base = persisted ? cloneDay(persisted) : current;
-      base.roster.min = Math.max(1, Number(data.get("rosterMin") ?? 4));
-      base.roster.max = Math.max(base.roster.min, Number(data.get("rosterMax") ?? 6));
-      base.roster.captainRequired = data.get("captainRequired") === "on";
-      base.competition.groupRounds = Number(data.get("groupRounds")) === 2 ? 2 : 1;
-      base.competition.playoffMode = String(data.get("playoffMode") ?? "standard") as any;
-      base.competition.qualifiersPerGroup = Number(data.get("qualifiersPerGroup") ?? 2);
-      base.competition.wildcardQualifiers = Number(data.get("wildcardQualifiers") ?? 0);
-      base.competition.bronzeMatch = data.get("bronzeMatch") === "on";
-      base.encounter.rubbers = base.encounter.rubbers.map((rubber) => ({
-        ...rubber,
-        weight: Math.max(0, Number(data.get(`weight:${rubber.key}`) ?? rubber.weight)),
-        play: String(data.get(`play:${rubber.key}`) ?? rubber.play) as "always" | "if_tied",
-      }));
-      setLocalTeamFormat(next, category.id, base);
-    }, tr(locale, "Formato Team guardado localmente.", "Team format saved locally."));
-  };
 
   const createTeam = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1134,48 +1388,8 @@ function DayTeam({
       <article className="panel">
         <div className="panel-title"><h2>{tr(locale, "Categorías Team", "Team categories")}</h2><span>{categories.length}</span></div>
         <div className="td-category-tabs">{categories.map((item) => <button key={item.id} className={item.id === category.id ? "light small" : "ghost small"} onClick={() => setCategoryId(item.id)}>{item.name}</button>)}</div>
-        <details className="td-details">
-          <summary>{tr(locale, "Agregar categoría Team local", "Add local Team category")}</summary>
-          <form className="td-inline-form" onSubmit={addCategory}>
-            <label><span>{tr(locale, "Nombre", "Name")}</span><input name="name" required /></label>
-            <label><span>{tr(locale, "Jornada", "Day")}</span><input name="scheduledDate" type="date" /></label>
-            <label><span>Preset</span><select name="preset" defaultValue="senior_cup_2026"><option value="senior_cup_2026">Uruguay Senior Team Cup 2026</option><option value="generic">Team configurable</option></select></label>
-            <button className="light">{tr(locale, "Agregar", "Add")}</button>
-          </form>
-        </details>
       </article>
 
-      {format ? (
-        <article className="panel">
-          <div className="panel-title">
-            <div><div className="eyebrow">TEAM FORMAT</div><h2>{category.name}</h2></div>
-            <div className="form-actions">
-              <button className="ghost small" onClick={() => void mutate((next) => applyLocalTeamPreset(next, category.id, "senior_cup_2026"), tr(locale, "Preset Senior Cup cargado localmente.", "Senior Cup preset loaded locally."))}>Senior Cup 2026</button>
-              <button className="ghost small" onClick={() => void mutate((next) => applyLocalTeamPreset(next, category.id, "generic"), tr(locale, "Preset genérico cargado localmente.", "Generic preset loaded locally."))}>{tr(locale, "Genérico", "Generic")}</button>
-            </div>
-          </div>
-          <form className="td-format-grid" onSubmit={saveFormat}>
-            <label><span>{tr(locale, "Roster mínimo", "Roster minimum")}</span><input name="rosterMin" type="number" min="1" defaultValue={format.roster.min} /></label>
-            <label><span>{tr(locale, "Roster máximo", "Roster maximum")}</span><input name="rosterMax" type="number" min="1" defaultValue={format.roster.max} /></label>
-            <label className="check"><input name="captainRequired" type="checkbox" defaultChecked={format.roster.captainRequired} /><span>{tr(locale, "Capitán obligatorio", "Captain required")}</span></label>
-            <label><span>{tr(locale, "Vueltas", "Group rounds")}</span><select name="groupRounds" defaultValue={format.competition.groupRounds}><option value="1">1</option><option value="2">2</option></select></label>
-            <label><span>Playoff</span><select name="playoffMode" defaultValue={format.competition.playoffMode}><option value="standard">Standard</option><option value="top2_final">Top 2 → Final</option><option value="top4_semis">Top 4 → Semis</option><option value="top3_step">Top 3 ladder</option><option value="league_only">League only</option></select></label>
-            <label><span>{tr(locale, "Clasifican/grupo", "Qualifiers/group")}</span><input name="qualifiersPerGroup" type="number" min="1" defaultValue={format.competition.qualifiersPerGroup ?? 2} /></label>
-            <label><span>Wildcards</span><input name="wildcardQualifiers" type="number" min="0" defaultValue={format.competition.wildcardQualifiers ?? 0} /></label>
-            <label className="check"><input name="bronzeMatch" type="checkbox" defaultChecked={Boolean(format.competition.bronzeMatch)} /><span>{tr(locale, "Bronce", "Bronze")}</span></label>
-            <div className="td-rubber-settings">
-              {format.encounter.rubbers.map((rubber) => (
-                <div key={rubber.key}>
-                  <strong>{rubber.label}</strong>
-                  <label><span>PTS</span><input name={`weight:${rubber.key}`} type="number" min="0" step="1" defaultValue={rubber.weight} /></label>
-                  <label><span>{tr(locale, "Se juega", "Play")}</span><select name={`play:${rubber.key}`} defaultValue={rubber.play}><option value="always">{tr(locale, "Siempre", "Always")}</option><option value="if_tied">{tr(locale, "Si empatan", "If tied")}</option></select></label>
-                </div>
-              ))}
-            </div>
-            <button className="light">{tr(locale, "Guardar formato local", "Save local format")}</button>
-          </form>
-        </article>
-      ) : null}
 
       <article className="panel">
         <div className="panel-title"><div><div className="eyebrow">ROSTERS</div><h2>{tr(locale, "Equipos", "Teams")}</h2></div><span>{category.entries.length}</span></div>
@@ -1192,9 +1406,10 @@ function DayTeam({
 
       <article className="panel">
         <div className="panel-title"><div><div className="eyebrow">GROUPS</div><h2>{tr(locale, "Estructura Team", "Team structure")}</h2></div><span>{category.encounters.length}</span></div>
+        {!format ? <p className="warning-line">{tr(locale, "Primero guardá o aplicá un formato en la pestaña Formato.", "Save or apply a format in the Format tab first.")}</p> : null}
         <form className="td-inline-form" onSubmit={generate}>
           <label><span>{tr(locale, "Cantidad de grupos", "Group count")}</span><input name="groupCount" type="number" min="1" max={format?.competition.playoffMode === "standard" ? Math.max(1, Math.floor(category.entries.length / 2)) : 1} defaultValue={Math.max(1, new Set(category.groups.map((row: any) => row.id)).size)} /></label>
-          <button className="light" disabled={category.entries.length < 2}>{category.encounters.length ? tr(locale, "Regenerar local", "Regenerate locally") : tr(locale, "Generar local", "Generate locally")}</button>
+          <button className="light" disabled={!format || category.entries.length < 2}>{category.encounters.length ? tr(locale, "Regenerar local", "Regenerate locally") : tr(locale, "Generar local", "Generate locally")}</button>
         </form>
         {category.groups.length ? <div className="td-group-grid">{[...new Set(category.groups.map((row: any) => row.id))].map((groupId: unknown) => { const rows = category.groups.filter((row: any) => row.id === groupId); return <div key={String(groupId)}><strong>{tr(locale, "Grupo", "Group")} {rows[0]?.name}</strong>{rows.map((row: any, index: number) => <span key={row.entryId}>{index + 1}. {row.entryName}</span>)}</div>; })}</div> : null}
       </article>
