@@ -1130,3 +1130,20 @@ export const paymentRefunds = sqliteTable(
   ],
 );
 
+export const tournamentDayState = sqliteTable("tournament_day_state", {
+  tournamentId: text("tournament_id")
+    .primaryKey()
+    .references(() => tournaments.id, { onDelete: "cascade" }),
+  tokenHash: text("token_hash").unique(),
+  snapshotR2Key: text("snapshot_r2_key"),
+  publishedRevision: integer("published_revision").notNull().default(0),
+  publishedAt: integer("published_at", { mode: "timestamp" }),
+  finalizedAt: integer("finalized_at", { mode: "timestamp" }),
+  createdByUserId: text("created_by_user_id").references(() => user.id),
+  syncStatus: text("sync_status").notNull().default("idle"),
+  syncedRevision: integer("synced_revision").notNull().default(0),
+  syncedAt: integer("synced_at", { mode: "timestamp" }),
+  syncError: text("sync_error"),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+});

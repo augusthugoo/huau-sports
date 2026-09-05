@@ -1408,6 +1408,8 @@ async function teamResultsDetail(
     env.HUAU_DB.prepare(
       `SELECT ce.id,c.category_id as categoryId,ce.stage,ce.round_label as roundLabel,ce.round_number as roundNumber,ce.group_id as groupId,g.name as groupName,ce.leg_number as legNumber,
               ce.entry_a_id as entryAId,ea.display_name as sideA,ce.entry_b_id as entryBId,eb.display_name as sideB,
+              ce.source_encounter_a_id as sourceEncounterAId,ce.source_encounter_b_id as sourceEncounterBId,
+              ce.source_loser_a_id as sourceLoserAId,ce.source_loser_b_id as sourceLoserBId,
               ce.status,ce.winner_entry_id as winnerEntryId
          FROM competition_encounters ce JOIN competitions c ON c.id=ce.competition_id JOIN tournament_categories tc ON tc.id=c.category_id
          LEFT JOIN competition_groups g ON g.id=ce.group_id LEFT JOIN tournament_entries ea ON ea.id=ce.entry_a_id LEFT JOIN tournament_entries eb ON eb.id=ce.entry_b_id
@@ -1510,6 +1512,8 @@ async function teamDetail(
     env.HUAU_DB.prepare(
       `SELECT ce.id,c.category_id as categoryId,ce.stage,ce.round_label as roundLabel,ce.round_number as roundNumber,ce.group_id as groupId,g.name as groupName,ce.leg_number as legNumber,
               ce.entry_a_id as entryAId,ea.display_name as sideA,ce.entry_b_id as entryBId,eb.display_name as sideB,
+              ce.source_encounter_a_id as sourceEncounterAId,ce.source_encounter_b_id as sourceEncounterBId,
+              ce.source_loser_a_id as sourceLoserAId,ce.source_loser_b_id as sourceLoserBId,
               ce.status,ce.winner_entry_id as winnerEntryId
          FROM competition_encounters ce JOIN competitions c ON c.id=ce.competition_id JOIN tournament_categories tc ON tc.id=c.category_id
          LEFT JOIN competition_groups g ON g.id=ce.group_id LEFT JOIN tournament_entries ea ON ea.id=ce.entry_a_id LEFT JOIN tournament_entries eb ON eb.id=ce.entry_b_id
@@ -1623,6 +1627,20 @@ async function teamDetail(
   }
 
   return json({ ok: true, profiles: profiles.results, categories: serializedCategories });
+}
+
+export async function tournamentDayTeamBundleForAdmin(
+  request: Request,
+  env: Env,
+  tournamentId: string,
+  access: AccessHelpers,
+): Promise<unknown> {
+  const response = await teamDetail(request, env, tournamentId, access);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { code?: string } | null;
+    throw new Error(payload?.code ?? `TEAM_BOOTSTRAP_HTTP_${response.status}`);
+  }
+  return response.json();
 }
 
 export async function handleTeamAdminApi(

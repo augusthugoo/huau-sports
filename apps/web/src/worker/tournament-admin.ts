@@ -2928,6 +2928,15 @@ async function mutateTournamentPublicHero(
   });
 }
 
+export async function tournamentDayWorkspaceBundleForAdmin(
+  env: Env,
+  tournamentId: string,
+): Promise<unknown> {
+  const tournament = await reloadTournamentRow(env, tournamentId);
+  if (!tournament) throw new Error("TOURNAMENT_NOT_FOUND");
+  return tournamentWorkspaceBundle(env, tournament);
+}
+
 export async function handleTournamentAdminApi(
   request: Request,
   env: Env,

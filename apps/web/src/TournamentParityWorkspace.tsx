@@ -20,7 +20,7 @@ import { TournamentParticipantsAdmin } from "./TournamentParticipants";
 import { FormatExplanationPanel, explanationForPersistedFormat } from "./FormatExplanationPanel";
 import { clearTournamentWorkspaceDraft, loadTournamentWorkspaceDraft, saveTournamentWorkspaceDraft } from "./TournamentWorkspaceStorage";
 
-type Props = { organizationId: string; tournamentId: string; locale: Locale; go: (path: string) => void };
+type Props = { organizationId: string; tournamentId: string; locale: Locale; go: (path: string) => void; mode?: "full" | "admin" };
 type Tab = "overview"|"participants"|"categories"|"payments"|"teams"|"format"|"draw"|"competition"|"schedule"|"results"|"tv"|"settings"|"recovery";
 type Settings = {
   club:string;city:string;location:string;description:string;contact:string;regulationsText:string;regulationsVersion:number;duprRequired:number;duprMax:number|null;duprAsOfDate:string|null;dailyStart:string;dailyEnd:string;defaultMatchMinutes:number;
@@ -336,7 +336,7 @@ function rebuildStandardViews(
   };
 }
 
-export function TournamentParityWorkspace({organizationId,tournamentId,locale,go}:Props){
+export function TournamentParityWorkspace({organizationId,tournamentId,locale,go,mode="full"}:Props){
   const [detail,setDetail]=useState<Detail|null>(null);
   const [pendingOperations,setPendingOperations]=useState<WorkspaceOperation[]>([]);
   const [baseRevision,setBaseRevision]=useState(0);
@@ -442,14 +442,14 @@ export function TournamentParityWorkspace({organizationId,tournamentId,locale,go
       const bundle=await request<WorkspaceBootstrap>(
         `/api/admin/tournaments/${tournamentId}/workspace`,
       );
-      if(bundle.core.categories.some(category=>category.entryType==="team")){
+      if(mode!=="admin"&&bundle.core.categories.some(category=>category.entryType==="team")){
         await preloadTeamSnapshot(tournamentId,refreshTeam);
       }
       await installServerBundle(bundle,recoverDraft);
     }catch(e){
       setError(e instanceof Error?e.message:"WORKSPACE_LOAD_FAILED");
     }
-  },[installServerBundle,tournamentId]);
+  },[installServerBundle,mode,tournamentId]);
 
   useEffect(()=>{void loadWorkspace(true,false);},[loadWorkspace]);
 
@@ -663,7 +663,16 @@ export function TournamentParityWorkspace({organizationId,tournamentId,locale,go
     return <main className="tpw"><div className="tpw-loading">{error||"Loading workspace…"}</div></main>;
   }
 
-  const tabs:Array<[Tab,string]>=[
+  const tabs:Array<[Tab,string]>=mode==="admin"?[
+    ["overview",text(locale,"Resumen","Overview")],
+    ["participants",text(locale,"Participantes","Participants")],
+    ["payments",text(locale,"Pagos","Payments")],
+    ["categories",text(locale,"Categorías","Categories")],
+    ["teams",text(locale,"Equipos","Teams")],
+    ["format",text(locale,"Formato","Format")],
+    ["settings",text(locale,"Configuración","Settings")],
+    ["recovery",text(locale,"Recuperación","Recovery")],
+  ]:[
     ["overview",text(locale,"Resumen","Overview")],
     ["participants",text(locale,"Participantes","Participants")],
     ["categories",text(locale,"Categorías","Categories")],
@@ -697,9 +706,9 @@ export function TournamentParityWorkspace({organizationId,tournamentId,locale,go
   return <main className="tpw">
     <button
       className="section-back"
-      onClick={()=>go(`/admin/organizations/${organizationId}/tournaments`)}
+      onClick={()=>go(mode==="admin"?`/admin/organizations/${organizationId}/tournaments/${tournamentId}`:`/admin/organizations/${organizationId}/tournaments`)}
     >
-      ← HUAU Tournament
+      ← {mode==="admin"?"Tournament Hub":"HUAU Tournament"}
     </button>
 
     <header className="tpw-hero">
@@ -719,11 +728,11 @@ export function TournamentParityWorkspace({organizationId,tournamentId,locale,go
             ?text(locale,"ESTRUCTURA BLOQUEADA","STRUCTURE LOCKED")
             :text(locale,"EN PREPARACIÓN","IN SETUP")}
         </span>
-        <button className="light small" onClick={()=>openTab("tv")}>Modo TV</button>
+        {mode!=="admin"&&<button className="light small" onClick={()=>openTab("tv")}>Modo TV</button>}
       </div>
     </header>
 
-    <section className={`tpw-workspace-bar ${pendingCount?"dirty":"clean"} ${staleDraft?"stale":""}`}>
+    {mode!=="admin"&&<section className={`tpw-workspace-bar ${pendingCount?"dirty":"clean"} ${staleDraft?"stale":""}`}>
       <div className="tpw-workspace-state">
         <span className="eyebrow">LOCAL WORKSPACE</span>
         <strong>
@@ -761,7 +770,7 @@ export function TournamentParityWorkspace({organizationId,tournamentId,locale,go
             {busy?"…":text(locale,"Guardar cambios","Save changes")}
           </button>}
       </div>
-    </section>
+    </section>}
 
     <nav className="tpw-tabs">
       {tabs.map(([key,label])=>
@@ -779,7 +788,9 @@ export function TournamentParityWorkspace({organizationId,tournamentId,locale,go
     {error&&<div className="tpw-alert">{error}</div>}
     {notice&&<div className="notice-box">{notice}</div>}
 
-    {tab==="overview"&&<Overview detail={detail} locale={locale} setTab={openTab}/>}
+    {tab==="overview"&&(mode==="admin"
+      ?<AdminOverview detail={detail} locale={locale} setTab={openTab} go={go} organizationId={organizationId}/>
+      :<Overview detail={detail} locale={locale} setTab={openTab}/>)}
     {tab==="participants"&&
       <TournamentParticipantsAdmin
         tournamentId={detail.tournament.id}
@@ -798,7 +809,7 @@ export function TournamentParityWorkspace({organizationId,tournamentId,locale,go
         locale={locale}
         manualRefreshOnly
       />}
-    {tab==="teams"&&<TeamTournamentPanel tournamentId={detail.tournament.id} locale={locale}/>}
+    {tab==="teams"&&<TeamTournamentPanel tournamentId={detail.tournament.id} locale={locale} adminOnly={mode==="admin"}/>}
     {tab==="format"&&<Formats detail={detail} locale={locale} busy={busy} act={act}/>}
     {tab==="draw"&&<Draw detail={detail} locale={locale} busy={busy} act={act}/>}
     {tab==="competition"&&<Competition detail={detail} locale={locale}/>}
@@ -822,6 +833,50 @@ export function TournamentParityWorkspace({organizationId,tournamentId,locale,go
       />}
     {tab==="recovery"&&<Recovery detail={detail} locale={locale} busy={busy} act={act}/>}
   </main>;
+}
+
+function AdminOverview({
+  detail,
+  locale,
+  setTab,
+  go,
+  organizationId,
+}:{
+  detail:Detail;
+  locale:Locale;
+  setTab:(tab:Tab)=>void;
+  go:(path:string)=>void;
+  organizationId:string;
+}){
+  return <section className="tpw-grid">
+    <article className="panel wide">
+      <div className="eyebrow">{text(locale,"ADMINISTRACIÓN ONLINE","ONLINE ADMINISTRATION")}</div>
+      <h2>{text(locale,"Preparación e inscripciones","Setup & registrations")}</h2>
+      <div className="tpw-kpis">
+        <Kpi n={detail.summary.playerCount} label={text(locale,"fichas","players")}/>
+        <Kpi n={detail.categories.length} label={text(locale,"categorías","categories")}/>
+        <Kpi n={detail.summary.pairIssueCount} label={text(locale,"parejas a revisar","pair issues")}/>
+        <Kpi n={detail.tournament.workingRevision} label={text(locale,"revisión D1","D1 revision")}/>
+      </div>
+      <p className="muted">{text(locale,
+        "Esta zona conserva lo que depende de inscripciones, pagos y publicación. La operación competitiva vive en Tournament Day y no escribe D1 resultado por resultado.",
+        "This area keeps registration, payment and publishing work online. Competitive operation lives in Tournament Day and does not write D1 result by result."
+      )}</p>
+    </article>
+    <article className="panel">
+      <h2>{text(locale,"Gestión","Management")}</h2>
+      <div className="tpw-flow">
+        <button onClick={()=>setTab("participants")}>1 · {text(locale,"Participantes","Participants")}</button>
+        <button onClick={()=>setTab("payments")}>2 · {text(locale,"Pagos","Payments")}</button>
+        <button onClick={()=>setTab("categories")}>3 · {text(locale,"Categorías","Categories")}</button>
+        <button onClick={()=>setTab("teams")}>4 · Team</button>
+        <button onClick={()=>setTab("format")}>5 · {text(locale,"Formato","Format")}</button>
+        <button onClick={()=>setTab("settings")}>6 · {text(locale,"Configuración pública","Public settings")}</button>
+        <button onClick={()=>go(`/tournaments/${detail.tournament.slug}`)}>{text(locale,"Página pública ↗","Public page ↗")}</button>
+        <button onClick={()=>go(`/admin/organizations/${organizationId}/tournaments/${detail.tournament.id}/day`)}>Tournament Day →</button>
+      </div>
+    </article>
+  </section>;
 }
 
 function Overview({detail,locale,setTab}:{detail:Detail;locale:Locale;setTab:(tab:Tab)=>void}){

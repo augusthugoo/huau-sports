@@ -124,7 +124,7 @@ type TeamCategory = {
 
 type TeamDetail = { ok: true; profiles: Profile[]; categories: TeamCategory[] };
 
-type Props = { tournamentId: string; locale: Locale };
+type Props = { tournamentId: string; locale: Locale; adminOnly?: boolean };
 
 class ApiError extends Error {
   code: string;
@@ -224,7 +224,7 @@ function cloneFormat(format: TeamFormat): TeamFormat {
   return JSON.parse(JSON.stringify(format)) as TeamFormat;
 }
 
-export function TeamTournamentPanel({ tournamentId, locale }: Props) {
+export function TeamTournamentPanel({ tournamentId, locale, adminOnly = false }: Props) {
   const [detail, setDetail] = useState<TeamDetail | null>(null);
   const [selectedCategoryId, setSelectedCategoryId] = useState("");
   const [busy, setBusy] = useState(false);
@@ -359,8 +359,8 @@ export function TeamTournamentPanel({ tournamentId, locale }: Props) {
             <>
               <TeamFormatBuilder category={category} locale={locale} busy={busy} mutate={mutate} />
               <TeamRosterManager category={category} profiles={detail.profiles} locale={locale} busy={busy} mutate={mutate} />
-              <TeamStructure category={category} locale={locale} busy={busy} mutate={mutate} />
-              <TeamEncounters category={category} locale={locale} busy={busy} mutate={mutate} applyLineupState={applyLineupState} />
+              {!adminOnly && <TeamStructure category={category} locale={locale} busy={busy} mutate={mutate} />}
+              {!adminOnly && <TeamEncounters category={category} locale={locale} busy={busy} mutate={mutate} applyLineupState={applyLineupState} />}
             </>
           ) : null}
         </>

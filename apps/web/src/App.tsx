@@ -4,6 +4,8 @@ import { authClient } from "./lib/auth-client";
 import { detectLocale, t } from "./i18n";
 import type { Locale } from "./i18n";
 import { TournamentParityWorkspace } from "./TournamentParityWorkspace";
+import { TournamentHub } from "./TournamentHub";
+import { TournamentDayWorkspace } from "./TournamentDayWorkspace";
 import { MyTournamentRegistrations, PublicTournamentRegistration } from "./TournamentRegistration";
 import { MyTournamentPayments } from "./TournamentPayments";
 
@@ -133,6 +135,11 @@ export function App() {
   const publicTournamentRoute = path.match(/^\/tournaments\/([^/]+)$/);
   if (publicTournamentRoute) return <PublicTournamentRegistration slug={decodeURIComponent(publicTournamentRoute[1]!)} locale={locale} go={go} onProfileSaved={refreshMe} />;
 
+  const operatorTournamentDayRoute = path.match(/^\/operate\/([^/]+)$/);
+  if (operatorTournamentDayRoute) {
+    return <TournamentDayWorkspace operatorToken={decodeURIComponent(operatorTournamentDayRoute[1]!)} locale={locale} go={go} />;
+  }
+
   if (path.startsWith("/organizations/")) {
     return <PublicOrganization slug={decodeURIComponent(path.split("/")[2] || "")} locale={locale} go={go} me={me} refreshMe={refreshMe} authenticated={Boolean(session?.user)} />;
   }
@@ -144,9 +151,19 @@ export function App() {
 
   if (path === "/app/registrations") return <Shell locale={locale} go={go} me={me}><><MyTournamentPayments locale={locale}/><MyTournamentRegistrations locale={locale} go={go} onProfileSaved={refreshMe} /></></Shell>;
 
-  const tournamentWorkspace = path.match(/^\/admin\/organizations\/([^/]+)\/tournaments\/([^/]+)$/);
-  if (tournamentWorkspace) {
-    return <Shell locale={locale} go={go} me={me}><TournamentParityWorkspace organizationId={decodeURIComponent(tournamentWorkspace[1]!)} tournamentId={decodeURIComponent(tournamentWorkspace[2]!)} locale={locale} go={go} /></Shell>;
+  const tournamentManage = path.match(/^\/admin\/organizations\/([^/]+)\/tournaments\/([^/]+)\/manage$/);
+  if (tournamentManage) {
+    return <Shell locale={locale} go={go} me={me}><TournamentParityWorkspace organizationId={decodeURIComponent(tournamentManage[1]!)} tournamentId={decodeURIComponent(tournamentManage[2]!)} locale={locale} go={go} mode="admin" /></Shell>;
+  }
+  const tournamentDay = path.match(/^\/admin\/organizations\/([^/]+)\/tournaments\/([^/]+)\/day$/);
+  if (tournamentDay) {
+    const dayWorkspace = <TournamentDayWorkspace organizationId={decodeURIComponent(tournamentDay[1]!)} tournamentId={decodeURIComponent(tournamentDay[2]!)} locale={locale} go={go} />;
+    if (new URLSearchParams(window.location.search).get("view") === "tv") return dayWorkspace;
+    return <Shell locale={locale} go={go} me={me}>{dayWorkspace}</Shell>;
+  }
+  const tournamentHub = path.match(/^\/admin\/organizations\/([^/]+)\/tournaments\/([^/]+)$/);
+  if (tournamentHub) {
+    return <Shell locale={locale} go={go} me={me}><TournamentHub organizationId={decodeURIComponent(tournamentHub[1]!)} tournamentId={decodeURIComponent(tournamentHub[2]!)} locale={locale} go={go} /></Shell>;
   }
   const tournamentsRoute = path.match(/^\/admin\/organizations\/([^/]+)\/tournaments$/);
   if (tournamentsRoute) {
