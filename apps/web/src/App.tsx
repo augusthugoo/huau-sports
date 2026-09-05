@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ChangeEvent, FormEvent } from "react";
+import type { FormEvent } from "react";
 import { authClient } from "./lib/auth-client";
 import { detectLocale, t } from "./i18n";
 import type { Locale } from "./i18n";
@@ -8,6 +8,7 @@ import { TournamentHub } from "./TournamentHub";
 import { TournamentDayWorkspace } from "./TournamentDayWorkspace";
 import { MyTournamentRegistrations, PublicTournamentRegistration } from "./TournamentRegistration";
 import { MyTournamentPayments } from "./TournamentPayments";
+import { Landing, LandingAdminPanel } from "./Landing";
 
 type Membership = {
   id: string;
@@ -27,7 +28,6 @@ type Me = {
     duprSingles: number | null;
     duprDoubles: number | null;
     duprId: string | null;
-    avatarUrl: string | null;
     birthDate: string | null;
     sportGender: "male" | "female" | "unspecified" | null;
     city: string | null;
@@ -199,21 +199,14 @@ function Shell({ children, locale, go, me }: { children: React.ReactNode; locale
   );
 }
 
-function Landing({ locale, setLocale, go }: { locale: Locale; setLocale: (l: Locale) => void; go: (p: string) => void }) {
-  return <main className="landing">
-    <header className="landing-nav"><HuauBrand /><div className="landing-actions"><LocaleToggle locale={locale} setLocale={setLocale}/><button className="ghost" onClick={() => go("/login")}>{t(locale,"enter")}</button><button className="light" onClick={() => go("/signup")}>{t(locale,"createAccount")}</button></div></header>
-    <section className="landing-hero"><div className="eyebrow">{t(locale,"landingEyebrow")}</div><h1>{t(locale,"landingTitle")}</h1><p>{t(locale,"landingBody")}</p><div className="hero-actions"><button className="light" onClick={() => go("/signup")}>{t(locale,"createAccount")}</button><button className="ghost" onClick={() => go("/login")}>{t(locale,"enter")}</button></div><div className="module-strip"><span>CLUB</span><span>TOURNAMENT</span><span>REF</span></div></section>
-    <footer className="landing-footer"><span>HUAU</span><span>{t(locale,"brandTagline")}</span></footer>
-  </main>;
-}
-
 function AuthScreen({ mode, locale, go, onDone }: { mode: "login"|"signup"; locale: Locale; go:(p:string)=>void; onDone:()=>Promise<void> }) {
   const [error,setError]=useState(""); const [busy,setBusy]=useState(false);
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); setBusy(true); setError("");
-    const form=new FormData(event.currentTarget); const email=String(form.get("email")||"").trim(); const password=String(form.get("password")||"");
+    const form=new FormData(event.currentTarget); const email=String(form.get("email")||"").trim(); const password=String(form.get("password")||""); const confirmPassword=String(form.get("confirmPassword")||"");
     try {
       if(mode==="signup"){
+        if(password!==confirmPassword) throw new Error(copy(locale,"Las contraseñas no coinciden.","Passwords do not match."));
         const firstName=String(form.get("firstName")||"").trim(); const lastName=String(form.get("lastName")||"").trim();
         const result=await authClient.signUp.email({email,password,name:`${firstName} ${lastName}`.trim()});
         if(result.error) throw new Error(result.error.message || "SIGNUP_FAILED");
@@ -224,7 +217,7 @@ function AuthScreen({ mode, locale, go, onDone }: { mode: "login"|"signup"; loca
       await onDone(); const next=sessionStorage.getItem("huau.afterAuth"); if(next)sessionStorage.removeItem("huau.afterAuth"); go(next||"/app");
     } catch (e) { setError(e instanceof Error?e.message:"AUTH_FAILED"); } finally { setBusy(false); }
   };
-  return <main className="auth-page"><button className="back-link" onClick={()=>go("/")}>← {t(locale,"back")}</button><section className="auth-card"><HuauBrand center /><h1>{mode==="login"?t(locale,"signIn"):t(locale,"createAccount")}</h1><form onSubmit={submit}>{mode==="signup"&&<div className="two"><Field name="firstName" label={t(locale,"firstName")}/><Field name="lastName" label={t(locale,"lastName")}/></div>}<Field name="email" label={t(locale,"email")} type="email"/><Field name="password" label={t(locale,"password")} type="password"/><button className="light full" disabled={busy}>{busy?"…":mode==="login"?t(locale,"signIn"):t(locale,"signUp")}</button>{error&&<p className="error">{error}</p>}</form>{mode==="login"?<><button className="text-button" onClick={()=>go("/recover")}>{t(locale,"recover")}</button><button className="text-button" onClick={()=>go("/signup")}>{copy(locale,"¿No tenés cuenta? Crear cuenta","No account yet? Create one")}</button></>:<button className="text-button" onClick={()=>go("/login")}>{copy(locale,"Ya tengo cuenta","I already have an account")}</button>}</section></main>;
+  return <main className="auth-page"><button className="back-link" onClick={()=>go("/")}>← {t(locale,"back")}</button><section className="auth-card"><HuauBrand center /><h1>{mode==="login"?t(locale,"signIn"):t(locale,"createAccount")}</h1><form onSubmit={submit}>{mode==="signup"&&<div className="two"><Field name="firstName" label={t(locale,"firstName")}/><Field name="lastName" label={t(locale,"lastName")}/></div>}<Field name="email" label={t(locale,"email")} type="email"/><Field name="password" label={t(locale,"password")} type="password"/>{mode==="signup"&&<Field name="confirmPassword" label={copy(locale,"Repetir contraseña","Repeat password")} type="password"/>}<button className="light full" disabled={busy}>{busy?"…":mode==="login"?t(locale,"signIn"):t(locale,"signUp")}</button>{error&&<p className="error">{error}</p>}</form>{mode==="login"?<><button className="text-button" onClick={()=>go("/recover")}>{t(locale,"recover")}</button><button className="text-button" onClick={()=>go("/signup")}>{copy(locale,"¿No tenés cuenta? Crear cuenta","No account yet? Create one")}</button></>:<button className="text-button" onClick={()=>go("/login")}>{copy(locale,"Ya tengo cuenta","I already have an account")}</button>}</section></main>;
 }
 
 function RecoveryScreen({locale,go}:{locale:Locale;go:(p:string)=>void}) { return <main className="auth-page"><button className="back-link" onClick={()=>go("/login")}>← {t(locale,"back")}</button><section className="auth-card"><HuauBrand center /><h1>{t(locale,"recover")}</h1><p className="muted">{t(locale,"recoverySoon")}</p></section></main>; }
@@ -233,12 +226,9 @@ function MyHuau({locale,setLocale,go,me,loading,refreshMe}:{locale:Locale;setLoc
   const [organizations,setOrganizations]=useState<Organization[]>([]);
   const [profileBusy,setProfileBusy]=useState(false);
   const [profileMessage,setProfileMessage]=useState("");
-  const [avatarBusy,setAvatarBusy]=useState(false);
-  const [avatarVersion,setAvatarVersion]=useState(0);
   useEffect(()=>{ void api<{organizations:Organization[]}>("/api/organizations").then(r=>setOrganizations(r.organizations)); },[]);
   const adminOrgIds=useMemo(()=>new Set(me?.capabilities.filter(c=>c.capability==="org_admin"&&c.status==="active").map(c=>c.organizationId)??[]),[me]);
   const profileComplete=Boolean(me?.profile?.firstName&&me.profile.lastName&&me.profile.phone&&me.profile.birthDate&&me.profile.sportGender&&me.profile.sportGender!=="unspecified");
-  const initials=`${me?.profile?.firstName?.[0]??me?.user.name?.[0]??"H"}${me?.profile?.lastName?.[0]??""}`.toUpperCase();
 
   const saveProfile=async(event:FormEvent<HTMLFormElement>)=>{
     event.preventDefault();setProfileBusy(true);setProfileMessage("");
@@ -262,46 +252,11 @@ function MyHuau({locale,setLocale,go,me,loading,refreshMe}:{locale:Locale;setLoc
     finally{setProfileBusy(false);}
   };
 
-  const uploadAvatar=async(event:ChangeEvent<HTMLInputElement>)=>{
-    const file=event.currentTarget.files?.[0];
-    if(!file)return;
-    setAvatarBusy(true);setProfileMessage("");
-    try{
-      const response=await fetch("/api/me/avatar",{method:"PUT",headers:{"content-type":file.type},body:file});
-      const payload=await response.json() as {ok?:boolean;code?:string};
-      if(!response.ok)throw new Error(payload.code||`HTTP_${response.status}`);
-      await refreshMe();
-      setAvatarVersion(value=>value+1);
-      setProfileMessage(copy(locale,"Foto de perfil actualizada.","Profile photo updated."));
-    }catch(error){setProfileMessage(error instanceof Error?error.message:"AVATAR_UPDATE_FAILED");}
-    finally{event.currentTarget.value="";setAvatarBusy(false);}
-  };
-
-  const removeAvatar=async()=>{
-    setAvatarBusy(true);setProfileMessage("");
-    try{
-      const response=await fetch("/api/me/avatar",{method:"DELETE"});
-      const payload=await response.json() as {ok?:boolean;code?:string};
-      if(!response.ok)throw new Error(payload.code||`HTTP_${response.status}`);
-      await refreshMe();
-      setAvatarVersion(value=>value+1);
-      setProfileMessage(copy(locale,"Foto eliminada.","Photo removed."));
-    }catch(error){setProfileMessage(error instanceof Error?error.message:"AVATAR_DELETE_FAILED");}
-    finally{setAvatarBusy(false);}
-  };
-
   return <Shell locale={locale} go={go} me={me}><main className="dashboard player-profile-page">
     <section className="dashboard-head"><div><div className="eyebrow">{copy(locale,"PERFIL DE JUGADOR","PLAYER PROFILE")}</div><h1>{me?.profile?.firstName ? copy(locale,`Bienvenido, ${me.profile.firstName}.`,`Welcome, ${me.profile.firstName}.`) : copy(locale,"Bienvenido a HUAU.","Welcome to HUAU.")}</h1></div><div className="dashboard-head-actions"><button className="ghost" onClick={()=>go("/app/registrations")}>{copy(locale,"Mis inscripciones","My registrations")}</button><LocaleToggle locale={locale} setLocale={setLocale}/></div></section>
     <section className="dashboard-grid">
       <div className="panel wide player-profile-panel">
-        <div className="player-profile-overview">
-          <div className="player-profile-avatar-block">
-            <div className="player-avatar">{me?.profile?.avatarUrl?<img key={avatarVersion} src={`${me.profile.avatarUrl}?v=${avatarVersion}`} alt={copy(locale,"Foto de perfil","Profile photo")} />:<span>{initials}</span>}</div>
-            <div className="avatar-actions">
-              <label className={`ghost small avatar-upload${avatarBusy?" disabled":""}`}><span>{avatarBusy?"…":copy(locale,"Cambiar foto","Change photo")}</span><input type="file" accept="image/jpeg,image/png,image/webp" disabled={avatarBusy} onChange={uploadAvatar}/></label>
-              {me?.profile?.avatarUrl&&<button type="button" className="ghost small" disabled={avatarBusy} onClick={()=>void removeAvatar()}>{copy(locale,"Quitar","Remove")}</button>}
-            </div>
-          </div>
+        <div className="player-profile-overview profile-overview-no-avatar">
           <div className="player-profile-summary">
             <div className="eyebrow">HUAU ID</div>
             <h2>{copy(locale,"Perfil de jugador","Player profile")}</h2>
@@ -366,7 +321,7 @@ function TournamentList({organizationId,locale,go,me}:{organizationId:string;loc
 function PlatformAdmin({locale,go,refreshMe}:{locale:Locale;go:(p:string)=>void;refreshMe:()=>Promise<void>}) {
   const [message,setMessage]=useState("");
   const submit=async(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();const f=new FormData(e.currentTarget);try{const r=await api<{organization:{slug:string}}>("/api/platform/organizations",{method:"POST",body:JSON.stringify({name:f.get("name"),slug:f.get("slug"),type:f.get("type"),description:f.get("description")})});setMessage("OK");await refreshMe();go(`/organizations/${r.organization.slug}`);}catch(err){setMessage(err instanceof Error?err.message:"error")}};
-  return <Shell locale={locale} go={go}><main className="dashboard"><section className="dashboard-head"><div><div className="eyebrow">HUAU</div><h1>{t(locale,"platform")}</h1></div></section><section className="panel form-panel"><h2>{t(locale,"createOrganization")}</h2><form onSubmit={submit}><Field name="name" label={t(locale,"organizationName")}/><Field name="slug" label={t(locale,"organizationSlug")} required={false}/><label><span>{t(locale,"organizationType")}</span><select name="type" defaultValue="club"><option value="club">Club</option><option value="sports_complex">Sports complex</option><option value="community">Community</option><option value="academy">Academy</option><option value="organizer">Organizer</option><option value="league">League</option><option value="federation">Federation</option></select></label><label><span>{t(locale,"description")}</span><textarea name="description" rows={4}/></label><button className="light">{t(locale,"create")}</button>{message&&<p>{message}</p>}</form></section></main></Shell>;
+  return <Shell locale={locale} go={go}><main className="dashboard"><section className="dashboard-head"><div><div className="eyebrow">HUAU</div><h1>{t(locale,"platform")}</h1></div></section><LandingAdminPanel locale={locale}/><section className="panel form-panel"><h2>{t(locale,"createOrganization")}</h2><form onSubmit={submit}><Field name="name" label={t(locale,"organizationName")}/><Field name="slug" label={t(locale,"organizationSlug")} required={false}/><label><span>{t(locale,"organizationType")}</span><select name="type" defaultValue="club"><option value="club">Club</option><option value="sports_complex">Sports complex</option><option value="community">Community</option><option value="academy">Academy</option><option value="organizer">Organizer</option><option value="league">League</option><option value="federation">Federation</option></select></label><label><span>{t(locale,"description")}</span><textarea name="description" rows={4}/></label><button className="light">{t(locale,"create")}</button>{message&&<p>{message}</p>}</form></section></main></Shell>;
 }
 
 function Field({name,label,type="text",required=true,defaultValue}:{name:string;label:string;type?:string;required?:boolean;defaultValue?:string}) { return <label><span>{label}</span><input name={name} type={type} required={required} defaultValue={defaultValue} min={type==="number"?"0":undefined} minLength={type==="password"?8:undefined}/></label>; }

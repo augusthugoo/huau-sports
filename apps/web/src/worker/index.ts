@@ -14,6 +14,7 @@ import { handleTeamAdminApi } from "./team-admin";
 import { handleRegistrationApi } from "./registration";
 import { handlePaymentApi } from "./payments";
 import { handleTournamentDayApi } from "./tournament-day";
+import { handleLandingApi } from "./landing";
 
 const json = (body: unknown, init: ResponseInit = {}) =>
   new Response(JSON.stringify(body), {
@@ -150,7 +151,7 @@ async function handleMe(request: Request, env: Env) {
   return json({
     ok: true,
     user: currentUser,
-    profile: profile ? { ...profile, avatarR2Key: undefined, avatarUrl: profile.avatarR2Key ? "/api/me/avatar" : null } : null,
+    profile: profile ? { ...profile, avatarR2Key: undefined } : null,
     memberships,
     capabilities,
     membershipRequests,
@@ -240,58 +241,6 @@ async function handleProfileUpdate(request: Request, env: Env) {
     },
   });
   return json({ ok: true });
-}
-
-async function handleMeAvatar(request: Request, env: Env) {
-  const currentUser = await requireUser(request, env);
-  if (!currentUser) return json({ ok:false, code:"UNAUTHENTICATED" }, { status:401 });
-  const current = await env.HUAU_DB.prepare(
-    `SELECT avatar_r2_key as avatarR2Key FROM user_profiles WHERE user_id=?`,
-  ).bind(currentUser.id).first<{ avatarR2Key:string|null }>();
-  if (!current) return json({ ok:false, code:"PROFILE_NOT_FOUND" }, { status:404 });
-
-  if (request.method === "GET") {
-    if (!current.avatarR2Key) return json({ ok:false, code:"AVATAR_NOT_FOUND" }, { status:404 });
-    const object = await env.HUAU_ASSETS.get(current.avatarR2Key);
-    if (!object) return json({ ok:false, code:"AVATAR_NOT_FOUND" }, { status:404 });
-    return new Response(object.body, {
-      headers: {
-        "content-type": object.httpMetadata?.contentType || "image/jpeg",
-        "cache-control": "private, max-age=3600",
-        "x-content-type-options": "nosniff",
-      },
-    });
-  }
-
-  if (request.method === "DELETE") {
-    await env.HUAU_DB.prepare(
-      `UPDATE user_profiles SET avatar_r2_key=NULL,updated_at=? WHERE user_id=?`,
-    ).bind(Date.now(), currentUser.id).run();
-    if (current.avatarR2Key) await env.HUAU_ASSETS.delete(current.avatarR2Key);
-    return json({ ok:true });
-  }
-
-  if (request.method !== "PUT") return json({ ok:false, code:"METHOD_NOT_ALLOWED" }, { status:405 });
-  const contentType = request.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() || "";
-  const extension = contentType === "image/png" ? "png" : contentType === "image/webp" ? "webp" : contentType === "image/jpeg" ? "jpg" : "";
-  if (!extension) return json({ ok:false, code:"AVATAR_TYPE_NOT_ALLOWED" }, { status:415 });
-  const bytes = await request.arrayBuffer();
-  if (!bytes.byteLength || bytes.byteLength > 5 * 1024 * 1024) {
-    return json({ ok:false, code:"AVATAR_TOO_LARGE" }, { status:413 });
-  }
-
-  const key = `profiles/${currentUser.id}/avatar/${crypto.randomUUID()}.${extension}`;
-  await env.HUAU_ASSETS.put(key, bytes, { httpMetadata: { contentType } });
-  try {
-    await env.HUAU_DB.prepare(
-      `UPDATE user_profiles SET avatar_r2_key=?,updated_at=? WHERE user_id=?`,
-    ).bind(key, Date.now(), currentUser.id).run();
-  } catch (error) {
-    await env.HUAU_ASSETS.delete(key);
-    throw error;
-  }
-  if (current.avatarR2Key && current.avatarR2Key !== key) await env.HUAU_ASSETS.delete(current.avatarR2Key);
-  return json({ ok:true, avatarUrl:"/api/me/avatar" });
 }
 
 async function handleOrganizationList(env: Env) {
@@ -566,9 +515,11 @@ export default {
       }
     }
 
+    const landingResponse = await handleLandingApi(request, env, url, { requireUser, isPlatformAdmin });
+    if (landingResponse) return landingResponse;
+
     if (url.pathname === "/api/me" && request.method === "GET") return handleMe(request, env);
     if (url.pathname === "/api/me/profile" && request.method === "PUT") return handleProfileUpdate(request, env);
-    if (url.pathname === "/api/me/avatar" && ["GET","PUT","DELETE"].includes(request.method)) return handleMeAvatar(request, env);
     if (url.pathname === "/api/organizations" && request.method === "GET") return handleOrganizationList(env);
 
     const publicOrg = url.pathname.match(/^\/api\/organizations\/([^/]+)$/);
