@@ -370,21 +370,27 @@ export function TournamentDayWorkspace(props: Props) {
     }
   };
 
-  const reloadSource = async () => {
+  const reloadSource = async (sourceKind: "published" | "d1" = "published") => {
+    const fromD1 = sourceKind === "d1" && !operatorToken;
+    const sourceLabel = fromD1
+      ? tr(locale, "D1", "D1")
+      : tr(locale, "la última revisión publicada", "the latest published revision");
+
     if (
       sessionRef.current?.dirty &&
       !window.confirm(
         tr(
           locale,
-          "Hay cambios locales sin publicar. ¿Descartarlos y descargar una copia nueva?",
-          "There are unpublished local changes. Discard them and download a fresh copy?",
+          `Hay cambios locales sin publicar. ¿Descartarlos y cargar ${sourceLabel}?`,
+          `There are unpublished local changes. Discard them and load ${sourceLabel}?`,
         ),
       )
     ) return;
-    setBusy("reload");
+
+    setBusy(fromD1 ? "reload-d1" : "reload-published");
     setError("");
     try {
-      const source = await fetchSourceSnapshot(!operatorToken);
+      const source = await fetchSourceSnapshot(fromD1);
       const snapshot = source.snapshot;
       const next: TournamentDaySession<TournamentDaySnapshot> = {
         schemaVersion: 1,
@@ -401,9 +407,13 @@ export function TournamentDayWorkspace(props: Props) {
       };
       await install(next);
       setNotice(
-        operatorToken
-          ? tr(locale, "Último checkpoint publicado descargado.", "Latest published checkpoint downloaded.")
-          : tr(locale, "Copia nueva descargada desde D1.", "Fresh copy downloaded from D1."),
+        fromD1
+          ? tr(locale, "Copia restaurada desde D1.", "Copy restored from D1.")
+          : tr(
+              locale,
+              `Última revisión publicada descargada · revisión ${source.publishedRevision}.`,
+              `Latest published revision downloaded · revision ${source.publishedRevision}.`,
+            ),
       );
     } catch (reloadError) {
       setError(reloadError instanceof Error ? reloadError.message : "TOURNAMENT_DAY_RELOAD_FAILED");
@@ -1557,7 +1567,7 @@ function DayRecovery({
   session: TournamentDaySession<TournamentDaySnapshot>;
   busy: string;
   publish: (finalized?: boolean) => Promise<void>;
-  reloadSource: () => Promise<void>;
+  reloadSource: (sourceKind?: "published" | "d1") => Promise<void>;
   exportLocal: () => void;
   importLocal: (file: File) => Promise<void>;
   resetLocal: () => Promise<void>;
@@ -1608,8 +1618,39 @@ function DayRecovery({
 
       <article className="panel">
         <h2>{tr(locale, "Fuente", "Source")}</h2>
-        <p className="muted">{session.source === "operator" ? tr(locale, "Descarga manual del último checkpoint compartido.", "Manually download the latest shared checkpoint.") : tr(locale, "Descarga manual de una copia nueva de D1. Sólo hacé esto si querés descartar la sesión local.", "Manually download a fresh D1 copy. Only do this if you want to discard the local session.")}</p>
-        <button className="ghost full" disabled={Boolean(busy)} onClick={() => void reloadSource()}>{busy === "reload" ? "…" : tr(locale, "Descargar copia nueva", "Download fresh copy")}</button>
+        <p className="muted">
+          {session.source === "operator"
+            ? tr(
+                locale,
+                "Descargá manualmente el último checkpoint compartido para actualizar esta copia local.",
+                "Manually download the latest shared checkpoint to update this local copy.",
+              )
+            : tr(
+                locale,
+                "Ante un conflicto entre operadores, cargá la última revisión publicada. Restaurar desde D1 queda como recuperación deliberada.",
+                "After an operator conflict, load the latest published revision. Restoring from D1 remains a deliberate recovery action.",
+              )}
+        </p>
+        <button
+          className="ghost full"
+          disabled={Boolean(busy)}
+          onClick={() => void reloadSource("published")}
+        >
+          {busy === "reload-published"
+            ? "…"
+            : tr(locale, "Cargar última revisión publicada", "Load latest published revision")}
+        </button>
+        {session.source !== "operator" ? (
+          <button
+            className="ghost full"
+            disabled={Boolean(busy)}
+            onClick={() => void reloadSource("d1")}
+          >
+            {busy === "reload-d1"
+              ? "…"
+              : tr(locale, "Restaurar desde D1", "Restore from D1")}
+          </button>
+        ) : null}
       </article>
 
       <article className="panel danger-zone">
