@@ -149,7 +149,7 @@ async function handleMe(request: Request, env: Env) {
   return json({
     ok: true,
     user: currentUser,
-    profile: profile ?? null,
+    profile: profile ? { ...profile, avatarR2Key: undefined, avatarUrl: profile.avatarR2Key ? "/api/me/avatar" : null } : null,
     memberships,
     capabilities,
     membershipRequests,
@@ -160,21 +160,137 @@ async function handleMe(request: Request, env: Env) {
 async function handleProfileUpdate(request: Request, env: Env) {
   const currentUser = await requireUser(request, env);
   if (!currentUser) return json({ ok: false, code: "UNAUTHENTICATED" }, { status: 401 });
-  const body = await readJson<{ firstName?: string; lastName?: string; phone?: string | null; duprSingles?: number | null; duprDoubles?: number | null; birthDate?: string | null; sportGender?: string | null; city?: string | null; countryCode?: string | null; preferredLocale?: string }>(request);
-  const current = await env.HUAU_DB.prepare(`SELECT first_name as firstName,last_name as lastName,phone,dupr_singles as duprSingles,dupr_doubles as duprDoubles,birth_date as birthDate,sport_gender as sportGender,city,country_code as countryCode,preferred_locale as preferredLocale FROM user_profiles WHERE user_id=?`).bind(currentUser.id).first<{firstName:string;lastName:string;phone:string|null;duprSingles:number|null;duprDoubles:number|null;birthDate:string|null;sportGender:string|null;city:string|null;countryCode:string|null;preferredLocale:string}>();
+  const body = await readJson<{
+    firstName?: string;
+    lastName?: string;
+    phone?: string | null;
+    duprSingles?: number | null;
+    duprDoubles?: number | null;
+    duprId?: string | null;
+    birthDate?: string | null;
+    sportGender?: string | null;
+    city?: string | null;
+    countryCode?: string | null;
+    preferredLocale?: string;
+  }>(request);
+  const current = await env.HUAU_DB.prepare(
+    `SELECT first_name as firstName,last_name as lastName,phone,dupr_singles as duprSingles,dupr_doubles as duprDoubles,
+            dupr_id as duprId,birth_date as birthDate,sport_gender as sportGender,city,country_code as countryCode,
+            preferred_locale as preferredLocale
+       FROM user_profiles WHERE user_id=?`,
+  ).bind(currentUser.id).first<{
+    firstName:string; lastName:string; phone:string|null; duprSingles:number|null; duprDoubles:number|null;
+    duprId:string|null; birthDate:string|null; sportGender:string|null; city:string|null; countryCode:string|null;
+    preferredLocale:string;
+  }>();
   const firstName = body.firstName?.trim() || current?.firstName || currentUser.name.split(" ")[0] || "Player";
   const lastName = body.lastName?.trim() ?? current?.lastName ?? currentUser.name.split(" ").slice(1).join(" ");
-  const sportGender = body.sportGender === undefined ? current?.sportGender ?? null : body.sportGender === "male" || body.sportGender === "female" ? body.sportGender : null;
+  const sportGender = body.sportGender === undefined
+    ? current?.sportGender ?? null
+    : body.sportGender === "male" || body.sportGender === "female" ? body.sportGender : null;
   const birthDate = body.birthDate === undefined ? current?.birthDate ?? null : body.birthDate || null;
-  const numericDupr = (value: number | null | undefined, currentValue: number | null | undefined) => value === undefined ? currentValue ?? null : value === null ? null : Number(value);
+  const numericDupr = (value: number | null | undefined, currentValue: number | null | undefined) =>
+    value === undefined ? currentValue ?? null : value === null ? null : Number(value);
   const duprSingles = numericDupr(body.duprSingles, current?.duprSingles);
   const duprDoubles = numericDupr(body.duprDoubles, current?.duprDoubles);
-  if ((duprSingles !== null && (!Number.isFinite(duprSingles) || duprSingles < 0 || duprSingles > 8)) || (duprDoubles !== null && (!Number.isFinite(duprDoubles) || duprDoubles < 0 || duprDoubles > 8))) return json({ok:false,code:"INVALID_DUPR"},{status:400});
+  const duprId = body.duprId === undefined ? current?.duprId ?? null : body.duprId?.trim() || null;
+  const countryCode = body.countryCode === undefined
+    ? current?.countryCode ?? null
+    : body.countryCode?.trim().toUpperCase() || null;
+  if (
+    (duprSingles !== null && (!Number.isFinite(duprSingles) || duprSingles < 0 || duprSingles > 8)) ||
+    (duprDoubles !== null && (!Number.isFinite(duprDoubles) || duprDoubles < 0 || duprDoubles > 8))
+  ) return json({ok:false,code:"INVALID_DUPR"},{status:400});
+  if (duprId && duprId.length > 80) return json({ ok:false, code:"INVALID_DUPR_ID" }, { status:400 });
+  if (countryCode && countryCode.length > 3) return json({ ok:false, code:"INVALID_COUNTRY_CODE" }, { status:400 });
   if (birthDate && !/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) return json({ ok:false, code:"INVALID_BIRTH_DATE" }, { status:400 });
   const stamp = now();
   const db = createDb(env.HUAU_DB);
-  await db.insert(userProfiles).values({ userId:currentUser.id, firstName, lastName, phone:body.phone===undefined?current?.phone??null:body.phone, duprSingles, duprDoubles, birthDate, sportGender, city:body.city===undefined?current?.city??null:body.city, countryCode:body.countryCode===undefined?current?.countryCode??null:body.countryCode, preferredLocale:body.preferredLocale??current?.preferredLocale??"es-UY", createdAt:stamp, updatedAt:stamp }).onConflictDoUpdate({ target:userProfiles.userId, set:{ firstName,lastName,phone:body.phone===undefined?current?.phone??null:body.phone,duprSingles,duprDoubles,birthDate,sportGender,city:body.city===undefined?current?.city??null:body.city,countryCode:body.countryCode===undefined?current?.countryCode??null:body.countryCode,preferredLocale:body.preferredLocale??current?.preferredLocale??"es-UY",updatedAt:stamp } });
+  await db.insert(userProfiles).values({
+    userId:currentUser.id,
+    firstName,
+    lastName,
+    phone:body.phone===undefined?current?.phone??null:body.phone,
+    duprSingles,
+    duprDoubles,
+    duprId,
+    birthDate,
+    sportGender,
+    city:body.city===undefined?current?.city??null:body.city,
+    countryCode,
+    preferredLocale:body.preferredLocale??current?.preferredLocale??"es-UY",
+    createdAt:stamp,
+    updatedAt:stamp,
+  }).onConflictDoUpdate({
+    target:userProfiles.userId,
+    set:{
+      firstName,
+      lastName,
+      phone:body.phone===undefined?current?.phone??null:body.phone,
+      duprSingles,
+      duprDoubles,
+      duprId,
+      birthDate,
+      sportGender,
+      city:body.city===undefined?current?.city??null:body.city,
+      countryCode,
+      preferredLocale:body.preferredLocale??current?.preferredLocale??"es-UY",
+      updatedAt:stamp,
+    },
+  });
   return json({ ok: true });
+}
+
+async function handleMeAvatar(request: Request, env: Env) {
+  const currentUser = await requireUser(request, env);
+  if (!currentUser) return json({ ok:false, code:"UNAUTHENTICATED" }, { status:401 });
+  const current = await env.HUAU_DB.prepare(
+    `SELECT avatar_r2_key as avatarR2Key FROM user_profiles WHERE user_id=?`,
+  ).bind(currentUser.id).first<{ avatarR2Key:string|null }>();
+  if (!current) return json({ ok:false, code:"PROFILE_NOT_FOUND" }, { status:404 });
+
+  if (request.method === "GET") {
+    if (!current.avatarR2Key) return json({ ok:false, code:"AVATAR_NOT_FOUND" }, { status:404 });
+    const object = await env.HUAU_ASSETS.get(current.avatarR2Key);
+    if (!object) return json({ ok:false, code:"AVATAR_NOT_FOUND" }, { status:404 });
+    return new Response(object.body, {
+      headers: {
+        "content-type": object.httpMetadata?.contentType || "image/jpeg",
+        "cache-control": "private, max-age=3600",
+        "x-content-type-options": "nosniff",
+      },
+    });
+  }
+
+  if (request.method === "DELETE") {
+    await env.HUAU_DB.prepare(
+      `UPDATE user_profiles SET avatar_r2_key=NULL,updated_at=? WHERE user_id=?`,
+    ).bind(Date.now(), currentUser.id).run();
+    if (current.avatarR2Key) await env.HUAU_ASSETS.delete(current.avatarR2Key);
+    return json({ ok:true });
+  }
+
+  if (request.method !== "PUT") return json({ ok:false, code:"METHOD_NOT_ALLOWED" }, { status:405 });
+  const contentType = request.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() || "";
+  const extension = contentType === "image/png" ? "png" : contentType === "image/webp" ? "webp" : contentType === "image/jpeg" ? "jpg" : "";
+  if (!extension) return json({ ok:false, code:"AVATAR_TYPE_NOT_ALLOWED" }, { status:415 });
+  const bytes = await request.arrayBuffer();
+  if (!bytes.byteLength || bytes.byteLength > 5 * 1024 * 1024) {
+    return json({ ok:false, code:"AVATAR_TOO_LARGE" }, { status:413 });
+  }
+
+  const key = `profiles/${currentUser.id}/avatar/${crypto.randomUUID()}.${extension}`;
+  await env.HUAU_ASSETS.put(key, bytes, { httpMetadata: { contentType } });
+  try {
+    await env.HUAU_DB.prepare(
+      `UPDATE user_profiles SET avatar_r2_key=?,updated_at=? WHERE user_id=?`,
+    ).bind(key, Date.now(), currentUser.id).run();
+  } catch (error) {
+    await env.HUAU_ASSETS.delete(key);
+    throw error;
+  }
+  if (current.avatarR2Key && current.avatarR2Key !== key) await env.HUAU_ASSETS.delete(current.avatarR2Key);
+  return json({ ok:true, avatarUrl:"/api/me/avatar" });
 }
 
 async function handleOrganizationList(env: Env) {
@@ -451,6 +567,7 @@ export default {
 
     if (url.pathname === "/api/me" && request.method === "GET") return handleMe(request, env);
     if (url.pathname === "/api/me/profile" && request.method === "PUT") return handleProfileUpdate(request, env);
+    if (url.pathname === "/api/me/avatar" && ["GET","PUT","DELETE"].includes(request.method)) return handleMeAvatar(request, env);
     if (url.pathname === "/api/organizations" && request.method === "GET") return handleOrganizationList(env);
 
     const publicOrg = url.pathname.match(/^\/api\/organizations\/([^/]+)$/);

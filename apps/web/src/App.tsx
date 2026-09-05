@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { FormEvent } from "react";
+import type { ChangeEvent, FormEvent } from "react";
 import { authClient } from "./lib/auth-client";
 import { detectLocale, t } from "./i18n";
 import type { Locale } from "./i18n";
@@ -24,6 +24,8 @@ type Me = {
     phone: string | null;
     duprSingles: number | null;
     duprDoubles: number | null;
+    duprId: string | null;
+    avatarUrl: string | null;
     birthDate: string | null;
     sportGender: "male" | "female" | "unspecified" | null;
     city: string | null;
@@ -158,13 +160,19 @@ export function App() {
   return <MyHuau locale={locale} setLocale={changeLocale} go={go} me={me} loading={meLoading} refreshMe={refreshMe} />;
 }
 
+function HuauBrand({ onClick, center = false }: { onClick?: () => void; center?: boolean }) {
+  const image = <img className="huau-logo-image" src="/huau-logo.png" alt="HUAU" />;
+  if (onClick) return <button type="button" className={`huau-logo-button${center ? " center" : ""}`} onClick={onClick} aria-label="HUAU">{image}</button>;
+  return <div className={`huau-logo-static${center ? " center" : ""}`}>{image}</div>;
+}
+
 function Shell({ children, locale, go, me }: { children: React.ReactNode; locale: Locale; go: (path: string) => void; me?: Me | null }) {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <button className="brand-button" onClick={() => go("/app")}><strong>HUAU</strong><span>SPORTS</span></button>
+        <HuauBrand onClick={() => go("/app")} />
         <nav>
-          <button onClick={() => go("/app")}>{t(locale, "myHuau")}</button>
+          <button className="light compact player-profile-nav" onClick={() => go("/app")}>{copy(locale, "Perfil de jugador", "Player profile")}</button>
           {me?.platformAdmin && <button onClick={() => go("/platform")}>{t(locale, "platform")}</button>}
         </nav>
         <button className="ghost compact" onClick={() => void authClient.signOut().then(() => go("/"))}>{t(locale, "signOut")}</button>
@@ -176,9 +184,9 @@ function Shell({ children, locale, go, me }: { children: React.ReactNode; locale
 
 function Landing({ locale, setLocale, go }: { locale: Locale; setLocale: (l: Locale) => void; go: (p: string) => void }) {
   return <main className="landing">
-    <header className="landing-nav"><div className="brand"><strong>HUAU</strong><span>SPORTS</span></div><div className="landing-actions"><LocaleToggle locale={locale} setLocale={setLocale}/><button className="ghost" onClick={() => go("/login")}>{t(locale,"enter")}</button><button className="light" onClick={() => go("/signup")}>{t(locale,"createAccount")}</button></div></header>
+    <header className="landing-nav"><HuauBrand /><div className="landing-actions"><LocaleToggle locale={locale} setLocale={setLocale}/><button className="ghost" onClick={() => go("/login")}>{t(locale,"enter")}</button><button className="light" onClick={() => go("/signup")}>{t(locale,"createAccount")}</button></div></header>
     <section className="landing-hero"><div className="eyebrow">{t(locale,"landingEyebrow")}</div><h1>{t(locale,"landingTitle")}</h1><p>{t(locale,"landingBody")}</p><div className="hero-actions"><button className="light" onClick={() => go("/signup")}>{t(locale,"createAccount")}</button><button className="ghost" onClick={() => go("/login")}>{t(locale,"enter")}</button></div><div className="module-strip"><span>CLUB</span><span>TOURNAMENT</span><span>REF</span></div></section>
-    <footer className="landing-footer"><span>HUAU Sports</span><span>{t(locale,"brandTagline")}</span></footer>
+    <footer className="landing-footer"><span>HUAU</span><span>{t(locale,"brandTagline")}</span></footer>
   </main>;
 }
 
@@ -199,38 +207,109 @@ function AuthScreen({ mode, locale, go, onDone }: { mode: "login"|"signup"; loca
       await onDone(); const next=sessionStorage.getItem("huau.afterAuth"); if(next)sessionStorage.removeItem("huau.afterAuth"); go(next||"/app");
     } catch (e) { setError(e instanceof Error?e.message:"AUTH_FAILED"); } finally { setBusy(false); }
   };
-  return <main className="auth-page"><button className="back-link" onClick={()=>go("/")}>← {t(locale,"back")}</button><section className="auth-card"><div className="brand center"><strong>HUAU</strong><span>SPORTS</span></div><h1>{mode==="login"?t(locale,"signIn"):t(locale,"createAccount")}</h1><form onSubmit={submit}>{mode==="signup"&&<div className="two"><Field name="firstName" label={t(locale,"firstName")}/><Field name="lastName" label={t(locale,"lastName")}/></div>}<Field name="email" label={t(locale,"email")} type="email"/><Field name="password" label={t(locale,"password")} type="password"/><button className="light full" disabled={busy}>{busy?"…":mode==="login"?t(locale,"signIn"):t(locale,"signUp")}</button>{error&&<p className="error">{error}</p>}</form>{mode==="login"?<><button className="text-button" onClick={()=>go("/recover")}>{t(locale,"recover")}</button><button className="text-button" onClick={()=>go("/signup")}>{copy(locale,"¿No tenés cuenta? Crear cuenta","No account yet? Create one")}</button></>:<button className="text-button" onClick={()=>go("/login")}>{copy(locale,"Ya tengo cuenta","I already have an account")}</button>}</section></main>;
+  return <main className="auth-page"><button className="back-link" onClick={()=>go("/")}>← {t(locale,"back")}</button><section className="auth-card"><HuauBrand center /><h1>{mode==="login"?t(locale,"signIn"):t(locale,"createAccount")}</h1><form onSubmit={submit}>{mode==="signup"&&<div className="two"><Field name="firstName" label={t(locale,"firstName")}/><Field name="lastName" label={t(locale,"lastName")}/></div>}<Field name="email" label={t(locale,"email")} type="email"/><Field name="password" label={t(locale,"password")} type="password"/><button className="light full" disabled={busy}>{busy?"…":mode==="login"?t(locale,"signIn"):t(locale,"signUp")}</button>{error&&<p className="error">{error}</p>}</form>{mode==="login"?<><button className="text-button" onClick={()=>go("/recover")}>{t(locale,"recover")}</button><button className="text-button" onClick={()=>go("/signup")}>{copy(locale,"¿No tenés cuenta? Crear cuenta","No account yet? Create one")}</button></>:<button className="text-button" onClick={()=>go("/login")}>{copy(locale,"Ya tengo cuenta","I already have an account")}</button>}</section></main>;
 }
 
-function RecoveryScreen({locale,go}:{locale:Locale;go:(p:string)=>void}) { return <main className="auth-page"><button className="back-link" onClick={()=>go("/login")}>← {t(locale,"back")}</button><section className="auth-card"><div className="brand center"><strong>HUAU</strong><span>SPORTS</span></div><h1>{t(locale,"recover")}</h1><p className="muted">{t(locale,"recoverySoon")}</p></section></main>; }
+function RecoveryScreen({locale,go}:{locale:Locale;go:(p:string)=>void}) { return <main className="auth-page"><button className="back-link" onClick={()=>go("/login")}>← {t(locale,"back")}</button><section className="auth-card"><HuauBrand center /><h1>{t(locale,"recover")}</h1><p className="muted">{t(locale,"recoverySoon")}</p></section></main>; }
 
 function MyHuau({locale,setLocale,go,me,loading,refreshMe}:{locale:Locale;setLocale:(l:Locale)=>void;go:(p:string)=>void;me:Me|null;loading:boolean;refreshMe:()=>Promise<void>}) {
   const [organizations,setOrganizations]=useState<Organization[]>([]);
   const [profileBusy,setProfileBusy]=useState(false);
   const [profileMessage,setProfileMessage]=useState("");
+  const [avatarBusy,setAvatarBusy]=useState(false);
+  const [avatarVersion,setAvatarVersion]=useState(0);
   useEffect(()=>{ void api<{organizations:Organization[]}>("/api/organizations").then(r=>setOrganizations(r.organizations)); },[]);
   const adminOrgIds=useMemo(()=>new Set(me?.capabilities.filter(c=>c.capability==="org_admin"&&c.status==="active").map(c=>c.organizationId)??[]),[me]);
+  const profileComplete=Boolean(me?.profile?.firstName&&me.profile.lastName&&me.profile.phone&&me.profile.birthDate&&me.profile.sportGender&&me.profile.sportGender!=="unspecified");
+  const initials=`${me?.profile?.firstName?.[0]??me?.user.name?.[0]??"H"}${me?.profile?.lastName?.[0]??""}`.toUpperCase();
+
   const saveProfile=async(event:FormEvent<HTMLFormElement>)=>{
     event.preventDefault();setProfileBusy(true);setProfileMessage("");
     const form=new FormData(event.currentTarget);
     try{
-      await api("/api/me/profile",{method:"PUT",body:JSON.stringify({firstName:form.get("firstName"),lastName:form.get("lastName"),phone:form.get("phone")||null,birthDate:form.get("birthDate")||null,sportGender:form.get("sportGender"),duprSingles:String(form.get("duprSingles")||"").trim()?Number(form.get("duprSingles")):null,duprDoubles:String(form.get("duprDoubles")||"").trim()?Number(form.get("duprDoubles")):null})});
+      await api("/api/me/profile",{method:"PUT",body:JSON.stringify({
+        firstName:form.get("firstName"),
+        lastName:form.get("lastName"),
+        phone:form.get("phone")||null,
+        birthDate:form.get("birthDate")||null,
+        sportGender:form.get("sportGender"),
+        city:form.get("city")||null,
+        countryCode:String(form.get("countryCode")||"").trim().toUpperCase()||null,
+        duprId:String(form.get("duprId")||"").trim()||null,
+        duprSingles:String(form.get("duprSingles")||"").trim()?Number(form.get("duprSingles")):null,
+        duprDoubles:String(form.get("duprDoubles")||"").trim()?Number(form.get("duprDoubles")):null,
+      })});
       await refreshMe();
       setProfileMessage(copy(locale,"Perfil actualizado.","Profile updated."));
     }catch(error){setProfileMessage(error instanceof Error?error.message:"PROFILE_UPDATE_FAILED");}
     finally{setProfileBusy(false);}
   };
-  return <Shell locale={locale} go={go} me={me}><main className="dashboard">
-    <section className="dashboard-head"><div><div className="eyebrow">{t(locale,"myHuau")}</div><h1>{me?.profile?.firstName ? `${me.profile.firstName}, ${copy(locale,"tu deporte empieza acá.","your sport starts here.")}` : copy(locale,"Tu deporte empieza acá.","Your sport starts here.")}</h1></div><div className="dashboard-head-actions"><button className="ghost" onClick={()=>go("/app/registrations")}>{copy(locale,"Mis inscripciones","My registrations")}</button><LocaleToggle locale={locale} setLocale={setLocale}/></div></section>
+
+  const uploadAvatar=async(event:ChangeEvent<HTMLInputElement>)=>{
+    const file=event.currentTarget.files?.[0];
+    if(!file)return;
+    setAvatarBusy(true);setProfileMessage("");
+    try{
+      const response=await fetch("/api/me/avatar",{method:"PUT",headers:{"content-type":file.type},body:file});
+      const payload=await response.json() as {ok?:boolean;code?:string};
+      if(!response.ok)throw new Error(payload.code||`HTTP_${response.status}`);
+      await refreshMe();
+      setAvatarVersion(value=>value+1);
+      setProfileMessage(copy(locale,"Foto de perfil actualizada.","Profile photo updated."));
+    }catch(error){setProfileMessage(error instanceof Error?error.message:"AVATAR_UPDATE_FAILED");}
+    finally{event.currentTarget.value="";setAvatarBusy(false);}
+  };
+
+  const removeAvatar=async()=>{
+    setAvatarBusy(true);setProfileMessage("");
+    try{
+      const response=await fetch("/api/me/avatar",{method:"DELETE"});
+      const payload=await response.json() as {ok?:boolean;code?:string};
+      if(!response.ok)throw new Error(payload.code||`HTTP_${response.status}`);
+      await refreshMe();
+      setAvatarVersion(value=>value+1);
+      setProfileMessage(copy(locale,"Foto eliminada.","Photo removed."));
+    }catch(error){setProfileMessage(error instanceof Error?error.message:"AVATAR_DELETE_FAILED");}
+    finally{setAvatarBusy(false);}
+  };
+
+  return <Shell locale={locale} go={go} me={me}><main className="dashboard player-profile-page">
+    <section className="dashboard-head"><div><div className="eyebrow">{copy(locale,"PERFIL DE JUGADOR","PLAYER PROFILE")}</div><h1>{me?.profile?.firstName ? copy(locale,`Bienvenido, ${me.profile.firstName}.`,`Welcome, ${me.profile.firstName}.`) : copy(locale,"Bienvenido a HUAU.","Welcome to HUAU.")}</h1></div><div className="dashboard-head-actions"><button className="ghost" onClick={()=>go("/app/registrations")}>{copy(locale,"Mis inscripciones","My registrations")}</button><LocaleToggle locale={locale} setLocale={setLocale}/></div></section>
     <section className="dashboard-grid">
-      <div className="panel wide">
-        <div className="panel-title"><div><div className="eyebrow">HUAU ID</div><h2>{copy(locale,"Mi perfil","My profile")}</h2><p className="muted">{copy(locale,"Tus datos deportivos y de contacto viven en HUAU ID y se reutilizan al inscribirte a torneos.","Your sport and contact data live in HUAU ID and are reused when you register for tournaments.")}</p></div></div>
-        <form onSubmit={saveProfile}>
+      <div className="panel wide player-profile-panel">
+        <div className="player-profile-overview">
+          <div className="player-profile-avatar-block">
+            <div className="player-avatar">{me?.profile?.avatarUrl?<img key={avatarVersion} src={`${me.profile.avatarUrl}?v=${avatarVersion}`} alt={copy(locale,"Foto de perfil","Profile photo")} />:<span>{initials}</span>}</div>
+            <div className="avatar-actions">
+              <label className={`ghost small avatar-upload${avatarBusy?" disabled":""}`}><span>{avatarBusy?"…":copy(locale,"Cambiar foto","Change photo")}</span><input type="file" accept="image/jpeg,image/png,image/webp" disabled={avatarBusy} onChange={uploadAvatar}/></label>
+              {me?.profile?.avatarUrl&&<button type="button" className="ghost small" disabled={avatarBusy} onClick={()=>void removeAvatar()}>{copy(locale,"Quitar","Remove")}</button>}
+            </div>
+          </div>
+          <div className="player-profile-summary">
+            <div className="eyebrow">HUAU ID</div>
+            <h2>{copy(locale,"Perfil de jugador","Player profile")}</h2>
+            <p className="muted">{copy(locale,"Tus datos de identidad, contacto y pickleball se reutilizan al inscribirte a torneos.","Your identity, contact and pickleball data are reused when you register for tournaments.")}</p>
+            <div className="profile-status-row">
+              <span className={`profile-completion ${profileComplete?"complete":""}`}>{profileComplete?copy(locale,"Perfil base completo","Base profile complete"):copy(locale,"Faltan datos básicos","Basic details missing")}</span>
+              <code title={me?.user.id}>{me?.user.id??"—"}</code>
+            </div>
+          </div>
+        </div>
+
+        <form onSubmit={saveProfile} className="player-profile-form">
           <div className="two"><Field name="firstName" label={copy(locale,"Nombre","First name")} defaultValue={me?.profile?.firstName??""}/><Field name="lastName" label={copy(locale,"Apellido","Last name")} defaultValue={me?.profile?.lastName??""}/></div>
-          <div className="two"><Field name="phone" label={copy(locale,"Teléfono","Phone")} required={false} defaultValue={me?.profile?.phone??""}/><Field name="birthDate" label={copy(locale,"Fecha de nacimiento","Birth date")} type="date" required={false} defaultValue={me?.profile?.birthDate??""}/></div><div className="two"><label><span>{copy(locale,"Género deportivo","Sport gender")}</span><select name="sportGender" defaultValue={me?.profile?.sportGender??"unspecified"}><option value="unspecified">{copy(locale,"Sin especificar","Unspecified")}</option><option value="male">{copy(locale,"Masculino","Male")}</option><option value="female">{copy(locale,"Femenino","Female")}</option></select></label><span className="muted">{copy(locale,"Datos usados sólo cuando el torneo necesita validar elegibilidad.","Used only when a tournament needs eligibility checks.")}</span></div><div className="two"><label><span>DUPR Singles</span><input name="duprSingles" type="number" min="0" max="8" step="0.001" defaultValue={me?.profile?.duprSingles===null||me?.profile?.duprSingles===undefined?"":String(me.profile.duprSingles)}/></label><label><span>DUPR Doubles</span><input name="duprDoubles" type="number" min="0" max="8" step="0.001" defaultValue={me?.profile?.duprDoubles===null||me?.profile?.duprDoubles===undefined?"":String(me.profile.duprDoubles)}/></label></div>
+          <div className="two"><label><span>Email</span><input value={me?.user.email??""} disabled readOnly/></label><Field name="phone" label={copy(locale,"Teléfono","Phone")} required={false} defaultValue={me?.profile?.phone??""}/></div>
+          <div className="two"><Field name="birthDate" label={copy(locale,"Fecha de nacimiento","Birth date")} type="date" required={false} defaultValue={me?.profile?.birthDate??""}/><label><span>{copy(locale,"Género deportivo","Sport gender")}</span><select name="sportGender" defaultValue={me?.profile?.sportGender??"unspecified"}><option value="unspecified">{copy(locale,"Sin especificar","Unspecified")}</option><option value="male">{copy(locale,"Masculino","Male")}</option><option value="female">{copy(locale,"Femenino","Female")}</option></select></label></div>
+          <div className="two"><Field name="city" label={copy(locale,"Ciudad","City")} required={false} defaultValue={me?.profile?.city??""}/><label><span>{copy(locale,"País (código)","Country code")}</span><input name="countryCode" maxLength={3} defaultValue={me?.profile?.countryCode??""} placeholder="UY"/></label></div>
+          <div className="dupr-profile-box">
+            <div className="dupr-profile-copy"><div className="eyebrow">DUPR</div><strong>{copy(locale,"Identidad y ratings","Identity & ratings")}</strong><p className="muted">{copy(locale,"El DUPR ID permite que la organización verifique los ratings declarados cuando corresponda.","Your DUPR ID lets organizers verify declared ratings when needed.")}</p></div>
+            <label><span>DUPR ID</span><input name="duprId" maxLength={80} defaultValue={me?.profile?.duprId??""} placeholder={copy(locale,"ID de jugador DUPR","DUPR player ID")}/></label>
+            <div className="two"><label><span>DUPR Singles</span><input name="duprSingles" type="number" min="0" max="8" step="0.001" defaultValue={me?.profile?.duprSingles===null||me?.profile?.duprSingles===undefined?"":String(me.profile.duprSingles)}/></label><label><span>DUPR Doubles</span><input name="duprDoubles" type="number" min="0" max="8" step="0.001" defaultValue={me?.profile?.duprDoubles===null||me?.profile?.duprDoubles===undefined?"":String(me.profile.duprDoubles)}/></label></div>
+          </div>
           <div className="form-actions"><button className="light small" disabled={profileBusy}>{profileBusy?"…":copy(locale,"Guardar perfil","Save profile")}</button>{profileMessage&&<span className="muted">{profileMessage}</span>}</div>
         </form>
       </div>
+
       <div className="panel wide"><div className="panel-title"><h2>{t(locale,"organizations")}</h2><span>{me?.memberships.length??0}</span></div>{loading?<p className="muted">Loading…</p>:me?.memberships.length? <div className="card-list">{me.memberships.map(m=><article className="org-card" key={m.id}><div><span className="pill">{m.organizationType}</span><h3>{m.organizationName}</h3><p>{m.status}</p></div><div className="card-actions"><button className="ghost small" onClick={()=>go(`/organizations/${m.organizationSlug}`)}>{t(locale,"openOrganization")}</button>{adminOrgIds.has(m.organizationId)&&<button className="light small" onClick={()=>go(`/admin/organizations/${m.organizationId}`)}>{t(locale,"admin")}</button>}</div></article>)}</div>:<p className="muted">{t(locale,"noOrganizations")}</p>}</div>
       <div className="panel"><h2>{t(locale,"discover")}</h2><div className="mini-list">{organizations.slice(0,6).map(org=><button key={org.id} onClick={()=>go(`/organizations/${org.slug}`)}><span>{org.name}</span><small>{org.type}</small></button>)}</div></div>
     </section>
@@ -242,9 +321,9 @@ function PublicOrganization({slug,locale,go,me,refreshMe,authenticated}:{slug:st
   useEffect(()=>{ void api<{organization:Organization}>(`/api/organizations/${encodeURIComponent(slug)}`).then(r=>setOrg(r.organization)); },[slug]);
   const membership=me?.memberships.find(m=>m.organizationId===org?.id); const pendingRequest=me?.membershipRequests?.find(r=>r.organizationId===org?.id&&r.status==="pending");
   const request=async()=>{ if(!org)return; try{await api(`/api/organizations/${org.id}/membership-requests`,{method:"POST",body:"{}"});setState("sent");await refreshMe();}catch(e){setState(e instanceof Error?e.message:"error");}};
-  const content=<main className="public-org">{org?<><div className="eyebrow">{org.type}</div><h1>{org.name}</h1><p>{org.description||"HUAU Sports Organization"}</p><div className="public-org-actions">{membership?<span className="pill strong">{membership.status}</span>:pendingRequest?<span className="pill strong">{t(locale,"pending")}</span>:authenticated?<button className="light" onClick={()=>void request()} disabled={state==="sent"}>{state==="sent"?t(locale,"requestSent"):t(locale,"requestJoin")}</button>:<button className="light" onClick={()=>go("/login")}>{t(locale,"enter")}</button>}</div></>:<p>Loading…</p>}</main>;
+  const content=<main className="public-org">{org?<><div className="eyebrow">{org.type}</div><h1>{org.name}</h1><p>{org.description||"HUAU Organization"}</p><div className="public-org-actions">{membership?<span className="pill strong">{membership.status}</span>:pendingRequest?<span className="pill strong">{t(locale,"pending")}</span>:authenticated?<button className="light" onClick={()=>void request()} disabled={state==="sent"}>{state==="sent"?t(locale,"requestSent"):t(locale,"requestJoin")}</button>:<button className="light" onClick={()=>go("/login")}>{t(locale,"enter")}</button>}</div></>:<p>Loading…</p>}</main>;
   if(authenticated) return <Shell locale={locale} go={go} me={me}>{content}</Shell>;
-  return <div className="app-shell"><header className="topbar"><button className="brand-button" onClick={()=>go("/")}><strong>HUAU</strong><span>SPORTS</span></button><button className="light small" onClick={()=>go("/login")}>{t(locale,"enter")}</button></header>{content}</div>;
+  return <div className="app-shell"><header className="topbar"><HuauBrand onClick={()=>go("/")} /><button className="light small" onClick={()=>go("/login")}>{t(locale,"enter")}</button></header>{content}</div>;
 }
 
 function OrganizationAdmin({organizationId,locale,go,me,refreshMe}:{organizationId:string;locale:Locale;go:(p:string)=>void;me:Me|null;refreshMe:()=>Promise<void>}) {
@@ -275,4 +354,4 @@ function PlatformAdmin({locale,go,refreshMe}:{locale:Locale;go:(p:string)=>void;
 
 function Field({name,label,type="text",required=true,defaultValue}:{name:string;label:string;type?:string;required?:boolean;defaultValue?:string}) { return <label><span>{label}</span><input name={name} type={type} required={required} defaultValue={defaultValue} min={type==="number"?"0":undefined} minLength={type==="password"?8:undefined}/></label>; }
 function LocaleToggle({locale,setLocale}:{locale:Locale;setLocale:(l:Locale)=>void}) { return <div className="locale-toggle"><button className={locale==="es"?"active":""} onClick={()=>setLocale("es")}>ES</button><button className={locale==="en"?"active":""} onClick={()=>setLocale("en")}>EN</button></div>; }
-function LoadingScreen(){ return <main className="loading-screen"><div className="brand center"><strong>HUAU</strong><span>SPORTS</span></div></main>; }
+function LoadingScreen(){ return <main className="loading-screen"><HuauBrand center /></main>; }

@@ -82,6 +82,7 @@ export const userProfiles = sqliteTable("user_profiles", {
   phone: text("phone"),
   duprSingles: real("dupr_singles"),
   duprDoubles: real("dupr_doubles"),
+  duprId: text("dupr_id"),
   birthDate: text("birth_date"),
   sportGender: text("sport_gender"),
   countryCode: text("country_code"),

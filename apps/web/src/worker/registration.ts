@@ -51,6 +51,7 @@ type ProfileRow = {
   phone: string | null;
   duprSingles: number | null;
   duprDoubles: number | null;
+  duprId: string | null;
 };
 
 type PricingSettingsRow = {
@@ -152,7 +153,7 @@ async function categoryById(env: Env, id: string) {
 
 async function profileForUser(env: Env, userId: string) {
   return env.HUAU_DB.prepare(
-    `SELECT first_name as firstName,last_name as lastName,birth_date as birthDate,COALESCE(sport_gender,'unspecified') as sportGender,phone,dupr_singles as duprSingles,dupr_doubles as duprDoubles FROM user_profiles WHERE user_id=?`,
+    `SELECT first_name as firstName,last_name as lastName,birth_date as birthDate,COALESCE(sport_gender,'unspecified') as sportGender,phone,dupr_singles as duprSingles,dupr_doubles as duprDoubles,dupr_id as duprId FROM user_profiles WHERE user_id=?`,
   ).bind(userId).first<ProfileRow>();
 }
 

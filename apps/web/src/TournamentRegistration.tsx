@@ -45,6 +45,7 @@ type PlayerProfile = {
   phone: string | null;
   duprSingles: number | null;
   duprDoubles: number | null;
+  duprId: string | null;
 };
 
 type PricingPolicy = {
@@ -154,6 +155,7 @@ function codeCopy(locale: Locale, code: string) {
     DUPR_REQUIRED: ["Completá tu DUPR de Singles y Dobles en tu perfil antes de inscribirte.", "Add your Singles and Doubles DUPR to your profile before registering."],
     DUPR_LIMIT_EXCEEDED: ["Tu DUPR supera el máximo configurado para este torneo. Necesitás una Wild Card de la organización.", "Your DUPR is above this tournament limit. You need an organizer Wild Card."],
     INVALID_DUPR: ["Revisá los valores de DUPR ingresados.", "Check the DUPR values you entered."],
+    INVALID_DUPR_ID: ["Revisá tu DUPR ID.", "Check your DUPR ID."],
     REGULATIONS_ACCEPTANCE_REQUIRED: ["Leé y aceptá el reglamento del torneo antes de confirmar.", "Read and accept the tournament regulations before confirming."],
     REGULATIONS_VERSION_CHANGED: ["El reglamento cambió mientras estabas inscribiéndote. Revisalo nuevamente antes de confirmar.", "The regulations changed while you were registering. Review them again before confirming."],
   };
@@ -216,6 +218,7 @@ function EligibilityProfileCard({
         <label><span>{tr(locale, "Teléfono", "Phone")}</span><input name="phone" type="tel" defaultValue={profile?.phone ?? ""} /></label>
         <label><span>{tr(locale, "Fecha de nacimiento", "Birth date")}</span><input name="birthDate" type="date" defaultValue={profile?.birthDate ?? ""} /></label>
         <label><span>{tr(locale, "Género deportivo", "Sport gender")}</span><select name="sportGender" defaultValue={profile?.sportGender ?? "unspecified"}><option value="unspecified">{tr(locale, "Sin especificar", "Unspecified")}</option><option value="male">{tr(locale, "Masculino", "Male")}</option><option value="female">{tr(locale, "Femenino", "Female")}</option></select></label>
+        <label><span>DUPR ID</span><input name="duprId" type="text" maxLength={80} defaultValue={profile?.duprId ?? ""} placeholder={tr(locale, "Tu ID de jugador en DUPR", "Your DUPR player ID")} /></label>
         <div className="two"><label><span>DUPR Singles</span><input name="duprSingles" type="number" min="0" max="8" step="0.001" defaultValue={profile?.duprSingles ?? ""}/></label><label><span>DUPR Doubles</span><input name="duprDoubles" type="number" min="0" max="8" step="0.001" defaultValue={profile?.duprDoubles ?? ""}/></label></div>
         <button className="light" disabled={busy}>{busy ? "…" : tr(locale, "Guardar perfil", "Save profile")}</button>
       </form>
@@ -297,7 +300,7 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
     setBusy("profile");
     const form = new FormData(event.currentTarget);
     try {
-      await api("/api/me/profile", { method: "PUT", body: JSON.stringify({ phone: form.get("phone") || null, birthDate: form.get("birthDate") || null, sportGender: form.get("sportGender"), duprSingles: String(form.get("duprSingles")||"").trim()?Number(form.get("duprSingles")):null, duprDoubles: String(form.get("duprDoubles")||"").trim()?Number(form.get("duprDoubles")):null }) });
+      await api("/api/me/profile", { method: "PUT", body: JSON.stringify({ phone: form.get("phone") || null, birthDate: form.get("birthDate") || null, sportGender: form.get("sportGender"), duprId: String(form.get("duprId")||"").trim()||null, duprSingles: String(form.get("duprSingles")||"").trim()?Number(form.get("duprSingles")):null, duprDoubles: String(form.get("duprDoubles")||"").trim()?Number(form.get("duprDoubles")):null }) });
       await Promise.all([load(), onProfileSaved?.() ?? Promise.resolve()]);
       setNotice(tr(locale, "Perfil actualizado.", "Profile updated."));
     } catch (err) {
@@ -397,7 +400,7 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
   return (
     <main className="public-tournament-page">
       <header className="public-tournament-nav">
-        <button className="brand-button" onClick={() => go("/")}><strong>HUAU</strong><span>SPORTS</span></button>
+        <button className="huau-logo-button" onClick={() => go("/")} aria-label="HUAU"><img className="huau-logo-image" src="/huau-logo.png" alt="HUAU" /></button>
         <div>{data.viewer.authenticated ? <button className="ghost" onClick={() => go("/app/registrations")}>{tr(locale, "Mis inscripciones", "My registrations")}</button> : <button className="light" onClick={login}>{tr(locale, "Ingresar", "Sign in")}</button>}</div>
       </header>
       <section
