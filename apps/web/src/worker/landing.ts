@@ -22,7 +22,9 @@ async function platformUser(request: Request, env: Env, access: AccessHelpers) {
 async function publicLanding(env: Env) {
   const tournamentCutoff = Math.floor(Date.now() / 1000) - 86_400;
   const rows = await env.HUAU_DB.prepare(
-    `SELECT id,name,slug,sport,status,start_at as startAt,end_at as endAt
+    `SELECT id,name,slug,sport,status,start_at as startAt,end_at as endAt,
+            CASE WHEN public_hero_r2_key IS NOT NULL AND TRIM(public_hero_r2_key) <> ''
+                 THEN '/api/public/tournaments/' || slug || '/hero' ELSE NULL END as heroImageUrl
        FROM tournaments
       WHERE visibility='public'
         AND status IN ('registration_open','registration_closed','draw_ready','scheduled','live')

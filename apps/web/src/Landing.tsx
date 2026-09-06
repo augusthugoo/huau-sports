@@ -14,6 +14,7 @@ type LandingTournament = {
   status: string;
   startAt: number;
   endAt: number | null;
+  heroImageUrl: string | null;
 };
 
 type LandingData = {
@@ -69,12 +70,12 @@ const slideCopy = {
   es: [
     { eyebrow: "HUAU TOURNAMENT", title: "Del registro al último punto.", body: "Inscripciones, operación de torneo y competencia en un mismo ecosistema." },
     { eyebrow: "HUAU REF", title: "Arbitraje más simple en cancha.", body: "Scoring, servicio, posiciones y control de partido desde una interfaz dedicada." },
-    { eyebrow: "HUAU SPORTS", title: "Tu ecosistema deportivo.", body: "Tecnología para competir, organizar y vivir el deporte con menos fricción." },
+    { eyebrow: "HUAU SPORTS", title: "Tu ecosistema deportivo.", body: "Organizá, competí y viví el deporte desde un solo lugar." },
   ],
   en: [
     { eyebrow: "HUAU TOURNAMENT", title: "From registration to the final point.", body: "Registration, tournament operations and competition in one ecosystem." },
     { eyebrow: "HUAU REF", title: "Simpler officiating on court.", body: "Scoring, service, positions and match control from a dedicated interface." },
-    { eyebrow: "HUAU SPORTS", title: "Your sports ecosystem.", body: "Technology to compete, organize and experience sport with less friction." },
+    { eyebrow: "HUAU SPORTS", title: "Your sports ecosystem.", body: "Organize, compete and experience sport from one place." },
   ],
 } as const;
 
@@ -149,11 +150,7 @@ export function Landing({ locale, setLocale, go }: { locale: Locale; setLocale: 
         </div>
       </div>
 
-      <section className="landing-intro">
-        <div className="landing-kicker">HUAU SPORTS</div>
-        <h1>{tr(locale, "Tu ecosistema deportivo.", "Your sports ecosystem.")}</h1>
-        <p>{tr(locale, "Organizá, competí y viví el deporte desde un solo lugar.", "Organize, compete and experience sport from one place.")}</p>
-      </section>
+
 
       <section className={`landing-hero-carousel${hasHero ? " has-image" : ""}`} aria-label={tr(locale, "Presentación HUAU", "HUAU presentation")}>
         {hasHero && <img src={currentHero} alt="" onError={() => setBrokenHeroes((current) => ({ ...current, [slide + 1]: true }))} />}
@@ -202,6 +199,13 @@ export function Landing({ locale, setLocale, go }: { locale: Locale; setLocale: 
             {data.tournaments.map((tournament) => (
               <article className="landing-tournament-card" key={tournament.id}>
                 <div className="tournament-card-top"><span>{tournament.sport}</span><strong>{tournamentStatus(locale, tournament.status)}</strong></div>
+                <div className="tournament-card-visual" aria-hidden="true">
+                  {tournament.heroImageUrl ? (
+                    <img src={tournament.heroImageUrl} alt="" loading="lazy" />
+                  ) : (
+                    <div className="tournament-card-visual-fallback"><span>HUAU</span><strong>TOURNAMENT</strong></div>
+                  )}
+                </div>
                 <h3>{tournament.name}</h3>
                 <p>{date(tournament.startAt, locale)}{tournament.endAt ? ` → ${date(tournament.endAt, locale)}` : ""}</p>
                 <button className="landing-button solid full" onClick={() => go(`/tournaments/${tournament.slug}`)}>{tournament.status === "registration_open" ? tr(locale, "Inscribirme", "Register") : tr(locale, "Ver torneo", "View tournament")}</button>
@@ -219,8 +223,8 @@ export function Landing({ locale, setLocale, go }: { locale: Locale; setLocale: 
       <section className="landing-section contact-section">
         <div className="contact-copy">
           <span>HUAU FOR ORGANIZATIONS</span>
-          <h2>{tr(locale, "¿Organizás deporte?", "Do you organize sport?")}</h2>
-          <p>{tr(locale, "Si representás un club, liga, academia, federación u organización, contanos qué necesitás. El acceso operativo a HUAU se gestiona con cada organización.", "If you represent a club, league, academy, federation or organization, tell us what you need. Operational access to HUAU is managed with each organization.")}</p>
+          <h2>{tr(locale, "¿Querés trabajar con HUAU?", "Want to work with HUAU?")}</h2>
+          <p>{tr(locale, "Si representás un club, liga, academia, federación u organización, contanos qué querés hacer con HUAU y nos ponemos en contacto.", "If you represent a club, league, academy, federation or organization, tell us what you want to do with HUAU and we will get in touch.")}</p>
           <div className="contact-types"><span>CLUBES</span><span>LIGAS</span><span>ACADEMIAS</span><span>FEDERACIONES</span><span>ORGANIZADORES</span></div>
         </div>
         <form className="landing-contact-form" onSubmit={sendContact}>
