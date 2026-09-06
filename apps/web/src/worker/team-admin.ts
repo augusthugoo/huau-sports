@@ -291,6 +291,47 @@ async function loadRoster(env: Env, entryId: string): Promise<TeamRosterMember[]
   }));
 }
 
+
+async function loadRostersForCategory(
+  env: Env,
+  categoryId: string,
+): Promise<Map<string, TeamRosterMember[]>> {
+  const rows = await env.HUAU_DB.prepare(
+    `SELECT e.id as entryId,em.organization_person_id as personId,
+            TRIM(op.first_name || ' ' || op.last_name) as name,
+            COALESCE(op.sport_gender,'unspecified') as sportGender,
+            em.member_role as role
+       FROM tournament_entries e
+       JOIN entry_members em ON em.entry_id=e.id AND em.status IN ('accepted','manual')
+       JOIN organization_people op ON op.id=em.organization_person_id
+      WHERE e.category_id=? AND e.entry_type='team' AND e.status IN ('ready','confirmed')
+      ORDER BY e.created_at,e.id,
+               CASE em.member_role WHEN 'captain' THEN 0 WHEN 'player' THEN 1 ELSE 2 END,
+               em.created_at,em.id`,
+  ).bind(categoryId).all<{
+    entryId: string;
+    personId: string;
+    name: string;
+    sportGender: string;
+    role: "player" | "captain" | "substitute";
+  }>();
+
+  const byEntry = new Map<string, TeamRosterMember[]>();
+  for (const row of rows.results) {
+    const roster = byEntry.get(row.entryId) ?? [];
+    roster.push({
+      personId: row.personId,
+      name: row.name,
+      sportGender: row.sportGender === "male" || row.sportGender === "female"
+        ? row.sportGender
+        : "unspecified",
+      role: row.role,
+    });
+    byEntry.set(row.entryId, roster);
+  }
+  return byEntry;
+}
+
 async function resolveRoster(
   env: Env,
   categoryId: string,
@@ -884,17 +925,20 @@ async function generateStructure(
   const accessResult = await categoryForAccess(categoryId, request, env, access);
   if (accessResult instanceof Response) return accessResult;
   const body = await readJson<{ groupCount?: number; confirmImpact?: boolean }>(request);
-  const format = await formatForCategory(env, categoryId);
-  const entryRows = await env.HUAU_DB.prepare(
-    `SELECT id,category_id as categoryId,display_name as displayName,status
-       FROM tournament_entries WHERE category_id=? AND entry_type='team' AND status IN ('ready','confirmed') ORDER BY created_at,id`,
-  )
-    .bind(categoryId)
-    .all<EntryRow>();
+  const [format, entryRows, rostersByEntry] = await Promise.all([
+    formatForCategory(env, categoryId),
+    env.HUAU_DB.prepare(
+      `SELECT id,category_id as categoryId,display_name as displayName,status
+         FROM tournament_entries
+        WHERE category_id=? AND entry_type='team' AND status IN ('ready','confirmed')
+        ORDER BY created_at,id`,
+    ).bind(categoryId).all<EntryRow>(),
+    loadRostersForCategory(env, categoryId),
+  ]);
   if (entryRows.results.length < 2) return json({ ok: false, code: "TEAM_STRUCTURE_REQUIRES_TWO_TEAMS" }, { status: 400 });
   const teams: TeamEntry[] = [];
   for (const entry of entryRows.results) {
-    const roster = await loadRoster(env, entry.id);
+    const roster = rostersByEntry.get(entry.id) ?? [];
     const rosterValidation = validateTeamRoster(format, roster);
     if (!rosterValidation.valid) {
       return json(
@@ -926,17 +970,15 @@ async function generateStructure(
   if (distributed.some((group, index) => group.length !== sizes[index])) {
     return json({ ok: false, code: "TEAM_GROUP_DISTRIBUTION_FAILED" }, { status: 500 });
   }
-  const formatRow = await env.HUAU_DB.prepare(`SELECT format_version_id as formatVersionId FROM tournament_categories WHERE id=?`)
-    .bind(categoryId)
-    .first<{ formatVersionId: string }>();
-  if (!formatRow?.formatVersionId) return json({ ok: false, code: "TEAM_FORMAT_NOT_FOUND" }, { status: 409 });
+  const formatVersionId = accessResult.category.formatVersionId;
+  if (!formatVersionId) return json({ ok: false, code: "TEAM_FORMAT_NOT_FOUND" }, { status: 409 });
   const competitionId = uuid();
   const stamp = unixNow();
   const statements: D1PreparedStatement[] = [
     env.HUAU_DB.prepare(
       `INSERT INTO competitions (id,category_id,format_version_id,status,structure_revision,created_at,updated_at)
        VALUES (?,?,?,'groups_generated',1,?,?)`,
-    ).bind(competitionId, categoryId, formatRow.formatVersionId, stamp, stamp),
+    ).bind(competitionId, categoryId, formatVersionId, stamp, stamp),
   ];
   const teamNameById = new Map(teams.map((team) => [team.id, team.name] as const));
   distributed.forEach((groupEntries, groupIndex) => {
