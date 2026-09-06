@@ -48,7 +48,7 @@
       "vars": {
         "APP_ENV": "staging",
         "APP_VERSION": "0.8.0-phase7-payments",
-        "BETTER_AUTH_URL": "https://huau-sports-staging.augusthugoo.workers.dev",
+        "BETTER_AUTH_URL": "https://huau.app",
         "PLATFORM_ADMIN_EMAILS": ""
       }
     }
