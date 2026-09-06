@@ -1252,10 +1252,13 @@ async function registrationCandidates(registrationId: string, request: Request, 
 
   return json({
     ok: true,
-    candidates: filtered.map(({ hasProfile: _hasProfile, ...candidate }) => ({
-      ...candidate,
-      paymentReady: candidate.finalAmountMinor === 0 || candidate.status === "confirmed",
-    })),
+    candidates: filtered.map(({ hasProfile, ...candidate }) => {
+      void hasProfile;
+      return {
+        ...candidate,
+        paymentReady: candidate.finalAmountMinor === 0 || candidate.status === "confirmed",
+      };
+    }),
   });
 }
 

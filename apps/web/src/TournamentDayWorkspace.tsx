@@ -65,6 +65,25 @@ class DayApiError extends Error {
 }
 
 const tr = (locale: Locale, es: string, en: string) => (locale === "es" ? es : en);
+
+function localMutationError(locale: Locale, error: unknown) {
+  const message = error instanceof Error ? error.message : "LOCAL_MUTATION_FAILED";
+  if (message.startsWith("STANDARD_ENTRY_SET_CHANGED_AFTER_RESULTS:")) {
+    return tr(
+      locale,
+      "No se pueden modificar los participantes porque la categoría ya tiene resultados cargados.",
+      "Participants cannot be changed because the category already has recorded results.",
+    );
+  }
+  if (message.startsWith("STANDARD_DUPLICATE_PARTICIPANT:")) {
+    return tr(
+      locale,
+      "Ese jugador ya está utilizado en otra entry activa de esta categoría.",
+      "That player is already used in another active entry in this category.",
+    );
+  }
+  return message;
+}
 const toMs = (value: number) => (value < 10_000_000_000 ? value * 1000 : value);
 const date = (value: number) =>
   new Intl.DateTimeFormat("es-UY", { dateStyle: "medium" }).format(new Date(toMs(value)));
@@ -300,7 +319,7 @@ export function TournamentDayWorkspace(props: Props) {
         await install(next);
         if (message) setNotice(message);
       } catch (mutationError) {
-        setError(mutationError instanceof Error ? mutationError.message : "LOCAL_MUTATION_FAILED");
+        setError(localMutationError(locale, mutationError));
       }
     },
     [install],
@@ -1689,7 +1708,15 @@ function StandardResultCard({
   return (
     <form className={`td-result-card ${match.status === "finished" ? "done" : ""}`} onSubmit={save}>
       <div><span>{match.categoryName} · {match.roundLabel ?? match.stage}</span><strong>{match.sideA} <em>vs</em> {match.sideB}</strong></div>
-      <ScoreInputs prefix="score" bestOf={Number(match.bestOf)} sets={match.sets} />
+      <ScoreInputs
+        prefix="score"
+        bestOf={Number(match.bestOf)}
+        sets={
+          Number(match.bestOf) === 3
+            ? match.sets
+            : [{ scoreA: match.scoreA ?? "", scoreB: match.scoreB ?? "" }]
+        }
+      />
       <button className={match.status === "finished" ? "ghost small" : "light small"}>{match.status === "finished" ? tr(locale, "Corregir local", "Correct locally") : tr(locale, "Guardar local", "Save locally")}</button>
     </form>
   );

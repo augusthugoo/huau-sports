@@ -289,7 +289,7 @@ async function cleanupCheckpointObjects(
   do {
     const listed = await env.HUAU_ASSETS.list({
       prefix,
-      cursor,
+      ...(cursor ? { cursor } : {}),
       limit: 1000,
     });
     for (const object of listed.objects) {
