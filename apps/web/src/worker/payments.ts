@@ -228,6 +228,54 @@ async function openOrder(env: Env, tournamentId: string, payerKind: PayerKind, p
   ).bind(tournamentId, payerId).first<PaymentOrderRow>();
 }
 
+type ComparableOrderItem = {
+  registrationId: string | null;
+  playerProfileId: string | null;
+  categoryId: string | null;
+  label: string;
+  amountMinor: number;
+};
+
+function comparableOrderItem(input: {
+  registrationId?: string | null;
+  playerProfileId?: string | null;
+  categoryId?: string | null;
+  label: string;
+  amountMinor: number;
+}): ComparableOrderItem {
+  return {
+    registrationId: input.registrationId ?? null,
+    playerProfileId: input.playerProfileId ?? null,
+    categoryId: input.categoryId ?? null,
+    label: input.label,
+    amountMinor: Math.max(0, Math.trunc(input.amountMinor)),
+  };
+}
+
+function orderItemSignature(items: ComparableOrderItem[]) {
+  return JSON.stringify(
+    items
+      .map((item) => [
+        item.registrationId,
+        item.playerProfileId,
+        item.categoryId,
+        item.label,
+        item.amountMinor,
+      ])
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+  );
+}
+
+async function existingOrderItems(env: Env, orderId: string) {
+  const rows = await env.HUAU_DB.prepare(
+    `SELECT registration_id as registrationId,player_profile_id as playerProfileId,category_id as categoryId,
+            label,amount_minor as amountMinor
+       FROM payment_order_items
+      WHERE order_id=?`,
+  ).bind(orderId).all<ComparableOrderItem>();
+  return rows.results.map(comparableOrderItem);
+}
+
 async function replaceOrderItems(
   env: Env,
   order: PaymentOrderRow | null,
@@ -242,57 +290,129 @@ async function replaceOrderItems(
     items: Array<{ registrationId?: string | null; playerProfileId?: string | null; categoryId?: string | null; label: string; amountMinor: number }>;
   },
 ) {
-  const total = input.items.reduce((sum, item) => sum + Math.max(0, Math.trunc(item.amountMinor)), 0);
-  if (input.items.length === 0 || total <= 0) {
+  const normalizedItems = input.items.map(comparableOrderItem);
+  const total = normalizedItems.reduce((sum, item) => sum + item.amountMinor, 0);
+
+  if (normalizedItems.length === 0 || total <= 0) {
     if (order) {
       await env.HUAU_DB.batch([
         env.HUAU_DB.prepare(`DELETE FROM payment_order_items WHERE order_id=?`).bind(order.id),
-        env.HUAU_DB.prepare(`UPDATE payment_orders SET status='cancelled',total_amount_minor=0,subtotal_minor=0,updated_at=?,version=version+1 WHERE id=?`).bind(now(), order.id),
+        env.HUAU_DB.prepare(
+          `UPDATE payment_orders
+              SET status='cancelled',total_amount_minor=0,subtotal_minor=0,updated_at=?,version=version+1
+            WHERE id=?`,
+        ).bind(now(), order.id),
       ]);
     }
     return null;
   }
+
   const stamp = now();
   const orderId = order?.id ?? uuid();
-  const statements = [] as D1PreparedStatement[];
+
   if (order) {
+    const currentItems = await existingOrderItems(env, orderId);
+    const itemsUnchanged = orderItemSignature(currentItems) === orderItemSignature(normalizedItems);
+    const headerUnchanged =
+      order.payerName === input.payerName &&
+      order.payerEmail === input.payerEmail &&
+      order.currency === input.currency &&
+      order.subtotalMinor === total &&
+      order.discountMinor === 0 &&
+      order.totalAmountMinor === total &&
+      order.dueAt === input.dueAt;
+
+    if (itemsUnchanged && headerUnchanged) return orderId;
+
+    const statements: D1PreparedStatement[] = [];
+    if (!itemsUnchanged) {
+      statements.push(env.HUAU_DB.prepare(`DELETE FROM payment_order_items WHERE order_id=?`).bind(orderId));
+    }
+
     statements.push(
-      env.HUAU_DB.prepare(`DELETE FROM payment_order_items WHERE order_id=?`).bind(orderId),
       env.HUAU_DB.prepare(
-        `UPDATE payment_orders SET payer_name=?,payer_email=?,currency=?,subtotal_minor=?,discount_minor=0,total_amount_minor=?,due_at=?,updated_at=?,version=version+1 WHERE id=?`,
+        `UPDATE payment_orders
+            SET payer_name=?,payer_email=?,currency=?,subtotal_minor=?,discount_minor=0,total_amount_minor=?,
+                due_at=?,updated_at=?,version=version+1
+          WHERE id=?`,
       ).bind(input.payerName, input.payerEmail, input.currency, total, total, input.dueAt, stamp, orderId),
     );
-  } else {
+
+    if (!itemsUnchanged) {
+      for (const item of normalizedItems) {
+        statements.push(
+          env.HUAU_DB.prepare(
+            `INSERT INTO payment_order_items
+             (id,order_id,registration_id,player_profile_id,category_id,label,amount_minor,created_at)
+             VALUES (?,?,?,?,?,?,?,?)`,
+          ).bind(
+            uuid(),
+            orderId,
+            item.registrationId,
+            item.playerProfileId,
+            item.categoryId,
+            item.label,
+            item.amountMinor,
+            stamp,
+          ),
+        );
+      }
+    }
+
+    await env.HUAU_DB.batch(statements);
+    return orderId;
+  }
+
+  const statements: D1PreparedStatement[] = [
+    env.HUAU_DB.prepare(
+      `INSERT INTO payment_orders
+       (id,tournament_id,payer_kind,payer_user_id,payer_profile_id,payer_name,payer_email,currency,
+        subtotal_minor,discount_minor,total_amount_minor,amount_paid_minor,amount_refunded_minor,status,
+        selected_method,due_at,paid_at,created_at,updated_at,version)
+       VALUES (?,?,?,?,?,?,?,?,?,0,?,0,0,'awaiting_payment',NULL,?,NULL,?,?,1)`,
+    ).bind(
+      orderId,
+      input.tournamentId,
+      input.payerKind,
+      input.payerKind === "user" ? input.payerId : null,
+      input.payerKind === "manual_profile" ? input.payerId : null,
+      input.payerName,
+      input.payerEmail,
+      input.currency,
+      total,
+      total,
+      input.dueAt,
+      stamp,
+      stamp,
+    ),
+  ];
+
+  for (const item of normalizedItems) {
     statements.push(
       env.HUAU_DB.prepare(
-        `INSERT INTO payment_orders (id,tournament_id,payer_kind,payer_user_id,payer_profile_id,payer_name,payer_email,currency,subtotal_minor,discount_minor,total_amount_minor,amount_paid_minor,amount_refunded_minor,status,selected_method,due_at,paid_at,created_at,updated_at,version)
-         VALUES (?,?,?,?,?,?,?,?,?,0,?,0,0,'awaiting_payment',NULL,?,NULL,?,?,1)`,
+        `INSERT INTO payment_order_items
+         (id,order_id,registration_id,player_profile_id,category_id,label,amount_minor,created_at)
+         VALUES (?,?,?,?,?,?,?,?)`,
       ).bind(
+        uuid(),
         orderId,
-        input.tournamentId,
-        input.payerKind,
-        input.payerKind === "user" ? input.payerId : null,
-        input.payerKind === "manual_profile" ? input.payerId : null,
-        input.payerName,
-        input.payerEmail,
-        input.currency,
-        total,
-        total,
-        input.dueAt,
-        stamp,
+        item.registrationId,
+        item.playerProfileId,
+        item.categoryId,
+        item.label,
+        item.amountMinor,
         stamp,
       ),
     );
   }
-  for (const item of input.items) {
-    statements.push(
-      env.HUAU_DB.prepare(
-        `INSERT INTO payment_order_items (id,order_id,registration_id,player_profile_id,category_id,label,amount_minor,created_at) VALUES (?,?,?,?,?,?,?,?)`,
-      ).bind(uuid(), orderId, item.registrationId ?? null, item.playerProfileId ?? null, item.categoryId ?? null, item.label, Math.max(0, Math.trunc(item.amountMinor)), stamp),
-    );
-  }
+
   await env.HUAU_DB.batch(statements);
-  if (!order) await addEvent(env, { tournamentId: input.tournamentId, orderId, eventType: "order.created", summary: `Cobro creado para ${input.payerName}` });
+  await addEvent(env, {
+    tournamentId: input.tournamentId,
+    orderId,
+    eventType: "order.created",
+    summary: `Cobro creado para ${input.payerName}`,
+  });
   return orderId;
 }
 

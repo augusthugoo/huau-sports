@@ -249,18 +249,10 @@ async function priorAgeTeamDivisionCount(env: Env, tournamentId: string, userId:
 
 async function activeCategoryCountForUser(env: Env, tournamentId: string, userId: string) {
   const row = await env.HUAU_DB.prepare(
-    `SELECT COUNT(DISTINCT categoryId) as count FROM (
-       SELECT category_id as categoryId FROM tournament_registrations
-        WHERE tournament_id=? AND user_id=? AND status NOT IN ('cancelled','rejected')
-       UNION
-       SELECT e.category_id as categoryId
-         FROM tournament_entries e
-         JOIN tournament_categories tc ON tc.id=e.category_id
-         JOIN entry_members em ON em.entry_id=e.id AND em.status IN ('accepted','manual')
-         JOIN organization_people op ON op.id=em.organization_person_id
-        WHERE tc.tournament_id=? AND op.user_id=? AND e.status NOT IN ('withdrawn','rejected')
-     )`,
-  ).bind(tournamentId, userId, tournamentId, userId).first<{ count: number }>();
+    `SELECT COUNT(DISTINCT category_id) as count
+       FROM tournament_registrations
+      WHERE tournament_id=? AND user_id=? AND status NOT IN ('cancelled','rejected')`,
+  ).bind(tournamentId, userId).first<{ count: number }>();
   return Number(row?.count ?? 0);
 }
 
@@ -1155,24 +1147,116 @@ async function registrationCandidates(registrationId: string, request: Request, 
   if (category.entryType === "pair" && source.entryId) return json({ ok: false, code: "PAIR_ALREADY_COMPLETE" }, { status: 409 });
   if (category.entryType === "team") {
     if (!source.entryId) return json({ ok: false, code: "CREATE_TEAM_FIRST" }, { status: 409 });
-    const entry = await env.HUAU_DB.prepare(`SELECT captain_user_id as captainUserId FROM tournament_entries WHERE id=?`).bind(source.entryId).first<{ captainUserId: string | null }>();
+    const entry = await env.HUAU_DB.prepare(`SELECT captain_user_id as captainUserId FROM tournament_entries WHERE id=?`)
+      .bind(source.entryId).first<{ captainUserId: string | null }>();
     if (entry?.captainUserId !== user.id) return json({ ok: false, code: "CAPTAIN_REQUIRED" }, { status: 403 });
   }
+
   const candidates = await env.HUAU_DB.prepare(
     `SELECT tr.id as registrationId,tr.user_id as userId,tr.status,tr.final_amount_minor as finalAmountMinor,u.name,u.email,
             up.birth_date as birthDate,COALESCE(up.sport_gender,'unspecified') as sportGender,
-            (SELECT rmi.status FROM registration_match_invitations rmi WHERE rmi.inviter_registration_id=? AND rmi.invitee_registration_id=tr.id AND rmi.status='pending' LIMIT 1) as invitationStatus
-       FROM tournament_registrations tr JOIN user u ON u.id=tr.user_id LEFT JOIN user_profiles up ON up.user_id=tr.user_id
-      WHERE tr.category_id=? AND tr.id<>? AND tr.user_id<>? AND tr.status NOT IN ('cancelled','rejected','waitlisted') AND tr.entry_id IS NULL
+            CASE WHEN up.user_id IS NULL THEN 0 ELSE 1 END as hasProfile,
+            (SELECT rmi.status FROM registration_match_invitations rmi
+              WHERE rmi.inviter_registration_id=? AND rmi.invitee_registration_id=tr.id
+                AND rmi.status='pending' LIMIT 1) as invitationStatus
+       FROM tournament_registrations tr
+       JOIN user u ON u.id=tr.user_id
+       LEFT JOIN user_profiles up ON up.user_id=tr.user_id
+      WHERE tr.category_id=? AND tr.id<>? AND tr.user_id<>?
+        AND tr.status NOT IN ('cancelled','rejected','waitlisted') AND tr.entry_id IS NULL
       ORDER BY u.name,tr.created_at`,
-  ).bind(source.id, source.categoryId, source.id, source.userId).all<{ registrationId: string; userId: string; status: string; finalAmountMinor: number; name: string; email: string; birthDate: string | null; sportGender: string; invitationStatus: string | null }>();
-  const filtered = [];
-  for (const candidate of candidates.results) {
-    if (category.entryType === "pair" && !(await pairCompatibility(env, category, source.userId, candidate.userId))) continue;
-    if (category.entryType === "team" && source.entryId && await teamCandidateHardViolation(env, category, source.entryId, candidate.userId)) continue;
-    filtered.push({ ...candidate, paymentReady: candidate.finalAmountMinor === 0 || candidate.status === "confirmed" });
+  ).bind(source.id, source.categoryId, source.id, source.userId).all<{
+    registrationId: string;
+    userId: string;
+    status: string;
+    finalAmountMinor: number;
+    name: string;
+    email: string;
+    birthDate: string | null;
+    sportGender: string;
+    hasProfile: number;
+    invitationStatus: string | null;
+  }>();
+
+  if (!candidates.results.length) return json({ ok: true, candidates: [] });
+
+  let filtered = candidates.results;
+
+  if (category.entryType === "pair" && category.competitionGender === "mixed") {
+    const sourceProfile = await profileForUser(env, source.userId);
+    if (!sourceProfile) {
+      filtered = [];
+    } else {
+      filtered = filtered.filter((candidate) => {
+        if (!candidate.hasProfile) return false;
+        return [sourceProfile.sportGender, candidate.sportGender].sort().join(",") === "female,male";
+      });
+    }
   }
-  return json({ ok: true, candidates: filtered });
+
+  if (category.entryType === "team" && source.entryId) {
+    const [formatRow, current] = await Promise.all([
+      env.HUAU_DB.prepare(
+        `SELECT config_json as configJson
+           FROM competition_format_versions
+          WHERE category_id=? AND format_kind='team'
+          ORDER BY version_number DESC LIMIT 1`,
+      ).bind(category.id).first<{ configJson: string }>(),
+      env.HUAU_DB.prepare(
+        `SELECT em.organization_person_id as personId,TRIM(op.first_name||' '||op.last_name) as name,
+                COALESCE(op.sport_gender,'unspecified') as sportGender,em.member_role as role
+           FROM entry_members em
+           JOIN organization_people op ON op.id=em.organization_person_id
+          WHERE em.entry_id=? AND em.status IN ('accepted','manual')
+          ORDER BY em.created_at`,
+      ).bind(source.entryId).all<{
+        personId: string;
+        name: string;
+        sportGender: "male" | "female" | "unspecified";
+        role: "player" | "captain" | "substitute";
+      }>(),
+    ]);
+
+    if (formatRow) {
+      try {
+        const format = parseTeamFormat(JSON.parse(formatRow.configJson) as unknown);
+        const hardCodes = new Set([
+          "ROSTER_TOO_LARGE",
+          "ROSTER_MALE_MAX",
+          "ROSTER_FEMALE_MAX",
+          "ROSTER_COMPOSITION_MALE",
+          "ROSTER_COMPOSITION_FEMALE",
+        ]);
+        filtered = filtered.filter((candidate) => {
+          if (!candidate.hasProfile) return false;
+          const sportGender: "male" | "female" | "unspecified" =
+            candidate.sportGender === "male" || candidate.sportGender === "female"
+              ? candidate.sportGender
+              : "unspecified";
+          const roster: TeamRosterMember[] = [
+            ...current.results,
+            {
+              personId: `candidate:${candidate.userId}`,
+              name: candidate.name,
+              sportGender,
+              role: "player",
+            },
+          ];
+          return !validateTeamRoster(format, roster).issues.some((issue) => hardCodes.has(issue.code));
+        });
+      } catch {
+        // Preserve previous behavior: invalid/missing format does not hide candidates.
+      }
+    }
+  }
+
+  return json({
+    ok: true,
+    candidates: filtered.map(({ hasProfile: _hasProfile, ...candidate }) => ({
+      ...candidate,
+      paymentReady: candidate.finalAmountMinor === 0 || candidate.status === "confirmed",
+    })),
+  });
 }
 
 async function createMatchInvitation(registrationId: string, request: Request, env: Env, access: AccessHelpers) {
