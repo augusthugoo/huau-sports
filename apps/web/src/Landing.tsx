@@ -109,9 +109,10 @@ export function Landing({ locale, setLocale, go }: { locale: Locale; setLocale: 
 
   const sendContact = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const formElement = event.currentTarget;
     setContactState("sending");
     setContactError("");
-    const form = new FormData(event.currentTarget);
+    const form = new FormData(formElement);
     try {
       await jsonApi("/api/public/contact", {
         method: "POST",
@@ -125,7 +126,7 @@ export function Landing({ locale, setLocale, go }: { locale: Locale; setLocale: 
           website: form.get("website"),
         }),
       });
-      event.currentTarget.reset();
+      formElement.reset();
       setContactState("sent");
     } catch (error) {
       setContactState("idle");
@@ -274,7 +275,8 @@ export function LandingAdminPanel({ locale }: { locale: Locale }) {
   useEffect(() => { void load(); }, [load]);
 
   const upload = async (slot: number, event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.currentTarget.files?.[0];
+    const input = event.currentTarget;
+    const file = input.files?.[0];
     if (!file) return;
     setBusy(slot); setMessage("");
     try {
@@ -285,7 +287,7 @@ export function LandingAdminPanel({ locale }: { locale: Locale }) {
       await load();
       setMessage(tr(locale, `Imagen ${slot} actualizada.`, `Image ${slot} updated.`));
     } catch (error) { setMessage(error instanceof Error ? error.message : "HERO_UPLOAD_FAILED"); }
-    finally { event.currentTarget.value = ""; setBusy(0); }
+    finally { input.value = ""; setBusy(0); }
   };
 
   const remove = async (slot: number) => {

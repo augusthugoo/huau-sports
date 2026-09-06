@@ -116,3 +116,28 @@
     bottom:65px;
   }
 }
+
+/* HUAU Landing QA hotfix v3 */
+.carousel-arrow{
+  width:52px;
+  height:52px;
+  border:0;
+  border-radius:0;
+  background:transparent;
+  backdrop-filter:none;
+  box-shadow:none;
+  opacity:.88;
+}
+.carousel-arrow:hover{
+  opacity:1;
+}
+.carousel-arrow:focus-visible{
+  outline:2px solid rgba(255,255,255,.75);
+  outline-offset:2px;
+}
+.carousel-arrow::before{
+  width:14px;
+  height:14px;
+  border-top-width:3px;
+  border-right-width:3px;
+}
