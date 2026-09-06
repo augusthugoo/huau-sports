@@ -482,27 +482,32 @@ async function recalcPersonalRegistration(env: Env, registrationId: string) {
   const entryCaptain = reg.entryId
     ? await env.HUAU_DB.prepare(`SELECT captain_user_id as captainUserId,status FROM tournament_entries WHERE id=?`).bind(reg.entryId).first<{ captainUserId: string | null; status: string }>()
     : null;
+
+  // Pricing is locked when the registration is created. Team/pair mutations may
+  // change grouping, coverage or status, but must not adopt a newer tournament price.
   const covered = Boolean(reg.coveredByRegistrationId);
-  let amount = 0;
-  let scope: "free" | "per_entry" | "per_person" = "free";
-  if (!covered) {
-    const pricing = await effectivePersonalPricing(env, reg.tournamentId, reg.userId, category, {
-      beforeRegistrationNumber: reg.registrationNumber,
-      teamPaymentMode: category.entryType === "team" && entryMode === "team_full" && entryCaptain?.captainUserId === reg.userId ? "team_full" : "individual",
-    });
-    amount = pricing.priceMinor;
-    scope = pricing.priceScope;
-  }
-  const final = Math.max(0, amount - reg.discountMinor);
+  const teamFullCaptain =
+    category.entryType === "team" &&
+    entryMode === "team_full" &&
+    entryCaptain?.captainUserId === reg.userId;
+
+  const scope = teamFullCaptain ? "per_entry" as const : reg.priceScope;
+  const final = covered
+    ? 0
+    : teamFullCaptain
+      ? Math.max(0, reg.finalAmountMinor)
+      : Math.max(0, reg.baseAmountMinor - reg.discountMinor);
+
   const netPaid = Math.max(0, reg.paidAmountMinor - reg.refundedAmountMinor);
   const status = entryCaptain?.status === "waitlisted"
     ? "waitlisted"
     : final > 0 && netPaid < final
       ? "awaiting_payment"
       : "confirmed";
+
   await env.HUAU_DB.prepare(
-    `UPDATE tournament_registrations SET status=?,participant_count=1,price_scope=?,base_amount_minor=?,final_amount_minor=?,updated_at=?,version=version+1 WHERE id=?`,
-  ).bind(status, scope, amount, final, now(), reg.id).run();
+    `UPDATE tournament_registrations SET status=?,participant_count=1,price_scope=?,final_amount_minor=?,updated_at=?,version=version+1 WHERE id=?`,
+  ).bind(status, scope, final, now(), reg.id).run();
 }
 
 async function registrationRosterMeta(env: Env, category: CategoryRow) {
@@ -1106,6 +1111,9 @@ async function createTeamForRegistration(registrationId: string, request: Reques
   const paymentMode: TeamPaymentMode = body.paymentMode === "team_full" ? "team_full" : "individual";
   const settings = await pricingSettingsForTournament(env, reg.tournamentId);
   if (paymentMode === "team_full" && settings.teamFullFeeMinor === null) return json({ ok: false, code: "TEAM_FULL_FEE_NOT_CONFIGURED" }, { status: 409 });
+  const lockedTeamFullFinal = paymentMode === "team_full"
+    ? Math.max(0, (settings.teamFullFeeMinor ?? 0) - reg.discountMinor)
+    : null;
   const identity = await ensureIdentity(env, tournament, user);
   let capacity: { decision: "closed" | "confirmed_slot" | "waitlist"; waitlistPosition: number | null };
   try { capacity = await acquireCategoryDecision(env, category); } catch (error) { return json({ ok: false, code: error instanceof Error ? error.message : "REGISTRATION_CAPACITY_BUSY" }, { status: 409 }); }
@@ -1122,8 +1130,22 @@ async function createTeamForRegistration(registrationId: string, request: Reques
       `INSERT INTO entry_members (id,entry_id,organization_person_id,member_role,roster_slot,status,invited_user_id,accepted_at,created_at,updated_at)
        VALUES (?,?,?,?,?,'accepted',?,?,?,?)`,
     ).bind(uuid(), entryId, identity.personId, "captain", "1", user.id, stamp, stamp, stamp),
-    env.HUAU_DB.prepare(`UPDATE tournament_registrations SET entry_id=?,waitlist_position=?,status=?,covered_by_registration_id=NULL,updated_at=?,version=version+1 WHERE id=?`)
-      .bind(entryId, capacity.waitlistPosition, capacity.decision === "waitlist" ? "waitlisted" : reg.status, stamp, reg.id),
+    env.HUAU_DB.prepare(`UPDATE tournament_registrations
+      SET entry_id=?,waitlist_position=?,status=?,covered_by_registration_id=NULL,
+          price_scope=CASE WHEN ?='team_full' THEN 'per_entry' ELSE price_scope END,
+          final_amount_minor=CASE WHEN ?='team_full' THEN ? ELSE final_amount_minor END,
+          updated_at=?,version=version+1
+      WHERE id=?`)
+      .bind(
+        entryId,
+        capacity.waitlistPosition,
+        capacity.decision === "waitlist" ? "waitlisted" : reg.status,
+        paymentMode,
+        paymentMode,
+        lockedTeamFullFinal ?? reg.finalAmountMinor,
+        stamp,
+        reg.id,
+      ),
   ]);
   await recalcPersonalRegistration(env, reg.id);
   await recalcCompetitiveEntry(env, entryId);
