@@ -1904,6 +1904,34 @@ async function adminRegistrations(tournamentId: string, request: Request, env: E
   return json({ ok: true, registrations: detailed, publicUrl: `/tournaments/${allowed.tournament.slug}` });
 }
 
+async function adminCancelRegistration(registrationId: string, request: Request, env: Env, access: AccessHelpers) {
+  const reg = await registrationById(env, registrationId);
+  if (!reg) return json({ ok: false, code: "REGISTRATION_NOT_FOUND" }, { status: 404 });
+  const allowed = await adminAccess(reg.tournamentId, request, env, access);
+  if ("response" in allowed) return allowed.response;
+  if (["cancelled", "rejected"].includes(reg.status)) return json({ ok: true });
+
+  const financialOrder = await env.HUAU_DB.prepare(
+    `SELECT po.status
+       FROM payment_order_items poi
+       JOIN payment_orders po ON po.id=poi.order_id
+      WHERE poi.registration_id=?
+        AND po.status IN ('pending_review','paid','partially_refunded')
+      ORDER BY po.updated_at DESC
+      LIMIT 1`,
+  ).bind(registrationId).first<{ status: string }>();
+
+  if (financialOrder?.status === "pending_review") {
+    return json({ ok: false, code: "PAYMENT_UNDER_REVIEW" }, { status: 409 });
+  }
+  if (financialOrder?.status === "paid" || financialOrder?.status === "partially_refunded") {
+    return json({ ok: false, code: "REGISTRATION_HAS_PAYMENT" }, { status: 409 });
+  }
+
+  await cancelRegistrationInternal(env, registrationId, reg.userId, true);
+  return json({ ok: true });
+}
+
 async function adminPromote(registrationId: string, request: Request, env: Env, access: AccessHelpers) {
   const reg = await registrationById(env, registrationId);
   if (!reg) return json({ ok: false, code: "REGISTRATION_NOT_FOUND" }, { status: 404 });
@@ -1999,6 +2027,9 @@ export async function handleRegistrationApi(request: Request, env: Env, access: 
 
   const admin = url.pathname.match(/^\/api\/admin\/tournaments\/([^/]+)\/registrations$/);
   if (admin && request.method === "GET") return adminRegistrations(decodeURIComponent(admin[1]!), request, env, access);
+
+  const adminCancel = url.pathname.match(/^\/api\/admin\/registrations\/([^/]+)\/cancel$/);
+  if (adminCancel && request.method === "POST") return adminCancelRegistration(decodeURIComponent(adminCancel[1]!), request, env, access);
 
   const promote = url.pathname.match(/^\/api\/admin\/registrations\/([^/]+)\/promote$/);
   if (promote && request.method === "POST") return adminPromote(decodeURIComponent(promote[1]!), request, env, access);
