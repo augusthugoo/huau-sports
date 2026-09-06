@@ -327,24 +327,6 @@ async function ensureTournamentSettings(env: Env, tournamentId: string) {
   ).bind(tournamentId, unixNow()).run();
 }
 
-async function settingsForTournament(env: Env, tournamentId: string): Promise<TournamentSettingsRow> {
-  await ensureTournamentSettings(env, tournamentId);
-  const row = await env.HUAU_DB.prepare(
-    `SELECT tournament_id as tournamentId,club,city,location,description,contact,COALESCE(regulations_text,'') as regulationsText,COALESCE(regulations_version,0) as regulationsVersion,COALESCE(dupr_required,0) as duprRequired,dupr_max as duprMax,dupr_as_of_date as duprAsOfDate,daily_start as dailyStart,daily_end as dailyEnd,
-            default_match_minutes as defaultMatchMinutes,payment_type as paymentType,entry_fee_minor as entryFeeMinor,
-            base_fee_minor as baseFeeMinor,extra_category_fee_minor as extraCategoryFeeMinor,registration_close_at as registrationCloseAt,
-            max_categories_per_player as maxCategoriesPerPlayer,team_individual_fee_minor as teamIndividualFeeMinor,team_full_fee_minor as teamFullFeeMinor,
-            COALESCE(team_additional_participation_mode,'full') as teamAdditionalParticipationMode,team_additional_fee_minor as teamAdditionalFeeMinor,
-            COALESCE(allow_team_age_division_overlap,1) as allowTeamAgeDivisionOverlap,minimum_group as minimumGroup,preferred_group as preferredGroup,maximum_group as maximumGroup,
-            suggested_qualifiers_per_group as suggestedQualifiersPerGroup,seeding_method as seedingMethod,
-            minimum_rest_slots as minimumRestSlots
-       FROM tournament_settings WHERE tournament_id=?`,
-  ).bind(tournamentId).first<TournamentSettingsRow>();
-  if (!row) throw new Error("TOURNAMENT_SETTINGS_NOT_FOUND");
-  return row;
-}
-
-
 async function readTournamentSettings(env: Env, tournamentId: string): Promise<TournamentSettingsRow> {
   const row = await env.HUAU_DB.prepare(
     `SELECT tournament_id as tournamentId,club,city,location,description,contact,COALESCE(regulations_text,'') as regulationsText,COALESCE(regulations_version,0) as regulationsVersion,COALESCE(dupr_required,0) as duprRequired,dupr_max as duprMax,dupr_as_of_date as duprAsOfDate,daily_start as dailyStart,daily_end as dailyEnd,
@@ -871,7 +853,7 @@ async function buildAndPersistCategoryGroups(
   await syncDerivedEntriesForCategory(env, accessResult.category.id, accessResult.user.id);
   const entries = await loadEntryModels(env, accessResult.category.id);
   if (entries.length < 2) throw new Error("NOT_ENOUGH_ENTRIES");
-  const settings = await settingsForTournament(env, accessResult.tournament.id);
+  const settings = await readTournamentSettings(env, accessResult.tournament.id);
   const existingConfig = await savedCategoryConfig(env, accessResult.category);
   const config = { ...existingConfig, ...(input.config ?? {}) };
   const sizesRaw = (input.groupSizes?.length ? input.groupSizes : Array.isArray(config.groupSizes) ? config.groupSizes as number[] : null);
@@ -943,7 +925,7 @@ async function createFinalPhaseForCategory(
     env.HUAU_DB.prepare(`UPDATE tournaments SET working_revision=working_revision+1,updated_at=? WHERE id=?`).bind(stamp, accessResult.tournament.id),
   );
   await runBatches(env.HUAU_DB, statements);
-  const settings = await settingsForTournament(env, accessResult.tournament.id);
+  const settings = await readTournamentSettings(env, accessResult.tournament.id);
   await regenerateTournamentSchedule(env, accessResult.tournament, accessResult.user.id, settings.dailyStart);
   await audit(env, accessResult.tournament, accessResult.user.id, auto ? "category.final_phase.auto" : "category.final_phase", auto ? "Generated final phase automatically" : "Generated final phase", "category", categoryId, { matchCount: newEncounters.length });
 }
@@ -1577,7 +1559,7 @@ async function regenerateTournamentSchedule(env: Env, tournament: TournamentRow,
     .all<{ id: string; scheduledDate: string; sortOrder: number; configJson: string }>();
   const categories: ScheduleCategory[] = [];
   const competitionByCategory = new Map<string, Competition>();
-  const tournamentSettings = await settingsForTournament(env, tournament.id);
+  const tournamentSettings = await readTournamentSettings(env, tournament.id);
   for (const row of categoryRows.results) {
     const competition = await loadCompetition(env, row.id);
     if (!competition) continue;
@@ -1676,7 +1658,7 @@ export async function regenerateTournamentScheduleForAdmin(env: Env, tournamentI
        FROM tournaments WHERE id=?`,
   ).bind(tournamentId).first<TournamentRow>();
   if (!tournament) throw new Error("TOURNAMENT_NOT_FOUND");
-  const settings = await settingsForTournament(env, tournamentId);
+  const settings = await readTournamentSettings(env, tournamentId);
   await regenerateTournamentSchedule(env, tournament, userId, settings.dailyStart);
 }
 
@@ -2483,29 +2465,9 @@ async function commitTournamentWorkspace(
   return json({ ok: true, ...(await tournamentWorkspaceBundle(env, refreshed)) });
 }
 
-async function lightSettingsForTournament(env: Env, tournamentId: string): Promise<TournamentSettingsRow> {
-  const row = await env.HUAU_DB.prepare(
-    `SELECT tournament_id as tournamentId,club,city,location,description,contact,COALESCE(regulations_text,'') as regulationsText,COALESCE(regulations_version,0) as regulationsVersion,COALESCE(dupr_required,0) as duprRequired,dupr_max as duprMax,dupr_as_of_date as duprAsOfDate,daily_start as dailyStart,daily_end as dailyEnd,
-            default_match_minutes as defaultMatchMinutes,payment_type as paymentType,entry_fee_minor as entryFeeMinor,
-            base_fee_minor as baseFeeMinor,extra_category_fee_minor as extraCategoryFeeMinor,registration_close_at as registrationCloseAt,
-            max_categories_per_player as maxCategoriesPerPlayer,team_individual_fee_minor as teamIndividualFeeMinor,team_full_fee_minor as teamFullFeeMinor,
-            COALESCE(team_additional_participation_mode,'full') as teamAdditionalParticipationMode,team_additional_fee_minor as teamAdditionalFeeMinor,
-            COALESCE(allow_team_age_division_overlap,1) as allowTeamAgeDivisionOverlap,minimum_group as minimumGroup,preferred_group as preferredGroup,maximum_group as maximumGroup,
-            suggested_qualifiers_per_group as suggestedQualifiersPerGroup,seeding_method as seedingMethod,
-            minimum_rest_slots as minimumRestSlots
-       FROM tournament_settings WHERE tournament_id=?`,
-  ).bind(tournamentId).first<TournamentSettingsRow>();
-  if (row) return row;
-
-  // Old/imported data may legitimately be missing the settings row. Only that
-  // exceptional path is allowed to write while serving this admin screen.
-  await ensureTournamentSettings(env, tournamentId);
-  return settingsForTournament(env, tournamentId);
-}
-
 async function tournamentCoreDetail(env: Env, tournament: TournamentRow) {
   const [settings, categories, hero, summary] = await Promise.all([
-    lightSettingsForTournament(env, tournament.id),
+    readTournamentSettings(env, tournament.id),
     env.HUAU_DB.prepare(
       `SELECT tc.id,tc.name,tc.entry_type as entryType,tc.competition_gender as competitionGender,tc.min_age as minAge,tc.max_age as maxAge,tc.max_entries as maxEntries,tc.registration_status as registrationStatus,tc.price_scope as priceScope,tc.price_minor as priceMinor,tc.currency,tc.scheduled_date as scheduledDate,
               tc.sort_order as sortOrder,tc.structure_locked as structureLocked,tc.format_version_id as formatVersionId,
@@ -2590,7 +2552,7 @@ async function tournamentDetail(env: Env, tournamentId: string) {
   ).bind(tournamentId).first<TournamentRow & { publicHeroR2Key: string | null }>();
   if (!tournament) return null;
 
-  const settings = await settingsForTournament(env, tournamentId);
+  const settings = await readTournamentSettings(env, tournamentId);
   const [categories, entries, groups, matchRows, schedule, snapshots, players, drawSessions, assignments, sets] = await Promise.all([
     env.HUAU_DB.prepare(
       `SELECT tc.id,tc.name,tc.entry_type as entryType,tc.competition_gender as competitionGender,tc.min_age as minAge,tc.max_age as maxAge,tc.max_entries as maxEntries,tc.registration_status as registrationStatus,tc.price_scope as priceScope,tc.price_minor as priceMinor,tc.currency,tc.scheduled_date as scheduledDate,
@@ -3187,7 +3149,9 @@ export async function handleTournamentAdminApi(
     const accessResult = await tournamentForAccess(tournamentId,request,env,access);
     if (accessResult instanceof Response) return accessResult;
     const body = await readJson<Partial<TournamentSettingsRow> & {startDate?:string;endDate?:string|null;courtCount?:number}>(request);
-    const current = await settingsForTournament(env,tournamentId);
+    // Explicit write route: repair a missing legacy settings row here, never on GET/read paths.
+    await ensureTournamentSettings(env, tournamentId);
+    const current = await readTournamentSettings(env,tournamentId);
     const dailyStart = /^\d{2}:\d{2}$/.test(body.dailyStart ?? "") ? body.dailyStart! : current.dailyStart;
     const dailyEnd = /^\d{2}:\d{2}$/.test(body.dailyEnd ?? "") ? body.dailyEnd! : current.dailyEnd;
     const minimumGroup = Math.max(2,Math.trunc(Number(body.minimumGroup ?? current.minimumGroup)));
@@ -3350,7 +3314,7 @@ export async function handleTournamentAdminApi(
       // Keep a self-contained snapshot so Recovery can recreate it.
       await snapshotCategory(env,accessResult.tournament,accessResult.category,accessResult.user.id,"Before deleting category");
       await env.HUAU_DB.prepare(`DELETE FROM tournament_categories WHERE id=?`).bind(categoryId).run();
-      const settings=await settingsForTournament(env,accessResult.tournament.id); await regenerateTournamentSchedule(env,accessResult.tournament,accessResult.user.id,settings.dailyStart);
+      const settings=await readTournamentSettings(env,accessResult.tournament.id); await regenerateTournamentSchedule(env,accessResult.tournament,accessResult.user.id,settings.dailyStart);
       await invalidatePublicTournamentSnapshot(env, accessResult.tournament.slug);
       return json({ok:true});
     }
@@ -3368,7 +3332,7 @@ export async function handleTournamentAdminApi(
     const nextPriceMinor=body.priceMinor===undefined?accessResult.category.priceMinor:body.priceMinor;
     await env.HUAU_DB.prepare(`UPDATE tournament_categories SET name=COALESCE(?,name),entry_type=?,competition_gender=?,scheduled_date=?,min_age=?,max_age=?,max_entries=?,registration_status=?,price_scope=?,price_minor=?,currency=?,updated_at=?,version=version+1 WHERE id=?`).bind(body.name?.trim()||null,nextEntryType,body.competitionGender===undefined?accessResult.category.competitionGender:body.competitionGender,scheduledDate,minAge,maxAge,body.maxEntries===undefined?accessResult.category.maxEntries:body.maxEntries,nextRegistrationStatus,nextPriceScope,nextPriceMinor,body.currency===undefined?accessResult.category.currency:body.currency,unixNow(),categoryId).run();
     if(nextEntryType!==accessResult.category.entryType)await syncDerivedEntriesForCategory(env,categoryId,accessResult.user.id);
-    if(structural||scheduledDateChanged){const settings=await settingsForTournament(env,accessResult.tournament.id);await regenerateTournamentSchedule(env,accessResult.tournament,accessResult.user.id,settings.dailyStart);}
+    if(structural||scheduledDateChanged){const settings=await readTournamentSettings(env,accessResult.tournament.id);await regenerateTournamentSchedule(env,accessResult.tournament,accessResult.user.id,settings.dailyStart);}
     await invalidatePublicTournamentSnapshot(env, accessResult.tournament.slug);
     return json({ok:true});
   }
@@ -3387,7 +3351,7 @@ export async function handleTournamentAdminApi(
   const formatSimulate = url.pathname.match(/^\/api\/admin\/categories\/([^/]+)\/format\/simulate$/);
   if (formatSimulate && request.method === "POST") {
     const categoryId=decodeURIComponent(formatSimulate[1]!);const accessResult=await categoryForAccess(categoryId,request,env,access);if(accessResult instanceof Response)return accessResult;
-    const entries=await loadEntryModels(env,categoryId);const settings=await settingsForTournament(env,accessResult.tournament.id);
+    const entries=await loadEntryModels(env,categoryId);const settings=await readTournamentSettings(env,accessResult.tournament.id);
     const body=await readJson<Record<string,unknown>>(request);const availableMinutes=Math.max(0,Number(body.availableMinutes??0));
     const options=buildLegacyFormatOptions({entries:entries.length,courts:Math.max(1,Number(body.courts??accessResult.tournament.courtCount)),availableMinutes,matchMinutes:Math.max(5,Number(body.matchMinutes??settings.defaultMatchMinutes)),minimumGroup:Math.max(2,Number(body.minimumGroup??settings.minimumGroup)),preferredGroup:Math.max(2,Number(body.preferredGroup??settings.preferredGroup)),maximumGroup:Math.max(2,Number(body.maximumGroup??settings.maximumGroup)),finalDrawMethod:body.finalDrawMethod==="pots"?"pots":"performance",avoidGroupRematches:body.avoidGroupRematches!==false,bronzeMatch:body.bronzeMatch===true,medalBestOf:Number(body.medalBestOf)===3?3:1,medalSchedule:body.medalSchedule==="simultaneous"?"simultaneous":"sequential",standardPointTarget:Math.max(1,Number(body.standardPointTarget??15)),medalPointTarget:Math.max(1,Number(body.medalPointTarget??11)),groupRounds:Number(body.groupRounds)===2?2:1,crossGroupMethod:body.crossGroupMethod==="equalized"?"equalized":"normalized",playoffMode:["standard","top2_final","top3_step","top4_semis","league_only"].includes(String(body.playoffMode))?(String(body.playoffMode) as "standard"|"top2_final"|"top3_step"|"top4_semis"|"league_only"):"standard",consolationMode:body.consolationMode==="knockout"?"knockout":"none",minimumGuaranteedMatches:Math.max(0,Number(body.minimumGuaranteedMatches??0)),wildcardQualifiers:Math.max(0,Number(body.wildcardQualifiers??0)),requestedQualifiersPerGroup:Number(body.requestedQualifiersPerGroup)===1?1:Number(body.requestedQualifiersPerGroup)===2?2:0});
     return json({ok:true,options});
@@ -3435,7 +3399,7 @@ export async function handleTournamentAdminApi(
 
   const scheduleRegenerate=url.pathname.match(/^\/api\/admin\/tournaments\/([^/]+)\/schedule\/regenerate$/);
   if(scheduleRegenerate&&request.method==="POST"){
-    const tournamentId=decodeURIComponent(scheduleRegenerate[1]!);const accessResult=await tournamentForAccess(tournamentId,request,env,access);if(accessResult instanceof Response)return accessResult;const settings=await settingsForTournament(env,tournamentId);await regenerateTournamentSchedule(env,accessResult.tournament,accessResult.user.id,settings.dailyStart);return json({ok:true});
+    const tournamentId=decodeURIComponent(scheduleRegenerate[1]!);const accessResult=await tournamentForAccess(tournamentId,request,env,access);if(accessResult instanceof Response)return accessResult;const settings=await readTournamentSettings(env,tournamentId);await regenerateTournamentSchedule(env,accessResult.tournament,accessResult.user.id,settings.dailyStart);return json({ok:true});
   }
   const resetCompetition=url.pathname.match(/^\/api\/admin\/tournaments\/([^/]+)\/reset-competition$/);
   if(resetCompetition&&request.method==="POST"){
