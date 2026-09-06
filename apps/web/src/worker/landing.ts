@@ -9,8 +9,34 @@ const json = (body: unknown, init: ResponseInit = {}) => new Response(JSON.strin
   headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...init.headers },
 });
 const heroKey = (slot: number) => `landing/hero-${slot}`;
+const publicLandingSnapshotKey = "public/landing.json";
 const validSlot = (raw: string) => { const slot = Number(raw); return Number.isInteger(slot) && slot >= 1 && slot <= 3 ? slot : null; };
 const now = () => Date.now();
+const unixNow = () => Math.floor(Date.now() / 1000);
+
+type LandingTournamentRow = {
+  id: string;
+  name: string;
+  slug: string;
+  sport: string;
+  status: string;
+  startAt: number;
+  endAt: number | null;
+  heroImageUrl: string | null;
+};
+
+type PublicLandingPayload = {
+  ok: true;
+  heroes: Array<{ slot: number; url: string }>;
+  tournaments: LandingTournamentRow[];
+};
+
+type PublicLandingSnapshot = {
+  version: 1;
+  generatedAt: number;
+  validUntil: number;
+  payload: PublicLandingPayload;
+};
 
 async function platformUser(request: Request, env: Env, access: AccessHelpers) {
   const user = await access.requireUser(request, env);
@@ -19,8 +45,9 @@ async function platformUser(request: Request, env: Env, access: AccessHelpers) {
   return { user };
 }
 
-async function publicLanding(env: Env) {
-  const tournamentCutoff = Math.floor(Date.now() / 1000) - 86_400;
+async function buildPublicLandingSnapshot(env: Env): Promise<PublicLandingSnapshot> {
+  const generatedAt = unixNow();
+  const tournamentCutoff = generatedAt - 86_400;
   const rows = await env.HUAU_DB.prepare(
     `SELECT id,name,slug,sport,status,start_at as startAt,end_at as endAt,
             CASE WHEN public_hero_r2_key IS NOT NULL AND TRIM(public_hero_r2_key) <> ''
@@ -31,12 +58,58 @@ async function publicLanding(env: Env) {
         AND (end_at IS NULL OR end_at >= ?)
       ORDER BY CASE status WHEN 'live' THEN 0 WHEN 'registration_open' THEN 1 ELSE 2 END,start_at
       LIMIT 9`,
-  ).bind(tournamentCutoff).all();
-  return json({
-    ok: true,
-    heroes: [1, 2, 3].map((slot) => ({ slot, url: `/api/public/landing/hero/${slot}` })),
-    tournaments: rows.results,
-  });
+  ).bind(tournamentCutoff).all<LandingTournamentRow>();
+
+  const timeExpiryCandidates = rows.results
+    .map((row) => row.endAt === null ? null : row.endAt + 86_400)
+    .filter((value): value is number => value !== null && value > generatedAt);
+  const safetyExpiry = generatedAt + 3_600;
+  const validUntil = Math.max(
+    generatedAt + 60,
+    timeExpiryCandidates.length ? Math.min(safetyExpiry, ...timeExpiryCandidates) : safetyExpiry,
+  );
+
+  return {
+    version: 1,
+    generatedAt,
+    validUntil,
+    payload: {
+      ok: true,
+      heroes: [1, 2, 3].map((slot) => ({ slot, url: `/api/public/landing/hero/${slot}` })),
+      tournaments: rows.results,
+    },
+  };
+}
+
+async function publicLanding(env: Env) {
+  const cached = await env.HUAU_ASSETS.get(publicLandingSnapshotKey);
+  if (cached) {
+    try {
+      const snapshot = JSON.parse(await cached.text()) as PublicLandingSnapshot;
+      if (
+        snapshot.version === 1 &&
+        snapshot.payload?.ok === true &&
+        Number(snapshot.validUntil) > unixNow()
+      ) {
+        return json(snapshot.payload, { headers: { "x-huau-public-source": "r2" } });
+      }
+    } catch {
+      // Corrupt/old cache is disposable; D1 remains canonical.
+    }
+    await env.HUAU_ASSETS.delete(publicLandingSnapshotKey).catch(() => undefined);
+  }
+
+  const snapshot = await buildPublicLandingSnapshot(env);
+  await env.HUAU_ASSETS.put(publicLandingSnapshotKey, JSON.stringify(snapshot), {
+    httpMetadata: { contentType: "application/json; charset=utf-8" },
+    customMetadata: {
+      kind: "public-landing",
+      generatedAt: String(snapshot.generatedAt),
+      validUntil: String(snapshot.validUntil),
+    },
+  }).catch(() => undefined);
+
+  return json(snapshot.payload, { headers: { "x-huau-public-source": "d1-fill" } });
 }
 
 async function publicHero(slot: number, env: Env) {

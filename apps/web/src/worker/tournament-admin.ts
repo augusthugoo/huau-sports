@@ -117,6 +117,11 @@ const readJson = async <T>(request: Request): Promise<T> => (await request.json(
 const uuid = () => crypto.randomUUID();
 const unixNow = () => Math.floor(Date.now() / 1000);
 const asBool = (value: unknown) => (value ? 1 : 0);
+const publicLandingSnapshotKey = "public/landing.json";
+
+async function invalidatePublicLandingSnapshot(env: Env) {
+  await env.HUAU_ASSETS.delete(publicLandingSnapshotKey).catch(() => undefined);
+}
 
 function slugify(value: string) {
   return value
@@ -2881,6 +2886,7 @@ async function mutateTournamentPublicHero(
       "tournament",
       tournamentId,
     );
+    await invalidatePublicLandingSnapshot(env);
     return json({ ok: true, heroImageUrl: null });
   }
 
@@ -2922,6 +2928,7 @@ async function mutateTournamentPublicHero(
     tournamentId,
     { contentType: raw.type, size: raw.size },
   );
+  await invalidatePublicLandingSnapshot(env);
   return json({
     ok: true,
     heroImageUrl: `/api/public/tournaments/${encodeURIComponent(accessResult.tournament.slug)}/hero`,
@@ -2974,6 +2981,7 @@ export async function handleTournamentAdminApi(
          VALUES (?,?,NULL,?,?,?,'draft',?,?,?,?,?,1,1,0,0,0,?,?,?)`,
       ).bind(tournamentId,organizationId,name,slug,sport,body.visibility ?? "public",unixFromLocal(startDate),body.endDate ? unixFromLocal(body.endDate,"23:59") : null,"America/Montevideo",courtCount,user.id,stamp,stamp).run();
       await ensureTournamentSettings(env, tournamentId);
+      await invalidatePublicLandingSnapshot(env);
       return json({ ok: true, tournament: { id: tournamentId, name, slug } }, { status: 201 });
     }
   }
@@ -3098,6 +3106,7 @@ export async function handleTournamentAdminApi(
                 status=COALESCE(?,status),public_live=COALESCE(?,public_live),public_participants=COALESCE(?,public_participants),updated_at=? WHERE id=?`,
       ).bind(body.name?.trim() || null,body.courtCount ? Math.max(1,Math.trunc(body.courtCount)) : null,body.visibility ?? null,body.status ?? null,
         body.publicLive === undefined ? null : asBool(body.publicLive),body.publicParticipants === undefined ? null : asBool(body.publicParticipants),unixNow(),tournamentId).run();
+      await invalidatePublicLandingSnapshot(env);
       return json({ ok: true });
     }
     if (request.method === "DELETE") {
@@ -3107,6 +3116,7 @@ export async function handleTournamentAdminApi(
       }
       await audit(env, accessResult.tournament, accessResult.user.id, "tournament.delete", `Deleted tournament ${accessResult.tournament.name}`, "tournament", tournamentId);
       await env.HUAU_DB.prepare(`DELETE FROM tournaments WHERE id=?`).bind(tournamentId).run();
+      await invalidatePublicLandingSnapshot(env);
       return json({ ok: true });
     }
   }
@@ -3138,6 +3148,7 @@ export async function handleTournamentAdminApi(
       });
       await persistImportedBundle(env,bundle);
       await addLegacyProfilesAfterImport(env,bundle,input);
+      await invalidatePublicLandingSnapshot(env);
       return json({ok:true,tournament:{id:bundle.tournament.id,name:bundle.tournament.name,slug:bundle.tournament.slug}},{status:201});
     } catch (error) {
       return json({ok:false,code:error instanceof Error ? error.message : "LEGACY_IMPORT_FAILED"},{status:400});
@@ -3211,6 +3222,7 @@ export async function handleTournamentAdminApi(
       const generated = await env.HUAU_DB.prepare(`SELECT 1 as ok FROM competitions c JOIN tournament_categories tc ON tc.id=c.category_id WHERE tc.tournament_id=? LIMIT 1`).bind(tournamentId).first<{ok:number}>();
       if (generated) await regenerateTournamentSchedule(env,{...accessResult.tournament,courtCount:body.courtCount ? Math.max(1,Math.trunc(Number(body.courtCount))) : accessResult.tournament.courtCount},accessResult.user.id,dailyStart);
     }
+    await invalidatePublicLandingSnapshot(env);
     return json({ok:true});
   }
 
