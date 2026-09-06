@@ -43,9 +43,18 @@ function platformAllowlist(env: Env): Set<string> {
   );
 }
 
+type AuthApi = ReturnType<typeof createAuth>["api"];
+type SessionPromise = ReturnType<AuthApi["getSession"]>;
+
+const sessionCache = new WeakMap<Request, SessionPromise>();
+const orgAdminCache = new WeakMap<Request, Map<string, Promise<boolean>>>();
+
 async function getSession(request: Request, env: Env) {
-  const auth = createAuth(env);
-  return auth.api.getSession({ headers: request.headers });
+  const cached = sessionCache.get(request);
+  if (cached) return cached;
+  const pending = createAuth(env).api.getSession({ headers: request.headers });
+  sessionCache.set(request, pending);
+  return pending;
 }
 
 async function isPlatformAdmin(userId: string, email: string, env: Env) {
@@ -59,44 +68,66 @@ async function isPlatformAdmin(userId: string, email: string, env: Env) {
   return Boolean(row);
 }
 
-async function isOrgAdmin(userId: string, organizationId: string, env: Env, request?: Request) {
-  const db = createDb(env.HUAU_DB);
-  const [row] = await db
-    .select({ id: organizationUserCapabilities.id })
-    .from(organizationUserCapabilities)
-    .where(
-      and(
-        eq(organizationUserCapabilities.userId, userId),
-        eq(organizationUserCapabilities.organizationId, organizationId),
-        eq(organizationUserCapabilities.capability, "org_admin"),
-        eq(organizationUserCapabilities.status, "active"),
-      ),
-    )
-    .limit(1);
-  if (row) return true;
+async function computeOrgAdmin(
+  userId: string,
+  organizationId: string,
+  env: Env,
+  request?: Request,
+) {
+  const row = await env.HUAU_DB.prepare(
+    `SELECT
+       EXISTS(
+         SELECT 1
+           FROM organization_user_capabilities
+          WHERE user_id=? AND organization_id=? AND capability='org_admin' AND status='active'
+          LIMIT 1
+       ) as orgAdmin,
+       EXISTS(
+         SELECT 1
+           FROM platform_admins
+          WHERE user_id=? AND status='active'
+          LIMIT 1
+       ) as platformStored,
+       (SELECT email FROM "user" WHERE id=? LIMIT 1) as email`,
+  ).bind(userId, organizationId, userId, userId).first<{
+    orgAdmin: number;
+    platformStored: number;
+    email: string | null;
+  }>();
 
-  // Platform support access is explicit and scoped. A platform admin who is also
-  // a real organization admin does not need the support header.
-  if (await isPlatformAdminById(userId, env)) {
-    return request?.headers.get("x-huau-support-org") === organizationId;
-  }
-  return false;
+  if (Number(row?.orgAdmin ?? 0) === 1) return true;
+
+  const platformAdmin =
+    Number(row?.platformStored ?? 0) === 1 ||
+    Boolean(row?.email && platformAllowlist(env).has(row.email.toLowerCase()));
+
+  return (
+    platformAdmin &&
+    request?.headers.get("x-huau-support-org") === organizationId
+  );
 }
 
-async function isPlatformAdminById(userId: string, env: Env) {
-  const db = createDb(env.HUAU_DB);
-  const [stored] = await db
-    .select({ id: platformAdmins.userId })
-    .from(platformAdmins)
-    .where(and(eq(platformAdmins.userId, userId), eq(platformAdmins.status, "active")))
-    .limit(1);
-  if (stored) return true;
+async function isOrgAdmin(
+  userId: string,
+  organizationId: string,
+  env: Env,
+  request?: Request,
+) {
+  if (!request) return computeOrgAdmin(userId, organizationId, env);
 
-  const sessionRows = await env.HUAU_DB.prepare('SELECT email FROM "user" WHERE id = ?')
-    .bind(userId)
-    .all<{ email: string }>();
-  const email = sessionRows.results[0]?.email;
-  return Boolean(email && platformAllowlist(env).has(email.toLowerCase()));
+  let cache = orgAdminCache.get(request);
+  if (!cache) {
+    cache = new Map<string, Promise<boolean>>();
+    orgAdminCache.set(request, cache);
+  }
+
+  const key = `${userId}\u0000${organizationId}`;
+  const cached = cache.get(key);
+  if (cached) return cached;
+
+  const pending = computeOrgAdmin(userId, organizationId, env, request);
+  cache.set(key, pending);
+  return pending;
 }
 
 async function requireUser(request: Request, env: Env) {
@@ -110,43 +141,50 @@ async function handleMe(request: Request, env: Env) {
   if (!currentUser) return json({ ok: false, code: "UNAUTHENTICATED" }, { status: 401 });
 
   const db = createDb(env.HUAU_DB);
-  const [profile] = await db
-    .select()
-    .from(userProfiles)
-    .where(eq(userProfiles.userId, currentUser.id))
-    .limit(1);
 
-  const memberships = await db
-    .select({
-      id: organizationMemberships.id,
-      status: organizationMemberships.status,
-      organizationId: organizations.id,
-      organizationName: organizations.name,
-      organizationSlug: organizations.slug,
-      organizationType: organizations.type,
-    })
-    .from(organizationMemberships)
-    .innerJoin(organizations, eq(organizationMemberships.organizationId, organizations.id))
-    .where(eq(organizationMemberships.userId, currentUser.id));
+  const [profileRows, memberships, capabilities, membershipRequests, platformAdmin] =
+    await Promise.all([
+      db
+        .select()
+        .from(userProfiles)
+        .where(eq(userProfiles.userId, currentUser.id))
+        .limit(1),
+      db
+        .select({
+          id: organizationMemberships.id,
+          status: organizationMemberships.status,
+          organizationId: organizations.id,
+          organizationName: organizations.name,
+          organizationSlug: organizations.slug,
+          organizationType: organizations.type,
+        })
+        .from(organizationMemberships)
+        .innerJoin(
+          organizations,
+          eq(organizationMemberships.organizationId, organizations.id),
+        )
+        .where(eq(organizationMemberships.userId, currentUser.id)),
+      db
+        .select()
+        .from(organizationUserCapabilities)
+        .where(
+          and(
+            eq(organizationUserCapabilities.userId, currentUser.id),
+            eq(organizationUserCapabilities.status, "active"),
+          ),
+        ),
+      db
+        .select({
+          id: organizationMembershipRequests.id,
+          organizationId: organizationMembershipRequests.organizationId,
+          status: organizationMembershipRequests.status,
+        })
+        .from(organizationMembershipRequests)
+        .where(eq(organizationMembershipRequests.userId, currentUser.id)),
+      isPlatformAdmin(currentUser.id, currentUser.email, env),
+    ]);
 
-  const capabilities = await db
-    .select()
-    .from(organizationUserCapabilities)
-    .where(
-      and(
-        eq(organizationUserCapabilities.userId, currentUser.id),
-        eq(organizationUserCapabilities.status, "active"),
-      ),
-    );
-
-  const membershipRequests = await db
-    .select({
-      id: organizationMembershipRequests.id,
-      organizationId: organizationMembershipRequests.organizationId,
-      status: organizationMembershipRequests.status,
-    })
-    .from(organizationMembershipRequests)
-    .where(eq(organizationMembershipRequests.userId, currentUser.id));
+  const profile = profileRows[0];
 
   return json({
     ok: true,
@@ -155,7 +193,7 @@ async function handleMe(request: Request, env: Env) {
     memberships,
     capabilities,
     membershipRequests,
-    platformAdmin: await isPlatformAdmin(currentUser.id, currentUser.email, env),
+    platformAdmin,
   });
 }
 

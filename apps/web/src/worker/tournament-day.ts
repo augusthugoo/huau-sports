@@ -276,6 +276,33 @@ async function dayStateByToken(env: Env, token: string) {
     .first<DayStateRow>();
 }
 
+
+async function cleanupCheckpointObjects(
+  env: Env,
+  tournamentId: string,
+  keepKey: string,
+) {
+  const prefix = `tournaments/${tournamentId}/day/checkpoints/`;
+  const staleKeys: string[] = [];
+  let cursor: string | undefined;
+
+  do {
+    const listed = await env.HUAU_ASSETS.list({
+      prefix,
+      cursor,
+      limit: 1000,
+    });
+    for (const object of listed.objects) {
+      if (object.key !== keepKey) staleKeys.push(object.key);
+    }
+    cursor = listed.truncated ? listed.cursor : undefined;
+  } while (cursor);
+
+  for (let index = 0; index < staleKeys.length; index += 100) {
+    await env.HUAU_ASSETS.delete(staleKeys.slice(index, index + 100));
+  }
+}
+
 async function putSnapshot(
   env: Env,
   input: {
@@ -393,9 +420,9 @@ async function putSnapshot(
     };
   }
 
-  if (current?.snapshotR2Key && current.snapshotR2Key !== key) {
-    await env.HUAU_ASSETS.delete(current.snapshotR2Key).catch(() => undefined);
-  }
+  await cleanupCheckpointObjects(env, input.tournamentId, key).catch(
+    () => undefined,
+  );
 
   return {
     snapshot,
