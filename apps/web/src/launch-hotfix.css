@@ -1,44 +1,131 @@
-/* HUAU Phase 9 launch hotfix
-   - mobile shell navigation remains accessible
-   - iOS date inputs stay inside their containers
-   - black-backed product lockups blend into the landing card
-   - registration success dialog
-   - tournament pricing currency field
-*/
+/* HUAU Phase 9 launch final polish */
 
-.tournament-lockup,
-.ref-lockup {
-  mix-blend-mode: screen;
+@media (max-width: 760px) {
+  .topbar {
+    height: auto;
+    min-height: 66px;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    padding: 10px 14px;
+  }
+
+  .topbar .huau-logo-button { order: 1; }
+  .topbar .huau-logo-image { width: 112px; max-width: 29vw; }
+
+  .topbar > .ghost {
+    order: 2;
+    margin-left: auto;
+    padding: 8px 11px;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .topbar nav {
+    order: 3;
+    display: flex !important;
+    width: 100%;
+    gap: 6px;
+    overflow-x: auto;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255,255,255,.08);
+    scrollbar-width: none;
+  }
+
+  .topbar nav::-webkit-scrollbar { display: none; }
+
+  .topbar nav button {
+    flex: 0 0 auto;
+    padding: 8px 10px !important;
+    font-size: 11px !important;
+    white-space: nowrap;
+  }
+}
+
+.birth-date-field,
+.birth-date-selects,
+.birth-date-selects > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.birth-date-selects {
+  display: grid;
+  grid-template-columns: minmax(0,.8fr) minmax(0,.8fr) minmax(0,1.2fr);
+  gap: 8px;
+}
+
+.birth-date-selects select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 label,
 .registration-profile-card,
 .registration-profile-card form,
 .registration-profile-card form > *,
+.player-profile-form,
+.player-profile-form > *,
 .tpw-form,
 .tpw-form > * {
   min-width: 0;
-}
-
-input[type="date"],
-input[type="datetime-local"] {
-  display: block;
-  width: 100% !important;
-  max-width: 100% !important;
-  min-width: 0 !important;
-  box-sizing: border-box;
-}
-
-input[type="date"]::-webkit-date-and-time-value,
-input[type="datetime-local"]::-webkit-date-and-time-value {
-  min-width: 0;
-  text-align: left;
+  max-width: 100%;
 }
 
 .pricing-admin-grid {
   display: grid;
-  grid-template-columns: 120px repeat(4, minmax(0, 1fr));
+  grid-template-columns: 120px repeat(4,minmax(0,1fr));
   gap: 10px;
+}
+
+@media (max-width: 900px) {
+  .pricing-admin-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+
+@media (max-width: 760px) {
+  .pricing-admin-grid { grid-template-columns: 1fr; }
+}
+
+.product-lockup-composite {
+  width: min(100%,390px);
+  height: 145px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+  background: transparent;
+}
+
+.product-lockup-composite img {
+  display: block;
+  width: min(100%,350px);
+  height: auto;
+  max-height: 100px;
+  object-fit: contain;
+  object-position: left center;
+  background: transparent;
+}
+
+.product-lockup-composite span {
+  margin-left: 46px;
+  color: #f4f4f2;
+  font-size: .86rem;
+  font-weight: 800;
+  letter-spacing: .32em;
+  line-height: 1;
+}
+
+.product-lockup-composite.ref-product-lockup span {
+  margin-left: 215px;
+  letter-spacing: .24em;
+}
+
+@media (max-width: 560px) {
+  .product-lockup-composite { height: 120px; }
+  .product-lockup-composite img { max-height: 82px; }
+  .product-lockup-composite span { margin-left: 30px; font-size: .72rem; }
+  .product-lockup-composite.ref-product-lockup span { margin-left: 165px; }
 }
 
 .launch-registration-backdrop {
@@ -48,18 +135,20 @@ input[type="datetime-local"]::-webkit-date-and-time-value {
   display: grid;
   place-items: center;
   padding: 20px;
-  background: rgba(0, 0, 0, .76);
+  background: rgba(0,0,0,.76);
   backdrop-filter: blur(14px);
 }
 
 .launch-registration-modal {
   position: relative;
-  width: min(520px, 100%);
+  width: min(520px,100%);
+  max-height: min(760px,calc(100vh - 32px));
+  overflow: auto;
   border: 1px solid #303030;
   border-radius: 24px;
   padding: 34px;
-  background: linear-gradient(145deg, #151515, #0b0b0b);
-  box-shadow: 0 28px 90px rgba(0, 0, 0, .6);
+  background: linear-gradient(145deg,#151515,#0b0b0b);
+  box-shadow: 0 28px 90px rgba(0,0,0,.6);
   text-align: center;
 }
 
@@ -85,94 +174,142 @@ input[type="datetime-local"]::-webkit-date-and-time-value {
   margin: 4px auto 20px;
   display: grid;
   place-items: center;
-  border: 1px solid rgba(123, 213, 151, .38);
+  border: 1px solid rgba(123,213,151,.38);
   border-radius: 999px;
-  background: rgba(83, 173, 112, .12);
+  background: rgba(83,173,112,.12);
   color: #9be0ae;
   font-size: 32px;
   font-weight: 800;
 }
 
 .launch-registration-modal h2 {
-  margin: 0 0 12px;
+  margin: 8px 0 12px;
   font-size: 30px;
   letter-spacing: -.04em;
 }
 
-.launch-registration-modal p {
+.launch-registration-modal > p {
   margin: 0 auto 24px;
   max-width: 420px;
   color: #aaa;
   line-height: 1.6;
 }
 
-.launch-registration-modal .light {
-  width: 100%;
+.launch-review-modal {
+  width: min(590px,100%);
+  text-align: left;
 }
 
-@media (max-width: 900px) {
-  .pricing-admin-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+.launch-review-modal .eyebrow,
+.launch-review-modal h2,
+.launch-review-modal > p {
+  text-align: left;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.launch-review-list {
+  display: grid;
+  gap: 8px;
+  margin: 20px 0 14px;
+}
+
+.launch-review-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 14px;
+  border: 1px solid #292929;
+  border-radius: 13px;
+  background: #0a0a0a;
+}
+
+.launch-review-item > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.launch-review-item small { color: #81817d; }
+
+.launch-review-total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px 0;
+  margin-bottom: 10px;
+  border-top: 1px solid #333;
+  border-bottom: 1px solid #242424;
+}
+
+.launch-review-total strong { font-size: 24px; }
+
+.launch-review-regulations {
+  display: grid;
+  gap: 9px;
+  margin: 14px 0 20px;
+}
+
+.launch-review-regulations label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.launch-review-regulations input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.launch-review-regulations .text-button {
+  margin: 0;
+  justify-self: start;
+}
+
+.launch-review-actions {
+  display: grid;
+  grid-template-columns: auto minmax(0,1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.registration-review-trigger {
+  width: 100%;
+  min-height: 50px;
+  border: 1px solid #a79f8b;
+  border-radius: 14px;
+  padding: 13px 16px;
+  background: #a79f8b;
+  color: #080808;
+  font: inherit;
+  font-weight: 800;
+  letter-spacing: .01em;
+}
+
+.registration-review-trigger:hover { filter: brightness(1.08); }
+.registration-review-trigger:disabled { opacity: .48; }
+
+@media (max-width: 980px) {
+  .registration-shop-layout .public-registration-grid { order: 1; }
+  .registration-shop-layout .registration-basket {
+    order: 2 !important;
+    position: relative;
+    top: auto;
   }
 }
+
+.public-format-modal-backdrop { z-index: 140; }
 
 @media (max-width: 760px) {
-  .topbar {
-    height: auto;
-    min-height: 66px;
-    flex-wrap: wrap;
-    gap: 8px 10px;
-    padding: 10px 14px;
-  }
+  .launch-registration-modal { padding: 30px 22px 24px; }
+  .launch-registration-modal h2 { font-size: 26px; }
 
-  .topbar .huau-logo-button {
-    order: 1;
-  }
+  .launch-review-actions { grid-template-columns: 1fr; }
 
-  .topbar .huau-logo-image {
-    width: 112px;
-    max-width: 29vw;
-  }
-
-  .topbar > .ghost {
-    order: 2;
-    margin-left: auto;
-    padding: 8px 11px;
-    font-size: 11px;
-    white-space: nowrap;
-  }
-
-  .topbar nav {
-    order: 3;
-    display: flex !important;
-    width: 100%;
-    gap: 6px;
-    overflow-x: auto;
-    padding-top: 8px;
-    border-top: 1px solid rgba(255, 255, 255, .08);
-    scrollbar-width: none;
-  }
-
-  .topbar nav::-webkit-scrollbar {
-    display: none;
-  }
-
-  .topbar nav button {
-    flex: 0 0 auto;
-    padding: 8px 10px !important;
-    font-size: 11px !important;
-    white-space: nowrap;
-  }
-
-  .pricing-admin-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .launch-registration-modal {
-    padding: 30px 22px 24px;
-  }
-
-  .launch-registration-modal h2 {
-    font-size: 26px;
-  }
+  .launch-review-actions .ghost,
+  .launch-review-actions .light { width: 100%; }
 }

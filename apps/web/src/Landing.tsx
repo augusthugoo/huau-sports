@@ -184,11 +184,11 @@ export function Landing({ locale, setLocale, go, authenticated = false }: { loca
         </div>
         <div className="ecosystem-grid">
           <article className="ecosystem-card">
-            <img className="product-lockup tournament-lockup" src="/huau-tournament-logo.png" alt="HUAU Tournament" />
+            <div className="product-lockup-composite" role="img" aria-label="HUAU Tournament"><img src="/huau-logo.png" alt="" /><span>— TOURNAMENT —</span></div>
             <p>{tr(locale, "Inscripciones online, participantes, pagos, categorías, formatos individuales, parejas y equipos, Tournament Day local, cronograma, resultados, recuperación y TV.", "Online registration, participants, payments, categories, individual, pair and team formats, local Tournament Day, scheduling, results, recovery and TV.")}</p>
           </article>
           <article className="ecosystem-card">
-            <img className="product-lockup ref-lockup" src="/huau-ref-logo.png" alt="HUAU Ref" />
+            <div className="product-lockup-composite ref-product-lockup" role="img" aria-label="HUAU Ref"><img src="/huau-logo.png" alt="" /><span>— REF —</span></div>
             <p>{tr(locale, "Scoring, servicio, posiciones, timeouts, correcciones, advertencias y conducción del partido desde la cancha.", "Scoring, service, positions, timeouts, corrections, warnings and match control from the court.")}</p>
           </article>
           <article className="ecosystem-card coming-soon-card">

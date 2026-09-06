@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { registrationPriceMinor, resolveRegistrationPricing, resolveTeamIndividualPrice } from "@huau/core";
 import { FormatExplanationPanel, explanationForPersistedFormat } from "./FormatExplanationPanel";
+import { BirthDateField } from "./BirthDateField";
 import type { Locale } from "./i18n";
 
 type Go = (path: string) => void;
@@ -216,7 +217,7 @@ function EligibilityProfileCard({
       </div>
       <form onSubmit={(event) => void onSave(event)}>
         <label><span>{tr(locale, "Teléfono", "Phone")}</span><input name="phone" type="tel" defaultValue={profile?.phone ?? ""} /></label>
-        <label><span>{tr(locale, "Fecha de nacimiento", "Birth date")}</span><input name="birthDate" type="date" defaultValue={profile?.birthDate ?? ""} /></label>
+        <BirthDateField name="birthDate" label={tr(locale, "Fecha de nacimiento", "Birth date")} defaultValue={profile?.birthDate ?? ""} locale={locale} />
         <label><span>{tr(locale, "Género deportivo", "Sport gender")}</span><select name="sportGender" defaultValue={profile?.sportGender ?? "unspecified"}><option value="unspecified">{tr(locale, "Sin especificar", "Unspecified")}</option><option value="male">{tr(locale, "Masculino", "Male")}</option><option value="female">{tr(locale, "Femenino", "Female")}</option></select></label>
         <label><span>DUPR ID</span><input name="duprId" type="text" maxLength={80} defaultValue={profile?.duprId ?? ""} placeholder={tr(locale, "Tu ID de jugador en DUPR", "Your DUPR player ID")} /></label>
         <div className="two"><label><span>DUPR Singles</span><input name="duprSingles" type="number" min="0" max="8" step="0.001" defaultValue={profile?.duprSingles ?? ""}/></label><label><span>DUPR Doubles</span><input name="duprDoubles" type="number" min="0" max="8" step="0.001" defaultValue={profile?.duprDoubles ?? ""}/></label></div>
@@ -266,6 +267,7 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
   const [regulationsOpen, setRegulationsOpen] = useState(false);
   const [regulationsAccepted, setRegulationsAccepted] = useState(false);
   const [registrationSuccess, setRegistrationSuccess] = useState<{ waitlisted: number } | null>(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -277,10 +279,15 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
   }, [slug]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
-    if (!explanationCategoryId && !regulationsOpen) return;
+    if (!explanationCategoryId && !regulationsOpen && !reviewOpen && !registrationSuccess) return;
     const previousOverflow = document.body.style.overflow;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { setExplanationCategoryId(null); setRegulationsOpen(false); }
+      if (event.key === "Escape") {
+        setExplanationCategoryId(null);
+        setRegulationsOpen(false);
+        setReviewOpen(false);
+        setRegistrationSuccess(null);
+      }
     };
     document.body.style.overflow = "hidden";
     window.addEventListener("keydown", closeOnEscape);
@@ -288,7 +295,7 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", closeOnEscape);
     };
-  }, [explanationCategoryId, regulationsOpen]);
+  }, [explanationCategoryId, regulationsOpen, reviewOpen, registrationSuccess]);
   useEffect(() => { setRegulationsAccepted(false); }, [data?.regulations.version]);
 
   const login = () => {
@@ -375,6 +382,7 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
       setSelected([]);
       setTeamSelections({});
       setRegulationsAccepted(false);
+      setReviewOpen(false);
       await load();
       setNotice("");
       setRegistrationSuccess({ waitlisted });
@@ -501,8 +509,14 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
           <div className="registration-basket-total"><span>{tr(locale, "Total previsto", "Estimated total")}</span><strong>{money(basketTotal, basket[0]?.category.currency ?? "UYU", locale)}</strong></div>
           {data.pricingPolicy.paymentType === "base_plus_extra" && <p className="muted">{tr(locale, "El cálculo incluye automáticamente tarifa base y categorías extra según tus inscripciones previas y esta selección.", "The estimate automatically includes base and extra-category pricing using your existing registrations and this selection.")}</p>}
           {data.teamPricing.individualFeeMinor !== null && <p className="muted">{tr(locale, `Equipos: individual ${money(data.teamPricing.individualFeeMinor, "UYU", locale)}${data.teamPricing.additionalParticipationMode === "extra" ? ` · participación adicional ${money(data.teamPricing.additionalFeeMinor ?? 0, "UYU", locale)}` : data.teamPricing.additionalParticipationMode === "free" ? " · participación adicional gratis" : " · participación adicional a precio completo"}.`, `Teams: individual ${money(data.teamPricing.individualFeeMinor, "UYU", locale)}.`)}</p>}
-          {data.regulations.text.trim() && <div className="registration-regulations-accept"><label><input type="checkbox" checked={regulationsAccepted} onChange={(event) => setRegulationsAccepted(event.target.checked)}/><span>{tr(locale,"Leí y acepto el reglamento del torneo.","I have read and accept the tournament regulations.")}</span></label><button type="button" className="text-button" onClick={() => setRegulationsOpen(true)}>{tr(locale,"Ver reglamento","View regulations")}</button></div>}
-          <button className="light full" disabled={!basket.length || busy === "basket" || (Boolean(data.regulations.text.trim()) && !regulationsAccepted)} onClick={() => void confirmBasket()}>{busy === "basket" ? "…" : tr(locale, "Confirmar inscripción", "Confirm registration")}</button>
+          <button
+            type="button"
+            className="registration-review-trigger"
+            disabled={!basket.length || busy === "basket"}
+            onClick={() => setReviewOpen(true)}
+          >
+            {tr(locale, "Revisar y confirmar inscripción", "Review and confirm registration")}
+          </button>
           {limitAfterSelection !== null && data.maxCategoriesPerPlayer !== null && <small>{tr(locale, `${limitAfterSelection}/${data.maxCategoriesPerPlayer} categorías`, `${limitAfterSelection}/${data.maxCategoriesPerPlayer} categories`)}</small>}
         </aside>
       </section>
@@ -541,6 +555,95 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
                 locale={locale}
                 title={tr(locale, "Formato oficial", "Official format")}
               />
+            </div>
+          </section>
+        </div>
+      )}
+
+      {reviewOpen && basket.length > 0 && (
+        <div
+          className="launch-registration-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setReviewOpen(false);
+          }}
+        >
+          <section
+            className="launch-registration-modal launch-review-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="launch-review-title"
+          >
+            <button
+              type="button"
+              className="launch-registration-close"
+              aria-label={tr(locale, "Cerrar revisión", "Close review")}
+              onClick={() => setReviewOpen(false)}
+            >
+              ×
+            </button>
+            <div className="eyebrow">{tr(locale, "REVISIÓN FINAL", "FINAL REVIEW")}</div>
+            <h2 id="launch-review-title">
+              {tr(locale, "¿Confirmás tu inscripción?", "Confirm your registration?")}
+            </h2>
+            <p>
+              {tr(
+                locale,
+                "Revisá las categorías elegidas antes de generar la inscripción.",
+                "Review the selected categories before creating the registration.",
+              )}
+            </p>
+
+            <div className="launch-review-list">
+              {basket.map(({ category, price }) => (
+                <div className="launch-review-item" key={category.id}>
+                  <div>
+                    <strong>{category.name}</strong>
+                    <small>
+                      {category.entryType === "pair"
+                        ? tr(locale, "Pareja · vínculo después", "Pair · link later")
+                        : category.entryType === "team"
+                          ? tr(locale, "Equipo", "Team")
+                          : tr(locale, "Individual", "Individual")}
+                    </small>
+                  </div>
+                  <strong>{money(price, category.currency, locale)}</strong>
+                </div>
+              ))}
+            </div>
+
+            <div className="launch-review-total">
+              <span>{tr(locale, "Total previsto", "Estimated total")}</span>
+              <strong>{money(basketTotal, basket[0]?.category.currency ?? "UYU", locale)}</strong>
+            </div>
+
+            {data.regulations.text.trim() && (
+              <div className="launch-review-regulations">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={regulationsAccepted}
+                    onChange={(event) => setRegulationsAccepted(event.target.checked)}
+                  />
+                  <span>{tr(locale, "Leí y acepto el reglamento del torneo.", "I have read and accept the tournament regulations.")}</span>
+                </label>
+                <button type="button" className="text-button" onClick={() => setRegulationsOpen(true)}>
+                  {tr(locale, "Ver reglamento", "View regulations")}
+                </button>
+              </div>
+            )}
+
+            <div className="launch-review-actions">
+              <button type="button" className="ghost" onClick={() => setReviewOpen(false)}>
+                {tr(locale, "Volver", "Back")}
+              </button>
+              <button
+                type="button"
+                className="light"
+                disabled={busy === "basket" || (Boolean(data.regulations.text.trim()) && !regulationsAccepted)}
+                onClick={() => void confirmBasket()}
+              >
+                {busy === "basket" ? "…" : tr(locale, "Confirmar inscripción", "Confirm registration")}
+              </button>
             </div>
           </section>
         </div>

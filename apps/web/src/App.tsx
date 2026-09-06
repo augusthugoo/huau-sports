@@ -9,6 +9,7 @@ import { TournamentDayWorkspace } from "./TournamentDayWorkspace";
 import { MyTournamentRegistrations, PublicTournamentRegistration } from "./TournamentRegistration";
 import { MyTournamentPayments } from "./TournamentPayments";
 import { Landing, LandingAdminPanel } from "./Landing";
+import { BirthDateField } from "./BirthDateField";
 
 type Membership = {
   id: string;
@@ -271,7 +272,7 @@ function MyHuau({locale,setLocale,go,me,loading,refreshMe}:{locale:Locale;setLoc
         <form onSubmit={saveProfile} className="player-profile-form">
           <div className="two"><Field name="firstName" label={copy(locale,"Nombre","First name")} defaultValue={me?.profile?.firstName??""}/><Field name="lastName" label={copy(locale,"Apellido","Last name")} defaultValue={me?.profile?.lastName??""}/></div>
           <div className="two"><label><span>Email</span><input value={me?.user.email??""} disabled readOnly/></label><Field name="phone" label={copy(locale,"Teléfono","Phone")} required={false} defaultValue={me?.profile?.phone??""}/></div>
-          <div className="two"><Field name="birthDate" label={copy(locale,"Fecha de nacimiento","Birth date")} type="date" required={false} defaultValue={me?.profile?.birthDate??""}/><label><span>{copy(locale,"Género deportivo","Sport gender")}</span><select name="sportGender" defaultValue={me?.profile?.sportGender??"unspecified"}><option value="unspecified">{copy(locale,"Sin especificar","Unspecified")}</option><option value="male">{copy(locale,"Masculino","Male")}</option><option value="female">{copy(locale,"Femenino","Female")}</option></select></label></div>
+          <div className="two"><BirthDateField name="birthDate" label={copy(locale,"Fecha de nacimiento","Birth date")} defaultValue={me?.profile?.birthDate??""} locale={locale}/><label><span>{copy(locale,"Género deportivo","Sport gender")}</span><select name="sportGender" defaultValue={me?.profile?.sportGender??"unspecified"}><option value="unspecified">{copy(locale,"Sin especificar","Unspecified")}</option><option value="male">{copy(locale,"Masculino","Male")}</option><option value="female">{copy(locale,"Femenino","Female")}</option></select></label></div>
           <div className="two"><Field name="city" label={copy(locale,"Ciudad","City")} required={false} defaultValue={me?.profile?.city??""}/><label><span>{copy(locale,"País (código)","Country code")}</span><input name="countryCode" maxLength={3} defaultValue={me?.profile?.countryCode??""} placeholder="UY"/></label></div>
           <div className="dupr-profile-box">
             <div className="dupr-profile-copy"><div className="eyebrow">DUPR</div><strong>{copy(locale,"Identidad y ratings","Identity & ratings")}</strong><p className="muted">{copy(locale,"El DUPR ID permite que la organización verifique los ratings declarados cuando corresponda.","Your DUPR ID lets organizers verify declared ratings when needed.")}</p></div>
