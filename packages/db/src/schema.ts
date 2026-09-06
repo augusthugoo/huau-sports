@@ -725,6 +725,7 @@ export const tournamentSettings = sqliteTable("tournament_settings", {
   duprRequired: integer("dupr_required", { mode: "boolean" }).notNull().default(false),
   duprMax: real("dupr_max"),
   duprAsOfDate: text("dupr_as_of_date"),
+  allowNoDupr: integer("allow_no_dupr", { mode: "boolean" }).notNull().default(false),
   dailyStart: text("daily_start").notNull().default("09:00"),
   dailyEnd: text("daily_end").notNull().default("20:00"),
   defaultMatchMinutes: integer("default_match_minutes").notNull().default(30),

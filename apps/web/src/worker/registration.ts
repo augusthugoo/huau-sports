@@ -65,6 +65,7 @@ type PricingSettingsRow = {
   duprRequired: number;
   duprMax: number | null;
   duprAsOfDate: string | null;
+  allowNoDupr: number;
   maxCategoriesPerPlayer: number | null;
   teamIndividualFeeMinor: number | null;
   teamFullFeeMinor: number | null;
@@ -186,7 +187,7 @@ async function publicInfoForTournament(env: Env, tournamentId: string): Promise<
 async function pricingSettingsForTournament(env: Env, tournamentId: string): Promise<PricingSettingsRow> {
   const row = await env.HUAU_DB.prepare(
     `SELECT payment_type as paymentType,entry_fee_minor as entryFeeMinor,base_fee_minor as baseFeeMinor,extra_category_fee_minor as extraCategoryFeeMinor,
-            registration_close_at as registrationCloseAt,COALESCE(regulations_text,'') as regulationsText,COALESCE(regulations_version,0) as regulationsVersion,COALESCE(dupr_required,0) as duprRequired,dupr_max as duprMax,dupr_as_of_date as duprAsOfDate,
+            registration_close_at as registrationCloseAt,COALESCE(regulations_text,'') as regulationsText,COALESCE(regulations_version,0) as regulationsVersion,COALESCE(dupr_required,0) as duprRequired,dupr_max as duprMax,dupr_as_of_date as duprAsOfDate,COALESCE(allow_no_dupr,0) as allowNoDupr,
             max_categories_per_player as maxCategoriesPerPlayer,team_individual_fee_minor as teamIndividualFeeMinor,
             team_full_fee_minor as teamFullFeeMinor,COALESCE(team_additional_participation_mode,'full') as teamAdditionalParticipationMode,
             team_additional_fee_minor as teamAdditionalFeeMinor,COALESCE(allow_team_age_division_overlap,1) as allowTeamAgeDivisionOverlap
@@ -203,6 +204,7 @@ async function pricingSettingsForTournament(env: Env, tournamentId: string): Pro
     duprRequired: 0,
     duprMax: null,
     duprAsOfDate: null,
+    allowNoDupr: 0,
     maxCategoriesPerPlayer: null,
     teamIndividualFeeMinor: null,
     teamFullFeeMinor: null,
@@ -288,8 +290,13 @@ async function hasTournamentWildCard(env: Env, tournamentId: string, userId: str
 
 function duprPolicyViolation(settings: PricingSettingsRow, profile: ProfileRow | null, hasWildCard: boolean): string | null {
   if (!settings.duprRequired) return null;
-  if (!profile || profile.duprSingles === null || profile.duprDoubles === null || profile.duprSingles <= 0 || profile.duprDoubles <= 0) return "DUPR_REQUIRED";
-  if (settings.duprMax !== null && !hasWildCard && (profile.duprSingles > settings.duprMax || profile.duprDoubles > settings.duprMax)) return "DUPR_LIMIT_EXCEEDED";
+  const singlesMissing = !profile || profile.duprSingles === null || profile.duprSingles <= 0;
+  const doublesMissing = !profile || profile.duprDoubles === null || profile.duprDoubles <= 0;
+  if (singlesMissing || doublesMissing) {
+    if (settings.allowNoDupr && singlesMissing && doublesMissing) return null;
+    return "DUPR_REQUIRED";
+  }
+  if (settings.duprMax !== null && !hasWildCard && (profile!.duprSingles! > settings.duprMax || profile!.duprDoubles! > settings.duprMax)) return "DUPR_LIMIT_EXCEEDED";
   return null;
 }
 
@@ -962,7 +969,7 @@ async function publicTournament(slug: string, request: Request, env: Env, access
     },
     publicInfo,
     regulations: { text: settings.regulationsText, version: settings.regulationsVersion },
-    eligibilityPolicy: { duprRequired: Boolean(settings.duprRequired), duprMax: settings.duprMax, duprAsOfDate: settings.duprAsOfDate },
+    eligibilityPolicy: { duprRequired: Boolean(settings.duprRequired), duprMax: settings.duprMax, duprAsOfDate: settings.duprAsOfDate, allowNoDupr: Boolean(settings.allowNoDupr) },
     registrationCloseAt: closeAt,
     pricingPolicy: {
       paymentType: settings.paymentType,

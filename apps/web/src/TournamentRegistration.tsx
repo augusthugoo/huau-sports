@@ -113,7 +113,7 @@ export type PublicTournamentData = {
     contact: string;
   };
   regulations: { text: string; version: number };
-  eligibilityPolicy: { duprRequired: boolean; duprMax: number | null; duprAsOfDate: string | null };
+  eligibilityPolicy: { duprRequired: boolean; duprMax: number | null; duprAsOfDate: string | null; allowNoDupr: boolean };
   registrationCloseAt: number | null;
   pricingPolicy: PricingPolicy;
   teamPricing: TeamPricingPolicy;
@@ -187,11 +187,15 @@ function blockedButtonCopy(locale: Locale, code: string) {
   return tr(locale, "Cerrada", "Closed");
 }
 
-function categoryNeedsProfile(category: Pick<PublicCategory, "minAge" | "maxAge" | "competitionGender">, profile: PlayerProfile | null, requireDupr = false) {
+function categoryNeedsProfile(category: Pick<PublicCategory, "minAge" | "maxAge" | "competitionGender">, profile: PlayerProfile | null, requireDupr = false, allowNoDupr = false) {
   if (!profile) return true;
   const needsBirth = (category.minAge !== null || category.maxAge !== null) && !profile.birthDate;
   const gendered = ["male", "female", "mixed"].includes(category.competitionGender ?? "");
-  const needsDupr = requireDupr && (profile.duprSingles === null || profile.duprDoubles === null || profile.duprSingles <= 0 || profile.duprDoubles <= 0);
+  const singlesMissing = profile.duprSingles === null || profile.duprSingles <= 0;
+  const doublesMissing = profile.duprDoubles === null || profile.duprDoubles <= 0;
+  const missingDupr = singlesMissing || doublesMissing;
+  const explicitlyNoDupr = allowNoDupr && singlesMissing && doublesMissing;
+  const needsDupr = requireDupr && missingDupr && !explicitlyNoDupr;
   return needsBirth || (gendered && profile.sportGender === "unspecified") || needsDupr;
 }
 
@@ -201,13 +205,16 @@ function EligibilityProfileCard({
   busy,
   onSave,
   compact = false,
+  allowNoDupr = false,
 }: {
   locale: Locale;
   profile: PlayerProfile | null;
   busy: boolean;
   onSave: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   compact?: boolean;
+  allowNoDupr?: boolean;
 }) {
+  const [noDupr, setNoDupr] = useState(Boolean(allowNoDupr && (profile?.duprSingles ?? 0) <= 0 && (profile?.duprDoubles ?? 0) <= 0));
   return (
     <section className="registration-profile-card">
       <div>
@@ -219,8 +226,9 @@ function EligibilityProfileCard({
         <label><span>{tr(locale, "Teléfono", "Phone")}</span><input name="phone" type="tel" defaultValue={profile?.phone ?? ""} /></label>
         <BirthDateField name="birthDate" label={tr(locale, "Fecha de nacimiento", "Birth date")} defaultValue={profile?.birthDate ?? ""} locale={locale} />
         <label><span>{tr(locale, "Género deportivo", "Sport gender")}</span><select name="sportGender" defaultValue={profile?.sportGender ?? "unspecified"}><option value="unspecified">{tr(locale, "Sin especificar", "Unspecified")}</option><option value="male">{tr(locale, "Masculino", "Male")}</option><option value="female">{tr(locale, "Femenino", "Female")}</option></select></label>
-        <label><span>DUPR ID</span><input name="duprId" type="text" maxLength={80} defaultValue={profile?.duprId ?? ""} placeholder={tr(locale, "Tu ID de jugador en DUPR", "Your DUPR player ID")} /></label>
-        <div className="two"><label><span>DUPR Singles</span><input name="duprSingles" type="number" min="0" max="8" step="0.001" defaultValue={profile?.duprSingles ?? ""}/></label><label><span>DUPR Doubles</span><input name="duprDoubles" type="number" min="0" max="8" step="0.001" defaultValue={profile?.duprDoubles ?? ""}/></label></div>
+        {allowNoDupr && <label className="registration-no-dupr"><span>{tr(locale, "¿No tenés DUPR?", "Don't have DUPR?")}</span><span className="registration-no-dupr-choice"><input name="noDupr" type="checkbox" value="1" checked={noDupr} onChange={(event) => setNoDupr(event.target.checked)} /><span>{tr(locale, "No tengo DUPR", "I don't have DUPR")}</span></span></label>}
+        <label><span>DUPR ID</span><input name="duprId" type="text" maxLength={80} disabled={noDupr} defaultValue={profile?.duprId ?? ""} placeholder={tr(locale, "Tu ID de jugador en DUPR", "Your DUPR player ID")} /></label>
+        <div className="two"><label><span>DUPR Singles</span><input name="duprSingles" type="number" min="0" max="8" step="0.001" disabled={noDupr} defaultValue={profile?.duprSingles ?? ""}/></label><label><span>DUPR Doubles</span><input name="duprDoubles" type="number" min="0" max="8" step="0.001" disabled={noDupr} defaultValue={profile?.duprDoubles ?? ""}/></label></div>
         <button className="light" disabled={busy}>{busy ? "…" : tr(locale, "Guardar perfil", "Save profile")}</button>
       </form>
     </section>
@@ -308,7 +316,8 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
     setBusy("profile");
     const form = new FormData(event.currentTarget);
     try {
-      await api("/api/me/profile", { method: "PUT", body: JSON.stringify({ phone: form.get("phone") || null, birthDate: form.get("birthDate") || null, sportGender: form.get("sportGender"), duprId: String(form.get("duprId")||"").trim()||null, duprSingles: String(form.get("duprSingles")||"").trim()?Number(form.get("duprSingles")):null, duprDoubles: String(form.get("duprDoubles")||"").trim()?Number(form.get("duprDoubles")):null }) });
+      const noDupr = form.get("noDupr") === "1";
+      await api("/api/me/profile", { method: "PUT", body: JSON.stringify({ phone: form.get("phone") || null, birthDate: form.get("birthDate") || null, sportGender: form.get("sportGender"), duprId: noDupr ? null : String(form.get("duprId")||"").trim()||null, duprSingles: noDupr ? null : String(form.get("duprSingles")||"").trim()?Number(form.get("duprSingles")):null, duprDoubles: noDupr ? null : String(form.get("duprDoubles")||"").trim()?Number(form.get("duprDoubles")):null }) });
       await Promise.all([load(), onProfileSaved?.() ?? Promise.resolve()]);
       setNotice(tr(locale, "Perfil actualizado.", "Profile updated."));
     } catch (err) {
@@ -401,8 +410,12 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
 
   if (!data) return <main className="public-tournament-page"><button className="back-link" onClick={() => go("/")}>← HUAU</button>{error ? <div className="registration-alert">{error}</div> : <div className="empty-state">{tr(locale, "Cargando torneo…", "Loading tournament…")}</div>}</main>;
 
-  const duprNeedsAttention = data.eligibilityPolicy.duprRequired && (!data.viewer.profile || data.viewer.profile.duprSingles === null || data.viewer.profile.duprDoubles === null || data.viewer.profile.duprSingles <= 0 || data.viewer.profile.duprDoubles <= 0 || (!data.viewer.wildCard && data.eligibilityPolicy.duprMax !== null && (data.viewer.profile.duprSingles > data.eligibilityPolicy.duprMax || data.viewer.profile.duprDoubles > data.eligibilityPolicy.duprMax)));
-  const profileNeededSomewhere = data.viewer.authenticated && (duprNeedsAttention || data.categories.some((category) => !category.registrationBlockedCode && categoryNeedsProfile(category, data.viewer.profile, data.eligibilityPolicy.duprRequired)));
+  const duprSinglesMissing = !data.viewer.profile || data.viewer.profile.duprSingles === null || data.viewer.profile.duprSingles <= 0;
+  const duprDoublesMissing = !data.viewer.profile || data.viewer.profile.duprDoubles === null || data.viewer.profile.duprDoubles <= 0;
+  const duprMissing = duprSinglesMissing || duprDoublesMissing;
+  const noDuprAllowedAndEmpty = data.eligibilityPolicy.allowNoDupr && duprSinglesMissing && duprDoublesMissing;
+  const duprNeedsAttention = data.eligibilityPolicy.duprRequired && ((duprMissing && !noDuprAllowedAndEmpty) || (!duprMissing && !data.viewer.wildCard && data.eligibilityPolicy.duprMax !== null && ((data.viewer.profile?.duprSingles ?? 0) > data.eligibilityPolicy.duprMax || (data.viewer.profile?.duprDoubles ?? 0) > data.eligibilityPolicy.duprMax)));
+  const profileNeededSomewhere = data.viewer.authenticated && (duprNeedsAttention || data.categories.some((category) => !category.registrationBlockedCode && categoryNeedsProfile(category, data.viewer.profile, data.eligibilityPolicy.duprRequired, data.eligibilityPolicy.allowNoDupr)));
   const explanationCategory = explanationCategoryId ? data.categories.find((category) => category.id === explanationCategoryId) ?? null : null;
   const modalExplanation = explanationCategory
     ? explanationForPersistedFormat(explanationCategory.formatKind, explanationCategory.formatConfig, locale)
@@ -436,7 +449,7 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
                 className="light"
                 onClick={() => document.getElementById("registration-categories")?.scrollIntoView({ behavior: "smooth", block: "start" })}
               >
-                {tr(locale, "Ver inscripción", "View registration")}
+                {data.viewer.authenticated ? tr(locale, "Comenzar inscripción", "Start registration") : tr(locale, "Ver categorías", "View categories")}
               </button>
               {data.viewer.authenticated && (
                 <button className="ghost" onClick={() => go("/app/registrations")}>
@@ -478,7 +491,7 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
       {error && <div className="registration-alert">{error}</div>}
       {data.eligibilityPolicy.duprRequired && <div className="registration-limit-note">{tr(locale, `DUPR máximo ${data.eligibilityPolicy.duprMax?.toFixed(3) ?? "—"}${data.eligibilityPolicy.duprAsOfDate ? ` · referencia ${data.eligibilityPolicy.duprAsOfDate}` : ""}${data.viewer.wildCard ? " · Wild Card autorizada" : ""}`, `DUPR max ${data.eligibilityPolicy.duprMax?.toFixed(3) ?? "—"}${data.eligibilityPolicy.duprAsOfDate ? ` · as of ${data.eligibilityPolicy.duprAsOfDate}` : ""}${data.viewer.wildCard ? " · Wild Card authorized" : ""}`)}</div>}
       {data.viewer.authenticated && data.maxCategoriesPerPlayer !== null && <div className="registration-limit-note">{tr(locale, `Categorías: ${data.activeCategoryCount + selected.length}/${data.maxCategoriesPerPlayer}`, `Categories: ${data.activeCategoryCount + selected.length}/${data.maxCategoriesPerPlayer}`)}</div>}
-      {profileNeededSomewhere && <EligibilityProfileCard locale={locale} profile={data.viewer.profile} busy={busy === "profile"} onSave={saveProfile} />}
+      {profileNeededSomewhere && <EligibilityProfileCard locale={locale} profile={data.viewer.profile} busy={busy === "profile"} onSave={saveProfile} allowNoDupr={data.eligibilityPolicy.allowNoDupr} />}
 
       <section className="registration-shop-layout" id="registration-categories">
         <div className="public-registration-grid">
@@ -501,7 +514,7 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
         </div>
 
         <aside className="registration-basket">
-          <div className="registration-basket-head"><div><div className="eyebrow">TU INSCRIPCIÓN</div><h2>{tr(locale, "Revisá todo de una", "Review everything once")}</h2></div><span>{basket.length}</span></div>
+          <div className="registration-basket-head"><div><div className="eyebrow">TU INSCRIPCIÓN</div><h2>{tr(locale, "Resumen de inscripción", "Registration summary")}</h2></div><span>{basket.length}</span></div>
           {!basket.length ? <div className="registration-basket-empty">{tr(locale, "Agregá categorías y vas a ver acá el desglose antes de confirmar.", "Add categories to see the full breakdown before confirming.")}</div> : <div className="registration-basket-items">{basket.map(({ category, price }) => {
             const team = teamChoice(category.id);
             return <div className="registration-basket-item" key={category.id}><div className="registration-basket-line"><div><strong>{category.name}</strong><small>{category.entryType === "pair" ? tr(locale, "Inscripción individual · pareja después", "Personal registration · pair later") : category.entryType === "team" ? tr(locale, "Torneo por equipos", "Team tournament") : tr(locale, "Individual", "Individual")}</small></div><strong>{money(price, category.currency, locale)}</strong></div>{category.entryType === "team" && <div className="team-basket-config"><label><span>{tr(locale, "Al confirmar", "On confirmation")}</span><select value={team.choice} onChange={(event) => updateTeamChoice(category.id, { choice: event.target.value as "free" | "create" })}><option value="free">{tr(locale, "Quedar libre / esperar equipo", "Stay free / wait for team")}</option><option value="create">{tr(locale, "Crear equipo · ser capitán", "Create team · become captain")}</option></select></label>{team.choice === "create" && <><label><span>{tr(locale, "Nombre del equipo", "Team name")}</span><input value={team.teamName} onChange={(event) => updateTeamChoice(category.id, { teamName: event.target.value })} placeholder={tr(locale, "Ej. Horneros +50", "e.g. Horneros +50")} /></label><label><span>{tr(locale, "Quién paga", "Who pays")}</span><select value={team.paymentMode} onChange={(event) => updateTeamChoice(category.id, { paymentMode: event.target.value as "individual" | "team_full" })}><option value="individual">{tr(locale, "Cada jugador paga su inscripción", "Each player pays individually")}</option><option value="team_full" disabled={data.teamPricing.fullTeamFeeMinor === null}>{data.teamPricing.fullTeamFeeMinor === null ? tr(locale, "Equipo completo · precio no configurado", "Full team · fee not configured") : tr(locale, `Capitán paga equipo completo · ${money(data.teamPricing.fullTeamFeeMinor, category.currency, locale)}`, `Captain pays full team · ${money(data.teamPricing.fullTeamFeeMinor, category.currency, locale)}`)}</option></select></label></>}</div>}<button className="text-button" onClick={() => toggle(category)}>{tr(locale, "Quitar", "Remove")}</button></div>;

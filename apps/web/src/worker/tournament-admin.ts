@@ -272,6 +272,7 @@ type TournamentSettingsRow = {
   duprRequired: number;
   duprMax: number | null;
   duprAsOfDate: string | null;
+  allowNoDupr: number;
   dailyStart: string;
   dailyEnd: string;
   defaultMatchMinutes: number;
@@ -329,7 +330,7 @@ async function ensureTournamentSettings(env: Env, tournamentId: string) {
 
 async function readTournamentSettings(env: Env, tournamentId: string): Promise<TournamentSettingsRow> {
   const row = await env.HUAU_DB.prepare(
-    `SELECT tournament_id as tournamentId,club,city,location,description,contact,COALESCE(regulations_text,'') as regulationsText,COALESCE(regulations_version,0) as regulationsVersion,COALESCE(dupr_required,0) as duprRequired,dupr_max as duprMax,dupr_as_of_date as duprAsOfDate,daily_start as dailyStart,daily_end as dailyEnd,
+    `SELECT tournament_id as tournamentId,club,city,location,description,contact,COALESCE(regulations_text,'') as regulationsText,COALESCE(regulations_version,0) as regulationsVersion,COALESCE(dupr_required,0) as duprRequired,dupr_max as duprMax,dupr_as_of_date as duprAsOfDate,COALESCE(allow_no_dupr,0) as allowNoDupr,daily_start as dailyStart,daily_end as dailyEnd,
             default_match_minutes as defaultMatchMinutes,payment_type as paymentType,entry_fee_minor as entryFeeMinor,
             base_fee_minor as baseFeeMinor,extra_category_fee_minor as extraCategoryFeeMinor,registration_close_at as registrationCloseAt,
             max_categories_per_player as maxCategoriesPerPlayer,team_individual_fee_minor as teamIndividualFeeMinor,team_full_fee_minor as teamFullFeeMinor,
@@ -351,6 +352,7 @@ async function readTournamentSettings(env: Env, tournamentId: string): Promise<T
     duprRequired: 0,
     duprMax: null,
     duprAsOfDate: null,
+    allowNoDupr: 0,
     dailyStart: "09:00",
     dailyEnd: "20:00",
     defaultMatchMinutes: 30,
@@ -3417,14 +3419,15 @@ export async function handleTournamentAdminApi(
     const nextDuprMax = Object.prototype.hasOwnProperty.call(body,"duprMax") ? (body.duprMax === null ? null : Number(body.duprMax)) : current.duprMax;
     if (nextDuprMax !== null && (!Number.isFinite(nextDuprMax) || nextDuprMax <= 0 || nextDuprMax > 8)) return json({ok:false,code:"INVALID_DUPR_MAX"},{status:400});
     const nextDuprAsOfDate = Object.prototype.hasOwnProperty.call(body,"duprAsOfDate") ? (body.duprAsOfDate ? String(body.duprAsOfDate) : null) : current.duprAsOfDate;
+    const nextAllowNoDupr = Object.prototype.hasOwnProperty.call(body,"allowNoDupr") ? (Number(body.allowNoDupr) ? 1 : 0) : current.allowNoDupr;
     if (nextDuprAsOfDate && !/^\d{4}-\d{2}-\d{2}$/.test(nextDuprAsOfDate)) return json({ok:false,code:"INVALID_DUPR_AS_OF_DATE"},{status:400});
     const nextCurrency = body.currency === undefined ? null : String(body.currency).trim().toUpperCase();
     if (nextCurrency !== null && !/^[A-Z]{3}$/.test(nextCurrency)) return json({ok:false,code:"INVALID_CURRENCY_CODE"},{status:400});
     const stamp = unixNow();
     await env.HUAU_DB.batch([
       env.HUAU_DB.prepare(
-        `UPDATE tournament_settings SET club=?,city=?,location=?,description=?,contact=?,regulations_text=?,regulations_version=?,dupr_required=?,dupr_max=?,dupr_as_of_date=?,daily_start=?,daily_end=?,default_match_minutes=?,payment_type=?,entry_fee_minor=?,base_fee_minor=?,extra_category_fee_minor=?,registration_close_at=?,max_categories_per_player=?,team_individual_fee_minor=?,team_full_fee_minor=?,team_additional_participation_mode=?,team_additional_fee_minor=?,allow_team_age_division_overlap=?,minimum_group=?,preferred_group=?,maximum_group=?,suggested_qualifiers_per_group=?,seeding_method=?,minimum_rest_slots=?,updated_at=? WHERE tournament_id=?`,
-      ).bind(body.club ?? current.club,body.city ?? current.city,body.location ?? current.location,body.description ?? current.description,body.contact ?? current.contact,nextRegulationsText,nextRegulationsVersion,nextDuprRequired,nextDuprMax,nextDuprAsOfDate,dailyStart,dailyEnd,
+        `UPDATE tournament_settings SET club=?,city=?,location=?,description=?,contact=?,regulations_text=?,regulations_version=?,dupr_required=?,dupr_max=?,dupr_as_of_date=?,allow_no_dupr=?,daily_start=?,daily_end=?,default_match_minutes=?,payment_type=?,entry_fee_minor=?,base_fee_minor=?,extra_category_fee_minor=?,registration_close_at=?,max_categories_per_player=?,team_individual_fee_minor=?,team_full_fee_minor=?,team_additional_participation_mode=?,team_additional_fee_minor=?,allow_team_age_division_overlap=?,minimum_group=?,preferred_group=?,maximum_group=?,suggested_qualifiers_per_group=?,seeding_method=?,minimum_rest_slots=?,updated_at=? WHERE tournament_id=?`,
+      ).bind(body.club ?? current.club,body.city ?? current.city,body.location ?? current.location,body.description ?? current.description,body.contact ?? current.contact,nextRegulationsText,nextRegulationsVersion,nextDuprRequired,nextDuprMax,nextDuprAsOfDate,nextAllowNoDupr,dailyStart,dailyEnd,
         Math.max(5,Math.trunc(Number(body.defaultMatchMinutes ?? current.defaultMatchMinutes))),body.paymentType ?? current.paymentType,
         Object.prototype.hasOwnProperty.call(body,"entryFeeMinor") ? body.entryFeeMinor ?? null : current.entryFeeMinor,
         Object.prototype.hasOwnProperty.call(body,"baseFeeMinor") ? body.baseFeeMinor ?? null : current.baseFeeMinor,
