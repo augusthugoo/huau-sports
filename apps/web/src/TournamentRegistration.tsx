@@ -497,7 +497,7 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
         <div className="public-registration-grid">
           {data.categories.map((category) => {
             const full = category.maxEntries !== null && category.occupiedEntries >= category.maxEntries;
-            const needsProfile = categoryNeedsProfile(category, data.viewer.profile, data.eligibilityPolicy.duprRequired);
+            const needsProfile = categoryNeedsProfile(category, data.viewer.profile, data.eligibilityPolicy.duprRequired, data.eligibilityPolicy.allowNoDupr);
             const isSelected = selected.includes(category.id);
             const explanation = explanationForPersistedFormat(category.formatKind, category.formatConfig, locale);
             return (
