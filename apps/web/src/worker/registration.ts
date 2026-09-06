@@ -715,9 +715,127 @@ async function compactWaitlist(env: Env, categoryId: string) {
   if (statements.length) await env.HUAU_DB.batch(statements);
 }
 
-async function publicTournamentHero(slug: string, env: Env) {
+type PublicTournamentCoreCategory = CategoryRow & {
+  scheduledDate: string | null;
+  formatKind: string | null;
+  formatConfigJson: string | null;
+  explanationSchemaVersion: number | null;
+};
+
+type PublicTournamentCoreSnapshot = {
+  version: 1;
+  generatedAt: number;
+  validUntil: number;
+  tournament: TournamentRow;
+  settings: PricingSettingsRow;
+  publicInfo: PublicTournamentInfoRow;
+  categories: PublicTournamentCoreCategory[];
+};
+
+const publicTournamentCoreKey = (slug: string) => `public/tournaments/${slug}/core.json`;
+
+async function buildPublicTournamentCore(
+  env: Env,
+  slug: string,
+): Promise<PublicTournamentCoreSnapshot | null> {
   const tournament = await tournamentBySlug(env, slug);
-  if (!tournament || tournament.visibility !== "public" || !tournament.publicHeroR2Key) {
+  if (!tournament || tournament.visibility !== "public") return null;
+
+  const [settings, publicInfo, categories] = await Promise.all([
+    pricingSettingsForTournament(env, tournament.id),
+    publicInfoForTournament(env, tournament.id),
+    env.HUAU_DB.prepare(
+      `SELECT tc.id,tc.tournament_id as tournamentId,tc.name,tc.entry_type as entryType,tc.competition_gender as competitionGender,
+              tc.min_age as minAge,tc.max_age as maxAge,tc.max_entries as maxEntries,tc.registration_status as registrationStatus,
+              tc.price_scope as priceScope,tc.price_minor as priceMinor,tc.currency,tc.structure_locked as structureLocked,
+              tc.format_version_id as formatVersionId,tc.scheduled_date as scheduledDate,
+              fv.format_kind as formatKind,fv.config_json as formatConfigJson,
+              fv.explanation_schema_version as explanationSchemaVersion
+         FROM tournament_categories tc
+         LEFT JOIN competition_format_versions fv ON fv.id=tc.format_version_id
+        WHERE tc.tournament_id=?
+        ORDER BY tc.sort_order,tc.name`,
+    ).bind(tournament.id).all<PublicTournamentCoreCategory>(),
+  ]);
+
+  const generatedAt = now();
+  const snapshot: PublicTournamentCoreSnapshot = {
+    version: 1,
+    generatedAt,
+    validUntil: generatedAt + 300,
+    tournament,
+    settings,
+    publicInfo,
+    categories: categories.results,
+  };
+
+  await env.HUAU_ASSETS.put(publicTournamentCoreKey(slug), JSON.stringify(snapshot), {
+    httpMetadata: { contentType: "application/json; charset=utf-8" },
+    customMetadata: {
+      kind: "public-tournament-core",
+      tournamentId: tournament.id,
+      slug,
+      generatedAt: String(generatedAt),
+      validUntil: String(snapshot.validUntil),
+    },
+  }).catch(() => undefined);
+
+  return snapshot;
+}
+
+async function publicTournamentCoreBySlug(
+  env: Env,
+  slug: string,
+): Promise<{ core: PublicTournamentCoreSnapshot; source: "r2" | "d1-fill" } | null> {
+  const key = publicTournamentCoreKey(slug);
+  const cached = await env.HUAU_ASSETS.get(key);
+  if (cached) {
+    try {
+      const snapshot = JSON.parse(await cached.text()) as PublicTournamentCoreSnapshot;
+      if (
+        snapshot.version === 1 &&
+        snapshot.tournament?.slug === slug &&
+        snapshot.tournament?.visibility === "public" &&
+        Number(snapshot.validUntil) > now()
+      ) {
+        return { core: snapshot, source: "r2" };
+      }
+    } catch {
+      // Disposable read model. D1 remains canonical.
+    }
+    await env.HUAU_ASSETS.delete(key).catch(() => undefined);
+  }
+
+  const core = await buildPublicTournamentCore(env, slug);
+  return core ? { core, source: "d1-fill" } : null;
+}
+
+async function publicCapacityForTournament(env: Env, tournamentId: string) {
+  const rows = await env.HUAU_DB.prepare(
+    `SELECT e.category_id as categoryId,
+            SUM(CASE WHEN e.status NOT IN ('waitlisted','withdrawn','rejected') THEN 1 ELSE 0 END) as occupiedEntries,
+            SUM(CASE WHEN e.status='waitlisted' THEN 1 ELSE 0 END) as waitlistCount
+       FROM tournament_entries e
+       JOIN tournament_categories tc ON tc.id=e.category_id
+      WHERE tc.tournament_id=?
+      GROUP BY e.category_id`,
+  ).bind(tournamentId).all<{ categoryId: string; occupiedEntries: number; waitlistCount: number }>();
+
+  return new Map(
+    rows.results.map((row) => [
+      row.categoryId,
+      {
+        occupiedEntries: Number(row.occupiedEntries ?? 0),
+        waitlistCount: Number(row.waitlistCount ?? 0),
+      },
+    ] as const),
+  );
+}
+
+async function publicTournamentHero(slug: string, env: Env) {
+  const loaded = await publicTournamentCoreBySlug(env, slug);
+  const tournament = loaded?.core.tournament ?? null;
+  if (!tournament || !tournament.publicHeroR2Key) {
     return json({ ok: false, code: "TOURNAMENT_HERO_NOT_FOUND" }, { status: 404 });
   }
   const object = await env.HUAU_ASSETS.get(tournament.publicHeroR2Key);
@@ -726,29 +844,22 @@ async function publicTournamentHero(slug: string, env: Env) {
     headers: {
       "content-type": object.httpMetadata?.contentType ?? "image/jpeg",
       "cache-control": "public, max-age=300",
+      "x-huau-public-core-source": loaded?.source ?? "d1-fill",
     },
   });
 }
 
 async function publicTournament(slug: string, request: Request, env: Env, access: AccessHelpers) {
-  const tournament = await tournamentBySlug(env, slug);
-  if (!tournament || tournament.visibility !== "public") return json({ ok: false, code: "TOURNAMENT_NOT_FOUND" }, { status: 404 });
-  const [settings, publicInfo] = await Promise.all([
-    pricingSettingsForTournament(env, tournament.id),
-    publicInfoForTournament(env, tournament.id),
-  ]);
+  const loaded = await publicTournamentCoreBySlug(env, slug);
+  if (!loaded) return json({ ok: false, code: "TOURNAMENT_NOT_FOUND" }, { status: 404 });
+
+  const { tournament, settings, publicInfo, categories } = loaded.core;
   const closeAt = settings.registrationCloseAt;
-  const categories = await env.HUAU_DB.prepare(
-    `SELECT tc.id,tc.tournament_id as tournamentId,tc.name,tc.entry_type as entryType,tc.competition_gender as competitionGender,tc.min_age as minAge,tc.max_age as maxAge,
-            tc.max_entries as maxEntries,tc.registration_status as registrationStatus,tc.price_scope as priceScope,tc.price_minor as priceMinor,tc.currency,
-            tc.structure_locked as structureLocked,tc.format_version_id as formatVersionId,tc.scheduled_date as scheduledDate,
-            fv.format_kind as formatKind,fv.config_json as formatConfigJson,fv.explanation_schema_version as explanationSchemaVersion,
-            (SELECT COUNT(*) FROM tournament_entries e WHERE e.category_id=tc.id AND e.status NOT IN ('waitlisted','withdrawn','rejected')) as occupiedEntries,
-            (SELECT COUNT(*) FROM tournament_entries e WHERE e.category_id=tc.id AND e.status='waitlisted') as waitlistCount
-       FROM tournament_categories tc LEFT JOIN competition_format_versions fv ON fv.id=tc.format_version_id
-      WHERE tc.tournament_id=? ORDER BY tc.sort_order,tc.name`,
-  ).bind(tournament.id).all<CategoryRow & { scheduledDate: string | null; occupiedEntries: number; waitlistCount: number; formatKind: string | null; formatConfigJson: string | null; explanationSchemaVersion: number | null }>();
-  const currentUser = await access.requireUser(request, env);
+  const [capacityByCategory, currentUser] = await Promise.all([
+    publicCapacityForTournament(env, tournament.id),
+    access.requireUser(request, env),
+  ]);
+
   const viewerState = currentUser
     ? await Promise.all([
         profileForUser(env, currentUser.id),
@@ -765,7 +876,7 @@ async function publicTournament(slug: string, request: Request, env: Env, access
   const viewerHasWildCard = viewerState?.[3] ?? false;
   const duprBlockedCode = currentUser ? duprPolicyViolation(settings, profile, viewerHasWildCard) : null;
 
-  const publicCategories = categories.results.map((category) => {
+  const publicCategories = categories.map((category) => {
     const preview = category.priceMinor !== null
       ? {
           priceScope: category.priceScope,
@@ -799,6 +910,7 @@ async function publicTournament(slug: string, request: Request, env: Env, access
               source: resolution.source,
             };
           })();
+
     const alreadyRegistered = viewerCategoryIds.has(category.id);
     const overlapBlocked = currentUser && !alreadyRegistered && category.entryType === "team"
       ? teamAgeDivisionOverlapBlocked({
@@ -821,12 +933,15 @@ async function publicTournament(slug: string, request: Request, env: Env, access
                 ? duprBlockedCode
                 : categoryLimitReached(settings.maxCategoriesPerPlayer, activeCategoryCount)
                   ? "MAX_CATEGORIES_REACHED"
-                : overlapBlocked
-                  ? "TEAM_AGE_DIVISION_OVERLAP_DISABLED"
-                  : null;
+                  : overlapBlocked
+                    ? "TEAM_AGE_DIVISION_OVERLAP_DISABLED"
+                    : null;
+
+    const capacity = capacityByCategory.get(category.id) ?? { occupiedEntries: 0, waitlistCount: 0 };
     const { formatConfigJson, ...categoryPublic } = category;
     return {
       ...categoryPublic,
+      ...capacity,
       formatConfig: parseJsonOrNull(formatConfigJson),
       rawPriceScope: category.priceScope,
       rawPriceMinor: category.priceMinor,
@@ -841,6 +956,7 @@ async function publicTournament(slug: string, request: Request, env: Env, access
   const { publicHeroR2Key, organizerOrganizationId: _organizerOrganizationId, visibility: _visibility, ...publicTournamentData } = tournament;
   void _organizerOrganizationId;
   void _visibility;
+
   return json({
     ok: true,
     tournament: {
@@ -870,6 +986,8 @@ async function publicTournament(slug: string, request: Request, env: Env, access
     activeAgeTeamDivisionCount,
     categories: publicCategories,
     viewer: currentUser ? { authenticated: true, profile, wildCard: viewerHasWildCard } : { authenticated: false, profile: null, wildCard: false },
+  }, {
+    headers: { "x-huau-public-core-source": loaded.source },
   });
 }
 
