@@ -58,3 +58,61 @@
   .landing-hero-carousel{height:500px;min-height:500px;border-radius:0}
   .tournament-card-visual{aspect-ratio:16/8}
 }
+
+/* HUAU Landing QA hotfix v2 */
+.landing-topline{
+  padding-top:22px;
+  padding-bottom:22px;
+}
+.landing-hero-carousel{
+  margin-top:0;
+}
+.landing-hero-copy{
+  top:48%;
+  bottom:auto;
+}
+.carousel-arrow{
+  display:grid;
+  place-items:center;
+  padding:0;
+  font-size:0;
+  line-height:1;
+}
+.carousel-arrow::before{
+  content:"";
+  width:11px;
+  height:11px;
+  border-top:3px solid currentColor;
+  border-right:3px solid currentColor;
+}
+.carousel-arrow.previous::before{
+  transform:rotate(-135deg);
+}
+.carousel-arrow.next::before{
+  transform:rotate(45deg);
+}
+
+@media(max-width:900px){
+  .landing-topline{
+    padding-top:20px;
+    padding-bottom:20px;
+  }
+  .landing-hero-carousel{
+    margin-top:0;
+  }
+  .landing-hero-copy{
+    top:48%;
+    bottom:auto;
+  }
+}
+
+@media(max-width:560px){
+  .landing-topline{
+    padding-top:18px;
+    padding-bottom:18px;
+  }
+  .landing-hero-copy{
+    top:auto;
+    bottom:65px;
+  }
+}
