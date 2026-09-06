@@ -77,6 +77,14 @@ function standardEntryModel(snapshot: TournamentDaySnapshot, row: any): Tourname
     return true;
   };
 
+  if (typeof row.participantIds === "string" && row.participantIds) {
+    row.participantIds
+      .split("|")
+      .map((value: string) => value.trim())
+      .filter(Boolean)
+      .forEach((value: string) => resolved.add(value));
+  }
+
   if (Array.isArray(row.localProfileIds)) {
     row.localProfileIds
       .map((value: unknown) => String(value))
@@ -320,6 +328,175 @@ export function syncStandardCompetition(
   snapshot.workspace.core.summary.completedStandardMatches = (
     snapshot.workspace.standard.matches as any[]
   ).filter((match) => match.status === "finished").length;
+}
+
+
+function standardEntryIsOperational(entry: any) {
+  return entry?.status === "ready" || entry?.status === "confirmed";
+}
+
+function clearStandardCategoryStructure(
+  snapshot: TournamentDaySnapshot,
+  categoryId: string,
+  options: { allowResultLoss?: boolean } = {},
+) {
+  const competition = standardCompetitionByCategory(snapshot, categoryId);
+  const hasStartedResults = Boolean(
+    competition?.encounters.some(
+      (encounter) => encounter.status === "finished" || encounter.status === "in_progress",
+    ),
+  );
+  if (hasStartedResults && !options.allowResultLoss) {
+    throw new Error(`STANDARD_ENTRY_SET_CHANGED_AFTER_RESULTS:${categoryId}`);
+  }
+
+  snapshot.workspace.standard.competitions = (
+    snapshot.workspace.standard.competitions as Competition[]
+  ).filter((competition) => competition.categoryId !== categoryId);
+  snapshot.workspace.standard.groups = (snapshot.workspace.standard.groups as any[]).filter(
+    (group) => group.categoryId !== categoryId,
+  );
+  snapshot.workspace.standard.matches = (snapshot.workspace.standard.matches as any[]).filter(
+    (match) => match.categoryId !== categoryId,
+  );
+  snapshot.workspace.standard.drawSessions = (
+    snapshot.workspace.standard.drawSessions as any[]
+  ).filter((session) => session.categoryId !== categoryId);
+  snapshot.workspace.standard.standings = (
+    snapshot.workspace.standard.standings as any[]
+  ).filter((standing) => standing.categoryId !== categoryId);
+  snapshot.workspace.standard.crossGroup = (
+    snapshot.workspace.standard.crossGroup as any[]
+  ).filter((row) => row.categoryId !== categoryId);
+  snapshot.workspace.standard.categoryProgress = (
+    snapshot.workspace.standard.categoryProgress as any[]
+  ).filter((row) => row.id !== categoryId && row.categoryId !== categoryId);
+  snapshot.workspace.schedule.schedule = (
+    snapshot.workspace.schedule.schedule as any[]
+  ).filter((row) => row.categoryId !== categoryId);
+
+  const category = categoryById(snapshot, categoryId);
+  if (category) {
+    category.structureLocked = 0;
+    category.competitionStatus = null;
+    category.groupMatchCount = 0;
+    category.finishedGroupMatchCount = 0;
+    category.finalMatchCount = 0;
+  }
+}
+
+function sameIdSet(left: Set<string>, right: Set<string>) {
+  if (left.size !== right.size) return false;
+  for (const value of left) {
+    if (!right.has(value)) return false;
+  }
+  return true;
+}
+
+export function reconcileTournamentDaySnapshot(
+  snapshot: TournamentDaySnapshot,
+): TournamentDaySnapshot {
+  const standard = snapshot.workspace.standard;
+  const coreCategories = snapshot.workspace.core.categories as any[];
+
+  // Historical registration rows (cancelled, withdrawn, waitlisted, pending
+  // payment, incomplete pairs, etc.) are not Tournament Day competitors.
+  standard.entries = (standard.entries as any[]).filter(standardEntryIsOperational);
+
+  const standardCategoryIds = new Set(
+    coreCategories
+      .filter((category) => category.entryType !== "team")
+      .map((category) => String(category.id)),
+  );
+  standard.entries = (standard.entries as any[]).filter((entry) =>
+    standardCategoryIds.has(String(entry.categoryId)),
+  );
+
+  for (const category of coreCategories) {
+    if (category.entryType === "team") continue;
+    const categoryId = String(category.id);
+    const entries = (standard.entries as any[]).filter(
+      (entry) => String(entry.categoryId) === categoryId,
+    );
+
+    // Exact duplicate entity ids are always invalid; keep one deterministically.
+    const seenEntryIds = new Set<string>();
+    const uniqueEntries = entries.filter((entry) => {
+      const id = String(entry.id);
+      if (seenEntryIds.has(id)) return false;
+      seenEntryIds.add(id);
+      return true;
+    });
+    if (uniqueEntries.length !== entries.length) {
+      standard.entries = (standard.entries as any[]).filter(
+        (entry) => String(entry.categoryId) !== categoryId,
+      );
+      standard.entries.push(...uniqueEntries);
+    }
+
+    // One real person cannot occupy two active entries in the same category.
+    // Name-only fallback ids are intentionally ignored to avoid false positives
+    // for two different people with the same name.
+    const ownerByParticipant = new Map<string, string>();
+    for (const entry of uniqueEntries) {
+      const model = standardEntryModel(snapshot, entry);
+      for (const participantId of model.participantIds) {
+        if (participantId.startsWith("local-name:")) continue;
+        const existingOwner = ownerByParticipant.get(participantId);
+        if (existingOwner && existingOwner !== String(entry.id)) {
+          throw new Error(`STANDARD_DUPLICATE_PARTICIPANT:${categoryId}`);
+        }
+        ownerByParticipant.set(participantId, String(entry.id));
+      }
+    }
+
+    category.entryCount = uniqueEntries.length;
+
+    const activeIds = new Set(uniqueEntries.map((entry) => String(entry.id)));
+    const competition = standardCompetitionByCategory(snapshot, categoryId);
+
+    if (competition && (competition.groups.length || competition.encounters.length)) {
+      const structuredIds = new Set(
+        competition.groups.flatMap((group) =>
+          group.entries.map((entry) => String(entry.id)),
+        ),
+      );
+      if (!sameIdSet(activeIds, structuredIds)) {
+        clearStandardCategoryStructure(snapshot, categoryId);
+        continue;
+      }
+    }
+
+    const staleMatchReference = (standard.matches as any[]).some((match) => {
+      if (String(match.categoryId) !== categoryId) return false;
+      const entryAId = match.entryAId ? String(match.entryAId) : null;
+      const entryBId = match.entryBId ? String(match.entryBId) : null;
+      return Boolean(
+        (entryAId && !activeIds.has(entryAId)) ||
+          (entryBId && !activeIds.has(entryBId)),
+      );
+    });
+    const staleScheduleReference = (
+      snapshot.workspace.schedule.schedule as any[]
+    ).some((row) => {
+      if (String(row.categoryId) !== categoryId) return false;
+      const entryAId = row.entryAId ? String(row.entryAId) : null;
+      const entryBId = row.entryBId ? String(row.entryBId) : null;
+      return Boolean(
+        (entryAId && !activeIds.has(entryAId)) ||
+          (entryBId && !activeIds.has(entryBId)),
+      );
+    });
+    if (staleMatchReference || staleScheduleReference) {
+      clearStandardCategoryStructure(snapshot, categoryId);
+    }
+  }
+
+  snapshot.workspace.core.summary.completedStandardMatches = (
+    standard.matches as any[]
+  ).filter((match) => match.status === "finished").length;
+
+  return snapshot;
 }
 
 export function saveLocalStandardFormat(

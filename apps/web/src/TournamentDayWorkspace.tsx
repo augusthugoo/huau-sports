@@ -8,6 +8,7 @@ import {
   advanceLocalLiveDraw,
   applyLocalTeamPreset,
   cloneDay,
+  reconcileTournamentDaySnapshot,
   createLocalTeam,
   generateLocalStandardSchedule,
   generateLocalStandardStructure,
@@ -192,7 +193,12 @@ export function TournamentDayWorkspace(props: Props) {
       .then(async (local) => {
         if (!active) return;
         if (local) {
-          await install(local, { broadcast: false });
+          const repaired = {
+            ...local,
+            snapshot: reconcileTournamentDaySnapshot(cloneDay(local.snapshot)),
+            updatedAt: Date.now(),
+          };
+          await install(repaired, { broadcast: false });
           setNotice(
             tr(
               locale,
@@ -204,7 +210,7 @@ export function TournamentDayWorkspace(props: Props) {
         }
         const source = await fetchSourceSnapshot();
         if (!active) return;
-        const snapshot = source.snapshot;
+        const snapshot = reconcileTournamentDaySnapshot(source.snapshot);
         const next: TournamentDaySession<TournamentDaySnapshot> = {
           schemaVersion: 1,
           storageKey,
@@ -281,6 +287,7 @@ export function TournamentDayWorkspace(props: Props) {
       try {
         const snapshot = cloneDay(current.snapshot);
         fn(snapshot);
+        reconcileTournamentDaySnapshot(snapshot);
         const next: TournamentDaySession<TournamentDaySnapshot> = {
           ...current,
           dirty: true,
@@ -391,7 +398,7 @@ export function TournamentDayWorkspace(props: Props) {
     setError("");
     try {
       const source = await fetchSourceSnapshot(fromD1);
-      const snapshot = source.snapshot;
+      const snapshot = reconcileTournamentDaySnapshot(source.snapshot);
       const next: TournamentDaySession<TournamentDaySnapshot> = {
         schemaVersion: 1,
         storageKey,
@@ -1189,7 +1196,9 @@ function DayStandardCompetition({
     }
   })();
   const entries = (snapshot.workspace.standard.entries as any[]).filter(
-    (entry) => entry.categoryId === category?.id,
+    (entry) =>
+      entry.categoryId === category?.id &&
+      (entry.status === "ready" || entry.status === "confirmed"),
   );
   const players = (snapshot.workspace.participants.players as any[]).filter(
     (player) => player.playerStatus === "confirmed",

@@ -2120,12 +2120,13 @@ async function tournamentWorkspaceStandard(env: Env, tournament: TournamentRow) 
     env.HUAU_DB.prepare(
       `SELECT e.id,e.category_id as categoryId,e.display_name as displayName,e.entry_type as entryType,e.status,
               COALESCE(e.seed_rating,0) as seedRating,e.source_kind as sourceKind,e.source_key as sourceKey,
-              GROUP_CONCAT(TRIM(p.first_name || ' ' || p.last_name),' · ') as members
+              GROUP_CONCAT(TRIM(p.first_name || ' ' || p.last_name),' · ') as members,
+              GROUP_CONCAT(em.organization_person_id,'|') as participantIds
          FROM tournament_entries e
          LEFT JOIN entry_members em ON em.entry_id=e.id AND em.status IN ('accepted','manual')
          LEFT JOIN organization_people p ON p.id=em.organization_person_id
          JOIN tournament_categories tc ON tc.id=e.category_id
-        WHERE tc.tournament_id=? AND tc.entry_type<>'team'
+        WHERE tc.tournament_id=? AND tc.entry_type<>'team' AND e.status IN ('ready','confirmed')
         GROUP BY e.id ORDER BY e.created_at`,
     ).bind(tournament.id).all(),
     env.HUAU_DB.prepare(
