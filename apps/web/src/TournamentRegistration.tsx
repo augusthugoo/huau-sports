@@ -265,6 +265,7 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
   const [explanationCategoryId, setExplanationCategoryId] = useState<string | null>(null);
   const [regulationsOpen, setRegulationsOpen] = useState(false);
   const [regulationsAccepted, setRegulationsAccepted] = useState(false);
+  const [registrationSuccess, setRegistrationSuccess] = useState<{ waitlisted: number } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -364,6 +365,7 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
     setBusy("basket");
     setError("");
     setNotice("");
+    setRegistrationSuccess(null);
     try {
       const result = await api<{ registrations: Array<{ status: string }> }>(`/api/tournaments/${data.tournament.id}/registrations/batch`, {
         method: "POST",
@@ -374,7 +376,8 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
       setTeamSelections({});
       setRegulationsAccepted(false);
       await load();
-      setNotice(waitlisted ? tr(locale, `Inscripción creada. ${waitlisted} selección(es) quedaron en waitlist.`, `Registration created. ${waitlisted} selection(s) joined the waitlist.`) : tr(locale, "Inscripción creada. Parejas y equipos se completan desde Mis inscripciones.", "Registration created. Complete pairs and teams from My registrations."));
+      setNotice("");
+      setRegistrationSuccess({ waitlisted });
     } catch (err) {
       const code = err instanceof RegistrationError ? err.code : "REGISTRATION_FAILED";
       if (code === "REGULATIONS_VERSION_CHANGED") {
@@ -539,6 +542,59 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
                 title={tr(locale, "Formato oficial", "Official format")}
               />
             </div>
+          </section>
+        </div>
+      )}
+
+      {registrationSuccess && (
+        <div
+          className="launch-registration-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setRegistrationSuccess(null);
+          }}
+        >
+          <section
+            className="launch-registration-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="launch-registration-title"
+          >
+            <button
+              type="button"
+              className="launch-registration-close"
+              aria-label={tr(locale, "Cerrar confirmación", "Close confirmation")}
+              onClick={() => setRegistrationSuccess(null)}
+            >
+              ×
+            </button>
+            <div className="launch-registration-check" aria-hidden="true">✓</div>
+            <div className="eyebrow">HUAU TOURNAMENT</div>
+            <h2 id="launch-registration-title">
+              {tr(locale, "Inscripción confirmada", "Registration confirmed")}
+            </h2>
+            <p>
+              {registrationSuccess.waitlisted > 0
+                ? tr(
+                    locale,
+                    `Tu inscripción quedó registrada correctamente. ${registrationSuccess.waitlisted} selección(es) quedaron en lista de espera. Desde Mis inscripciones podés seguir el estado y continuar con el pago cuando corresponda.`,
+                    `Your registration was saved successfully. ${registrationSuccess.waitlisted} selection(s) joined the waitlist. Use My registrations to follow the status and continue with payment when applicable.`,
+                  )
+                : tr(
+                    locale,
+                    "Tu inscripción quedó registrada correctamente. Desde Mis inscripciones podés continuar con el pago y seguir el estado de tus categorías, pareja o equipo.",
+                    "Your registration was saved successfully. Use My registrations to continue with payment and follow your categories, pair or team status.",
+                  )}
+            </p>
+            <button
+              type="button"
+              className="light"
+              onClick={() => {
+                setRegistrationSuccess(null);
+                go("/app/registrations");
+              }}
+            >
+              {tr(locale, "Ir a Mis inscripciones", "Go to My registrations")}
+            </button>
           </section>
         </div>
       )}

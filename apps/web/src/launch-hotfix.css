@@ -1,0 +1,178 @@
+/* HUAU Phase 9 launch hotfix
+   - mobile shell navigation remains accessible
+   - iOS date inputs stay inside their containers
+   - black-backed product lockups blend into the landing card
+   - registration success dialog
+   - tournament pricing currency field
+*/
+
+.tournament-lockup,
+.ref-lockup {
+  mix-blend-mode: screen;
+}
+
+label,
+.registration-profile-card,
+.registration-profile-card form,
+.registration-profile-card form > *,
+.tpw-form,
+.tpw-form > * {
+  min-width: 0;
+}
+
+input[type="date"],
+input[type="datetime-local"] {
+  display: block;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box;
+}
+
+input[type="date"]::-webkit-date-and-time-value,
+input[type="datetime-local"]::-webkit-date-and-time-value {
+  min-width: 0;
+  text-align: left;
+}
+
+.pricing-admin-grid {
+  display: grid;
+  grid-template-columns: 120px repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.launch-registration-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, .76);
+  backdrop-filter: blur(14px);
+}
+
+.launch-registration-modal {
+  position: relative;
+  width: min(520px, 100%);
+  border: 1px solid #303030;
+  border-radius: 24px;
+  padding: 34px;
+  background: linear-gradient(145deg, #151515, #0b0b0b);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, .6);
+  text-align: center;
+}
+
+.launch-registration-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #343434;
+  border-radius: 999px;
+  background: #0a0a0a;
+  color: #f4f4f1;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.launch-registration-check {
+  width: 64px;
+  height: 64px;
+  margin: 4px auto 20px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(123, 213, 151, .38);
+  border-radius: 999px;
+  background: rgba(83, 173, 112, .12);
+  color: #9be0ae;
+  font-size: 32px;
+  font-weight: 800;
+}
+
+.launch-registration-modal h2 {
+  margin: 0 0 12px;
+  font-size: 30px;
+  letter-spacing: -.04em;
+}
+
+.launch-registration-modal p {
+  margin: 0 auto 24px;
+  max-width: 420px;
+  color: #aaa;
+  line-height: 1.6;
+}
+
+.launch-registration-modal .light {
+  width: 100%;
+}
+
+@media (max-width: 900px) {
+  .pricing-admin-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .topbar {
+    height: auto;
+    min-height: 66px;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    padding: 10px 14px;
+  }
+
+  .topbar .huau-logo-button {
+    order: 1;
+  }
+
+  .topbar .huau-logo-image {
+    width: 112px;
+    max-width: 29vw;
+  }
+
+  .topbar > .ghost {
+    order: 2;
+    margin-left: auto;
+    padding: 8px 11px;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .topbar nav {
+    order: 3;
+    display: flex !important;
+    width: 100%;
+    gap: 6px;
+    overflow-x: auto;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, .08);
+    scrollbar-width: none;
+  }
+
+  .topbar nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .topbar nav button {
+    flex: 0 0 auto;
+    padding: 8px 10px !important;
+    font-size: 11px !important;
+    white-space: nowrap;
+  }
+
+  .pricing-admin-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .launch-registration-modal {
+    padding: 30px 22px 24px;
+  }
+
+  .launch-registration-modal h2 {
+    font-size: 26px;
+  }
+}

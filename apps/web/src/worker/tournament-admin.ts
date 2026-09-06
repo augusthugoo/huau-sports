@@ -3401,7 +3401,7 @@ export async function handleTournamentAdminApi(
     const tournamentId = decodeURIComponent(settingsRoute[1]!);
     const accessResult = await tournamentForAccess(tournamentId,request,env,access);
     if (accessResult instanceof Response) return accessResult;
-    const body = await readJson<Partial<TournamentSettingsRow> & {startDate?:string;endDate?:string|null;courtCount?:number}>(request);
+    const body = await readJson<Partial<TournamentSettingsRow> & {startDate?:string;endDate?:string|null;courtCount?:number;currency?:string}>(request);
     // Explicit write route: repair a missing legacy settings row here, never on GET/read paths.
     await ensureTournamentSettings(env, tournamentId);
     const current = await readTournamentSettings(env,tournamentId);
@@ -3418,6 +3418,8 @@ export async function handleTournamentAdminApi(
     if (nextDuprMax !== null && (!Number.isFinite(nextDuprMax) || nextDuprMax <= 0 || nextDuprMax > 8)) return json({ok:false,code:"INVALID_DUPR_MAX"},{status:400});
     const nextDuprAsOfDate = Object.prototype.hasOwnProperty.call(body,"duprAsOfDate") ? (body.duprAsOfDate ? String(body.duprAsOfDate) : null) : current.duprAsOfDate;
     if (nextDuprAsOfDate && !/^\d{4}-\d{2}-\d{2}$/.test(nextDuprAsOfDate)) return json({ok:false,code:"INVALID_DUPR_AS_OF_DATE"},{status:400});
+    const nextCurrency = body.currency === undefined ? null : String(body.currency).trim().toUpperCase();
+    if (nextCurrency !== null && !/^[A-Z]{3}$/.test(nextCurrency)) return json({ok:false,code:"INVALID_CURRENCY_CODE"},{status:400});
     const stamp = unixNow();
     await env.HUAU_DB.batch([
       env.HUAU_DB.prepare(
@@ -3441,6 +3443,11 @@ export async function handleTournamentAdminApi(
         `UPDATE tournaments SET start_at=COALESCE(?,start_at),end_at=?,court_count=COALESCE(?,court_count),working_revision=working_revision+1,updated_at=? WHERE id=?`,
       ).bind(body.startDate ? unixFromLocal(body.startDate,dailyStart,accessResult.tournament.timezone) : null,body.endDate === undefined ? accessResult.tournament.endAt : body.endDate ? unixFromLocal(body.endDate,dailyEnd,accessResult.tournament.timezone) : null,
         body.courtCount ? Math.max(1,Math.trunc(Number(body.courtCount))) : null,stamp,tournamentId),
+      ...(nextCurrency ? [
+        env.HUAU_DB.prepare(
+          `UPDATE tournament_categories SET currency=?,updated_at=?,version=version+1 WHERE tournament_id=? AND COALESCE(currency,\'\')<>?`,
+        ).bind(nextCurrency,stamp,tournamentId,nextCurrency),
+      ] : []),
     ]);
     const scheduleInputsChanged =
       body.startDate !== undefined ||
