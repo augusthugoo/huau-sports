@@ -224,7 +224,7 @@ async function openOrder(env: Env, tournamentId: string, payerKind: PayerKind, p
             payer_name as payerName,payer_email as payerEmail,currency,subtotal_minor as subtotalMinor,discount_minor as discountMinor,
             total_amount_minor as totalAmountMinor,amount_paid_minor as amountPaidMinor,amount_refunded_minor as amountRefundedMinor,
             status,selected_method as selectedMethod,due_at as dueAt,paid_at as paidAt,created_at as createdAt,updated_at as updatedAt
-       FROM payment_orders WHERE tournament_id=? AND ${field}=? AND status IN ('draft','awaiting_payment') ORDER BY created_at DESC LIMIT 1`,
+       FROM payment_orders WHERE tournament_id=? AND ${field}=? AND status IN ('draft','awaiting_payment') LIMIT 1`,
   ).bind(tournamentId, payerId).first<PaymentOrderRow>();
 }
 
@@ -298,7 +298,7 @@ async function replaceOrderItems(
 
 async function userOutstandingItems(env: Env, tournamentId: string, userId: string) {
   const rows = await env.HUAU_DB.prepare(
-    `SELECT tr.id as registrationId,tc.name as categoryName,tr.final_amount_minor as finalAmountMinor,
+    `SELECT tr.id as registrationId,tr.registration_number as registrationNumber,tc.name as categoryName,tr.final_amount_minor as finalAmountMinor,
             tr.paid_amount_minor as paidAmountMinor,tr.refunded_amount_minor as refundedAmountMinor,COALESCE(tr.currency,'UYU') as currency
        FROM tournament_registrations tr JOIN tournament_categories tc ON tc.id=tr.category_id
       WHERE tr.tournament_id=? AND tr.user_id=? AND tr.status NOT IN ('cancelled','rejected') AND tr.covered_by_registration_id IS NULL
@@ -306,10 +306,9 @@ async function userOutstandingItems(env: Env, tournamentId: string, userId: stri
         AND NOT EXISTS (
           SELECT 1 FROM payment_order_items poi JOIN payment_orders po ON po.id=poi.order_id
            WHERE poi.registration_id=tr.id AND po.status='pending_review'
-        )
-      ORDER BY tr.registration_number`,
-  ).bind(tournamentId, userId).all<{ registrationId: string; categoryName: string; finalAmountMinor: number; paidAmountMinor: number; refundedAmountMinor: number; currency: string }>();
-  return rows.results.map((row) => ({
+        )`,
+  ).bind(tournamentId, userId).all<{ registrationId: string; registrationNumber: number; categoryName: string; finalAmountMinor: number; paidAmountMinor: number; refundedAmountMinor: number; currency: string }>();
+  return rows.results.sort((a, b) => a.registrationNumber - b.registrationNumber).map((row) => ({
     registrationId: row.registrationId,
     categoryId: null,
     label: row.categoryName,

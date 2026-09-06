@@ -3201,8 +3201,16 @@ export async function handleTournamentAdminApi(
       ).bind(body.startDate ? unixFromLocal(body.startDate,dailyStart,accessResult.tournament.timezone) : null,body.endDate === undefined ? accessResult.tournament.endAt : body.endDate ? unixFromLocal(body.endDate,dailyEnd,accessResult.tournament.timezone) : null,
         body.courtCount ? Math.max(1,Math.trunc(Number(body.courtCount))) : null,stamp,tournamentId),
     ]);
-    const generated = await env.HUAU_DB.prepare(`SELECT COUNT(*) as count FROM competitions c JOIN tournament_categories tc ON tc.id=c.category_id WHERE tc.tournament_id=?`).bind(tournamentId).first<{count:number}>();
-    if (Number(generated?.count ?? 0) > 0) await regenerateTournamentSchedule(env,{...accessResult.tournament,courtCount:body.courtCount ? Math.max(1,Math.trunc(Number(body.courtCount))) : accessResult.tournament.courtCount},accessResult.user.id,dailyStart);
+    const scheduleInputsChanged =
+      body.startDate !== undefined ||
+      body.courtCount !== undefined ||
+      body.dailyStart !== undefined ||
+      body.defaultMatchMinutes !== undefined ||
+      body.minimumRestSlots !== undefined;
+    if (scheduleInputsChanged) {
+      const generated = await env.HUAU_DB.prepare(`SELECT 1 as ok FROM competitions c JOIN tournament_categories tc ON tc.id=c.category_id WHERE tc.tournament_id=? LIMIT 1`).bind(tournamentId).first<{ok:number}>();
+      if (generated) await regenerateTournamentSchedule(env,{...accessResult.tournament,courtCount:body.courtCount ? Math.max(1,Math.trunc(Number(body.courtCount))) : accessResult.tournament.courtCount},accessResult.user.id,dailyStart);
+    }
     return json({ok:true});
   }
 

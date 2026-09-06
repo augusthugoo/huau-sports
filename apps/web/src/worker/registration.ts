@@ -267,18 +267,10 @@ async function activeCategoryCountForUser(env: Env, tournamentId: string, userId
 
 async function viewerCategoryIdsForTournament(env: Env, tournamentId: string, userId: string) {
   const rows = await env.HUAU_DB.prepare(
-    `SELECT DISTINCT categoryId FROM (
-       SELECT category_id as categoryId FROM tournament_registrations
-        WHERE tournament_id=? AND user_id=? AND status NOT IN ('cancelled','rejected')
-       UNION
-       SELECT e.category_id as categoryId
-         FROM tournament_entries e
-         JOIN tournament_categories tc ON tc.id=e.category_id
-         JOIN entry_members em ON em.entry_id=e.id AND em.status IN ('accepted','manual')
-         JOIN organization_people op ON op.id=em.organization_person_id
-        WHERE tc.tournament_id=? AND op.user_id=? AND e.status NOT IN ('withdrawn','rejected')
-     )`,
-  ).bind(tournamentId, userId, tournamentId, userId).all<{ categoryId: string }>();
+    `SELECT category_id as categoryId
+       FROM tournament_registrations
+      WHERE tournament_id=? AND user_id=? AND status NOT IN ('cancelled','rejected')`,
+  ).bind(tournamentId, userId).all<{ categoryId: string }>();
   return new Set(rows.results.map((row) => row.categoryId));
 }
 
