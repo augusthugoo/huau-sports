@@ -127,7 +127,7 @@ export function App() {
   }, [refreshMe]);
 
   if (isPending) return <LoadingScreen />;
-  if (path === "/" && !session?.user) return <Landing locale={locale} setLocale={changeLocale} go={go} />;
+  if (path === "/") return <Landing locale={locale} setLocale={changeLocale} go={go} authenticated={Boolean(session?.user)} />;
   if (path === "/login" && !session?.user) return <AuthScreen mode="login" locale={locale} go={go} onDone={refreshMe} />;
   if (path === "/signup" && !session?.user) return <AuthScreen mode="signup" locale={locale} go={go} onDone={refreshMe} />;
   if (path === "/recover" && !session?.user) return <RecoveryScreen locale={locale} go={go} />;
@@ -187,7 +187,7 @@ function Shell({ children, locale, go, me }: { children: React.ReactNode; locale
   return (
     <div className="app-shell">
       <header className="topbar">
-        <HuauBrand onClick={() => go("/app")} />
+        <HuauBrand onClick={() => go("/")} />
         <nav>
           <button className="light compact player-profile-nav" onClick={() => go("/app")}>{copy(locale, "Perfil de jugador", "Player profile")}</button>
           {me?.platformAdmin && <button onClick={() => go("/platform")}>{t(locale, "platform")}</button>}

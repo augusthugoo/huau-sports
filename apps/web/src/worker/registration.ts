@@ -1459,51 +1459,141 @@ type RegistrationViewerRow = {
 type RegistrationMemberView = { personId: string; name: string; email: string | null; memberRole: string; status: string; userId: string | null };
 type OutgoingInvitationView = { id: string; targetRegistrationId: string; targetName: string; status: string; expiresAt: number };
 
-async function registrationDetails(env: Env, row: RegistrationViewerRow) {
-  const members = row.entryId
-    ? await env.HUAU_DB.prepare(
-        `SELECT op.id as personId,TRIM(op.first_name||' '||op.last_name) as name,op.email,em.member_role as memberRole,em.status,op.user_id as userId
+type BulkRegistrationMemberView = RegistrationMemberView & { entryId: string };
+type BulkOutgoingInvitationView = OutgoingInvitationView & { inviterRegistrationId: string };
+type BulkEntryCaptainView = { entryId: string; captainUserId: string | null };
+type BulkCancellationView = { registrationId: string; id: string; reason: string | null; netPaidMinor: number; createdAt: number };
+type BulkTeamPricingView = { tournamentId: string; teamFullFeeMinor: number | null };
+
+const uniqueStrings = (values: Array<string | null | undefined>) => [...new Set(values.filter((value): value is string => Boolean(value)))];
+const chunksOf = <T,>(values: T[], size = 80) => Array.from({ length: Math.ceil(values.length / size) }, (_, index) => values.slice(index * size, (index + 1) * size));
+const placeholders = (count: number) => Array.from({ length: count }, () => "?").join(",");
+
+async function registrationDetailsBulk(env: Env, rows: RegistrationViewerRow[]) {
+  if (!rows.length) return [];
+
+  const entryIds = uniqueStrings(rows.map((row) => row.entryId));
+  const registrationIds = uniqueStrings(rows.map((row) => row.id));
+  const ownerRegistrationIds = uniqueStrings(rows.filter((row) => row.isOwner === 1).map((row) => row.id));
+  const teamTournamentIds = uniqueStrings(rows.filter((row) => row.entryType === "team").map((row) => row.tournamentId));
+
+  const [memberBatches, outgoingBatches, captainBatches, cancellationBatches, pricingBatches] = await Promise.all([
+    Promise.all(chunksOf(entryIds).map((ids) =>
+      env.HUAU_DB.prepare(
+        `SELECT em.entry_id as entryId,op.id as personId,TRIM(op.first_name||' '||op.last_name) as name,op.email,
+                em.member_role as memberRole,em.status,op.user_id as userId
            FROM entry_members em JOIN organization_people op ON op.id=em.organization_person_id
-          WHERE em.entry_id=? AND em.status IN ('accepted','manual') ORDER BY em.created_at`,
-      ).bind(row.entryId).all<RegistrationMemberView>()
-    : { results: [] as RegistrationMemberView[] };
-  const outgoing = await env.HUAU_DB.prepare(
-    `SELECT rmi.id,rmi.invitee_registration_id as targetRegistrationId,u.name as targetName,rmi.status,rmi.expires_at as expiresAt
-       FROM registration_match_invitations rmi JOIN tournament_registrations tr ON tr.id=rmi.invitee_registration_id JOIN user u ON u.id=tr.user_id
-      WHERE rmi.inviter_registration_id=? AND rmi.status='pending' ORDER BY rmi.created_at`,
-  ).bind(row.id).all<OutgoingInvitationView>();
-  const category = await categoryById(env, row.categoryId);
-  const roster = category ? await registrationRosterMeta(env, category) : { min: null, max: null };
-  const teamCaptain = row.entryType === "team" && row.entryId
-    ? await env.HUAU_DB.prepare(`SELECT captain_user_id as captainUserId FROM tournament_entries WHERE id=?`).bind(row.entryId).first<{ captainUserId: string | null }>()
-    : null;
-  const teamPricing = row.entryType === "team" ? await pricingSettingsForTournament(env, row.tournamentId) : null;
-  const pendingCancellation = row.isOwner === 1
-    ? await env.HUAU_DB.prepare(`SELECT id,reason,net_paid_minor as netPaidMinor,created_at as createdAt FROM registration_cancellation_requests WHERE registration_id=? AND status='pending' LIMIT 1`).bind(row.id).first<{ id: string; reason: string | null; netPaidMinor: number; createdAt: number }>()
-    : null;
-  const groupingState = row.entryType === "individual"
-    ? "ready"
-    : row.entryType === "pair"
-      ? row.entryId && members.results.length >= 2 ? "paired" : "free"
-      : !row.entryId
-        ? "free"
-        : row.viewerRole === "captain" && teamCaptain?.captainUserId
-          ? "captain"
-          : "member";
-  const { formatConfigJson, ...baseRow } = row;
-  return {
-    ...baseRow,
-    formatConfig: parseJsonOrNull(formatConfigJson),
-    groupingState,
-    members: members.results,
-    outgoingInvitations: outgoing.results,
-    rosterMin: roster.min,
-    rosterMax: roster.max,
-    teamFullFeeMinor: teamPricing?.teamFullFeeMinor ?? null,
-    canSearch: row.isOwner === 1 && row.entryType === "pair" ? !row.entryId : row.isOwner === 1 && row.entryType === "team" ? Boolean(row.entryId && teamCaptain?.captainUserId) : false,
-    covered: Boolean(row.coveredByRegistrationId),
-    pendingCancellationRequest: pendingCancellation ?? null,
-  };
+          WHERE em.entry_id IN (${placeholders(ids.length)}) AND em.status IN ('accepted','manual')
+          ORDER BY em.entry_id,em.created_at`,
+      ).bind(...ids).all<BulkRegistrationMemberView>(),
+    )),
+    Promise.all(chunksOf(registrationIds).map((ids) =>
+      env.HUAU_DB.prepare(
+        `SELECT rmi.inviter_registration_id as inviterRegistrationId,rmi.id,
+                rmi.invitee_registration_id as targetRegistrationId,u.name as targetName,rmi.status,rmi.expires_at as expiresAt
+           FROM registration_match_invitations rmi
+           JOIN tournament_registrations tr ON tr.id=rmi.invitee_registration_id
+           JOIN user u ON u.id=tr.user_id
+          WHERE rmi.inviter_registration_id IN (${placeholders(ids.length)}) AND rmi.status='pending'
+          ORDER BY rmi.inviter_registration_id,rmi.created_at`,
+      ).bind(...ids).all<BulkOutgoingInvitationView>(),
+    )),
+    Promise.all(chunksOf(entryIds).map((ids) =>
+      env.HUAU_DB.prepare(
+        `SELECT id as entryId,captain_user_id as captainUserId
+           FROM tournament_entries
+          WHERE id IN (${placeholders(ids.length)})`,
+      ).bind(...ids).all<BulkEntryCaptainView>(),
+    )),
+    Promise.all(chunksOf(ownerRegistrationIds).map((ids) =>
+      env.HUAU_DB.prepare(
+        `SELECT registration_id as registrationId,id,reason,net_paid_minor as netPaidMinor,created_at as createdAt
+           FROM registration_cancellation_requests
+          WHERE registration_id IN (${placeholders(ids.length)}) AND status='pending'
+          ORDER BY registration_id,created_at DESC`,
+      ).bind(...ids).all<BulkCancellationView>(),
+    )),
+    Promise.all(chunksOf(teamTournamentIds).map((ids) =>
+      env.HUAU_DB.prepare(
+        `SELECT tournament_id as tournamentId,team_full_fee_minor as teamFullFeeMinor
+           FROM tournament_settings
+          WHERE tournament_id IN (${placeholders(ids.length)})`,
+      ).bind(...ids).all<BulkTeamPricingView>(),
+    )),
+  ]);
+
+  const membersByEntry = new Map<string, RegistrationMemberView[]>();
+  for (const member of memberBatches.flatMap((batch) => batch.results)) {
+    const list = membersByEntry.get(member.entryId) ?? [];
+    list.push(member);
+    membersByEntry.set(member.entryId, list);
+  }
+
+  const outgoingByRegistration = new Map<string, OutgoingInvitationView[]>();
+  for (const invitation of outgoingBatches.flatMap((batch) => batch.results)) {
+    const list = outgoingByRegistration.get(invitation.inviterRegistrationId) ?? [];
+    list.push(invitation);
+    outgoingByRegistration.set(invitation.inviterRegistrationId, list);
+  }
+
+  const captainByEntry = new Map(
+    captainBatches.flatMap((batch) => batch.results).map((entry) => [entry.entryId, entry.captainUserId] as const),
+  );
+
+  const cancellationByRegistration = new Map<string, Omit<BulkCancellationView, "registrationId">>();
+  for (const cancellation of cancellationBatches.flatMap((batch) => batch.results)) {
+    if (!cancellationByRegistration.has(cancellation.registrationId)) {
+      const { registrationId: _registrationId, ...request } = cancellation;
+      void _registrationId;
+      cancellationByRegistration.set(cancellation.registrationId, request);
+    }
+  }
+
+  const teamFullFeeByTournament = new Map(
+    pricingBatches.flatMap((batch) => batch.results).map((pricing) => [pricing.tournamentId, pricing.teamFullFeeMinor] as const),
+  );
+
+  return rows.map((row) => {
+    const members = row.entryId ? membersByEntry.get(row.entryId) ?? [] : [];
+    const outgoing = outgoingByRegistration.get(row.id) ?? [];
+    const captainUserId = row.entryId ? captainByEntry.get(row.entryId) ?? null : null;
+    let roster: { min: number | null; max: number | null } = { min: null, max: null };
+    if (row.entryType === "team" && row.formatKind === "team" && row.formatConfigJson) {
+      try {
+        const format = parseTeamFormat(JSON.parse(row.formatConfigJson) as unknown);
+        roster = { min: format.roster.min, max: format.roster.max };
+      } catch {
+        roster = { min: null, max: null };
+      }
+    }
+    const groupingState = row.entryType === "individual"
+      ? "ready"
+      : row.entryType === "pair"
+        ? row.entryId && members.length >= 2 ? "paired" : "free"
+        : !row.entryId
+          ? "free"
+          : row.viewerRole === "captain" && captainUserId
+            ? "captain"
+            : "member";
+    const { formatConfigJson, ...baseRow } = row;
+    return {
+      ...baseRow,
+      formatConfig: parseJsonOrNull(formatConfigJson),
+      groupingState,
+      members,
+      outgoingInvitations: outgoing,
+      rosterMin: roster.min,
+      rosterMax: roster.max,
+      teamFullFeeMinor: row.entryType === "team" ? teamFullFeeByTournament.get(row.tournamentId) ?? null : null,
+      canSearch: row.isOwner === 1 && row.entryType === "pair"
+        ? !row.entryId
+        : row.isOwner === 1 && row.entryType === "team"
+          ? Boolean(row.entryId && captainUserId)
+          : false,
+      covered: Boolean(row.coveredByRegistrationId),
+      pendingCancellationRequest: cancellationByRegistration.get(row.id) ?? null,
+    };
+  });
 }
 
 async function myRegistrations(request: Request, env: Env, access: AccessHelpers) {
@@ -1537,7 +1627,7 @@ async function myRegistrations(request: Request, env: Env, access: AccessHelpers
   ).bind(user.id, user.id, user.id).all<RegistrationViewerRow>();
 
   const rows = [...own.results, ...legacy.results].sort((a, b) => b.createdAt - a.createdAt);
-  const detailed = await Promise.all(rows.map((row) => registrationDetails(env, row)));
+  const detailed = await registrationDetailsBulk(env, rows);
   const invitations = await env.HUAU_DB.prepare(
     `SELECT rmi.id,rmi.kind,rmi.expires_at as expiresAt,rmi.inviter_registration_id as inviterRegistrationId,
             t.name as tournamentName,t.slug,tc.name as categoryName,tc.entry_type as entryType,tc.competition_gender as competitionGender,
@@ -1576,7 +1666,7 @@ async function adminRegistrations(tournamentId: string, request: Request, env: E
        JOIN user u ON u.id=tr.user_id LEFT JOIN tournament_entries e ON e.id=tr.entry_id LEFT JOIN competition_format_versions fv ON fv.id=tc.format_version_id
       WHERE tr.tournament_id=? ORDER BY tc.sort_order,tr.created_at`,
   ).bind(tournamentId).all<RegistrationViewerRow & { priceScope: string; baseAmountMinor: number; discountMinor: number; userName: string; userEmail: string }>();
-  const detailed = await Promise.all(rows.results.map((row) => registrationDetails(env, row)));
+  const detailed = await registrationDetailsBulk(env, rows.results);
   return json({ ok: true, registrations: detailed, publicUrl: `/tournaments/${allowed.tournament.slug}` });
 }
 

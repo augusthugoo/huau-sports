@@ -79,7 +79,7 @@ const slideCopy = {
   ],
 } as const;
 
-export function Landing({ locale, setLocale, go }: { locale: Locale; setLocale: (locale: Locale) => void; go: Go }) {
+export function Landing({ locale, setLocale, go, authenticated = false }: { locale: Locale; setLocale: (locale: Locale) => void; go: Go; authenticated?: boolean }) {
   const [showLanguageGate, setShowLanguageGate] = useState(() => !localStorage.getItem("huau.locale"));
   const [data, setData] = useState<LandingData | null>(null);
   const [slide, setSlide] = useState(0);
@@ -146,8 +146,17 @@ export function Landing({ locale, setLocale, go }: { locale: Locale; setLocale: 
       <div className="landing-topline">
         <img className="landing-master-logo" src="/huau-logo.png" alt="HUAU" />
         <div className="landing-auth-actions">
-          <button className="landing-button subtle" onClick={() => go("/login")}>{tr(locale, "Iniciar sesión", "Sign in")}</button>
-          <button className="landing-button solid" onClick={() => go("/signup")}>{tr(locale, "Crear cuenta", "Create account")}</button>
+          {authenticated ? (
+            <>
+              <button className="landing-button subtle" onClick={() => go("/app")}>{tr(locale, "Mi HUAU", "My HUAU")}</button>
+              <button className="landing-button solid" onClick={() => go("/app/registrations")}>{tr(locale, "Mis inscripciones", "My registrations")}</button>
+            </>
+          ) : (
+            <>
+              <button className="landing-button subtle" onClick={() => go("/login")}>{tr(locale, "Iniciar sesión", "Sign in")}</button>
+              <button className="landing-button solid" onClick={() => go("/signup")}>{tr(locale, "Crear cuenta", "Create account")}</button>
+            </>
+          )}
         </div>
       </div>
 
@@ -218,7 +227,7 @@ export function Landing({ locale, setLocale, go }: { locale: Locale; setLocale: 
 
       <section className="player-callout">
         <div><span>{tr(locale, "PARA JUGADORES", "FOR PLAYERS")}</span><h2>{tr(locale, "¿Querés competir?", "Want to compete?")}</h2><p>{tr(locale, "Creá tu cuenta HUAU para inscribirte, completar tu perfil deportivo y seguir tus torneos desde un solo lugar.", "Create your HUAU account to register, complete your sports profile and follow your tournaments from one place.")}</p></div>
-        <button className="landing-button inverted" onClick={() => go("/signup")}>{tr(locale, "Crear cuenta", "Create account")}</button>
+        <button className="landing-button inverted" onClick={() => go(authenticated ? "/app" : "/signup")}>{authenticated ? tr(locale, "Ir a mi perfil", "Go to my profile") : tr(locale, "Crear cuenta", "Create account")}</button>
       </section>
 
       <section className="landing-section contact-section">
