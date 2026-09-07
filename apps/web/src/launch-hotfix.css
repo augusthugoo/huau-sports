@@ -327,3 +327,93 @@ html {
     font-size: 16px !important;
   }
 }
+
+/* HUAU public WhatsApp contacts */
+.public-tournament-contact-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.public-whatsapp-link,
+.public-contact-plain {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 13px 15px;
+  border: 1px solid #303030;
+  border-radius: 14px;
+  background: rgba(255,255,255,.025);
+  color: inherit;
+  text-decoration: none;
+}
+
+.public-whatsapp-link {
+  cursor: pointer;
+  transition: transform .18s ease, border-color .18s ease, background .18s ease;
+}
+
+.public-whatsapp-link:hover {
+  transform: translateY(-1px);
+  border-color: #5b5b58;
+  background: rgba(255,255,255,.055);
+}
+
+.public-whatsapp-link > span,
+.public-contact-plain > span {
+  color: #8f8f89;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .16em;
+}
+
+.public-whatsapp-link > strong,
+.public-contact-plain > strong {
+  font-size: 14px;
+}
+
+.public-whatsapp-link > small,
+.public-contact-plain > small {
+  color: #9d9d98;
+  overflow-wrap: anywhere;
+}
+
+.public-whatsapp-link.huau-support {
+  border-color: #3b433e;
+}
+
+.landing-support-admin {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, .8fr);
+  gap: 18px;
+  align-items: end;
+  margin: 24px 0;
+  padding: 20px;
+  border: 1px solid #2c2c2c;
+  border-radius: 18px;
+  background: rgba(255,255,255,.025);
+}
+
+.landing-support-admin h3 {
+  margin: 4px 0 8px;
+}
+
+.landing-support-admin form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+@media (max-width: 760px) {
+  .public-tournament-contact-actions,
+  .landing-support-admin,
+  .landing-support-admin form {
+    grid-template-columns: 1fr;
+  }
+
+  .landing-support-admin form .light {
+    width: 100%;
+  }
+}

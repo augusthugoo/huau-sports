@@ -177,6 +177,19 @@ type PublicTournamentInfoRow = {
   contact: string;
 };
 
+const platformSupportKey = "platform/support.json";
+
+async function huauSupportWhatsapp(env: Env): Promise<string> {
+  const object = await env.HUAU_ASSETS.get(platformSupportKey);
+  if (!object) return "";
+  try {
+    const parsed = JSON.parse(await object.text()) as { whatsapp?: unknown };
+    return typeof parsed.whatsapp === "string" ? parsed.whatsapp : "";
+  } catch {
+    return "";
+  }
+}
+
 async function publicInfoForTournament(env: Env, tournamentId: string): Promise<PublicTournamentInfoRow> {
   const row = await env.HUAU_DB.prepare(
     `SELECT club,city,location,description,contact FROM tournament_settings WHERE tournament_id=?`,
@@ -859,9 +872,10 @@ async function publicTournament(slug: string, request: Request, env: Env, access
 
   const { tournament, settings, publicInfo, categories } = loaded.core;
   const closeAt = settings.registrationCloseAt;
-  const [capacityByCategory, currentUser] = await Promise.all([
+  const [capacityByCategory, currentUser, supportWhatsapp] = await Promise.all([
     publicCapacityForTournament(env, tournament.id),
     access.requireUser(request, env),
+    huauSupportWhatsapp(env),
   ]);
 
   const viewerState = currentUser
@@ -968,6 +982,7 @@ async function publicTournament(slug: string, request: Request, env: Env, access
       heroImageUrl: publicHeroR2Key ? `/api/public/tournaments/${encodeURIComponent(tournament.slug)}/hero` : null,
     },
     publicInfo,
+    supportWhatsapp,
     regulations: { text: settings.regulationsText, version: settings.regulationsVersion },
     eligibilityPolicy: { duprRequired: Boolean(settings.duprRequired), duprMax: settings.duprMax, duprAsOfDate: settings.duprAsOfDate, allowNoDupr: Boolean(settings.allowNoDupr) },
     registrationCloseAt: closeAt,

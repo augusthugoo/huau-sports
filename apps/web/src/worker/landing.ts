@@ -12,6 +12,7 @@ const json = (body: unknown, init: ResponseInit = {}) => new Response(JSON.strin
 });
 const heroKey = (slot: number) => `landing/hero-${slot}`;
 const publicLandingSnapshotKey = "public/landing.json";
+const platformSupportKey = "platform/support.json";
 const validSlot = (raw: string) => { const slot = Number(raw); return Number.isInteger(slot) && slot >= 1 && slot <= 3 ? slot : null; };
 const now = () => Date.now();
 const unixNow = () => Math.floor(Date.now() / 1000);
@@ -40,6 +41,26 @@ type PublicLandingSnapshot = {
   validUntil: number;
   payload: PublicLandingPayload;
 };
+
+function normalizeWhatsapp(raw: string): string | null {
+  let digits = raw.replace(/\D/g, "");
+  if (!digits) return "";
+  if (/^09\d{7}$/.test(digits)) digits = `598${digits.slice(1)}`;
+  else if (/^9\d{7}$/.test(digits)) digits = `598${digits}`;
+  if (digits.length < 8 || digits.length > 15) return null;
+  return `+${digits}`;
+}
+
+async function loadSupportWhatsapp(env: Env): Promise<string> {
+  const object = await env.HUAU_ASSETS.get(platformSupportKey);
+  if (!object) return "";
+  try {
+    const parsed = JSON.parse(await object.text()) as { whatsapp?: unknown };
+    return typeof parsed.whatsapp === "string" ? parsed.whatsapp : "";
+  } catch {
+    return "";
+  }
+}
 
 async function platformUser(request: Request, env: Env, access: AccessHelpers) {
   const user = await access.requireUser(request, env);
@@ -164,7 +185,10 @@ async function submitContact(request: Request, env: Env) {
 async function platformLanding(request: Request, env: Env, access: AccessHelpers) {
   const auth = await platformUser(request, env, access);
   if ("response" in auth) return auth.response;
-  const heroObjects = await Promise.all([1, 2, 3].map((slot) => env.HUAU_ASSETS.head(heroKey(slot))));
+  const [heroObjects, supportWhatsapp] = await Promise.all([
+    Promise.all([1, 2, 3].map((slot) => env.HUAU_ASSETS.head(heroKey(slot)))),
+    loadSupportWhatsapp(env),
+  ]);
   let leads: unknown[] = [];
   let contactStorageReady = true;
   try {
@@ -182,7 +206,23 @@ async function platformLanding(request: Request, env: Env, access: AccessHelpers
     heroes: [1, 2, 3].map((slot, index) => ({ slot, url: `/api/public/landing/hero/${slot}`, configured: Boolean(heroObjects[index]) })),
     leads,
     contactStorageReady,
+    supportWhatsapp,
   });
+}
+
+async function updateSupportWhatsapp(request: Request, env: Env, access: AccessHelpers) {
+  const auth = await platformUser(request, env, access);
+  if ("response" in auth) return auth.response;
+  const body = await request.json() as { whatsapp?: unknown };
+  const raw = typeof body.whatsapp === "string" ? body.whatsapp.trim() : "";
+  const whatsapp = normalizeWhatsapp(raw);
+  if (whatsapp === null) return json({ ok: false, code: "INVALID_SUPPORT_WHATSAPP" }, { status: 400 });
+  const stamp = now();
+  await env.HUAU_ASSETS.put(platformSupportKey, JSON.stringify({ whatsapp, updatedAt: stamp }), {
+    httpMetadata: { contentType: "application/json; charset=utf-8" },
+    customMetadata: { kind: "platform-support", updatedAt: String(stamp) },
+  });
+  return json({ ok: true, supportWhatsapp: whatsapp });
 }
 
 async function updateHero(request: Request, slot: number, env: Env, access: AccessHelpers) {
@@ -209,6 +249,7 @@ export async function handleLandingApi(request: Request, env: Env, url: URL, acc
   const publicHeroMatch = url.pathname.match(/^\/api\/public\/landing\/hero\/([1-3])$/);
   if (publicHeroMatch && request.method === "GET") return publicHero(Number(publicHeroMatch[1]), env);
   if (url.pathname === "/api/platform/landing" && request.method === "GET") return platformLanding(request, env, access);
+  if (url.pathname === "/api/platform/support" && request.method === "PUT") return updateSupportWhatsapp(request, env, access);
   const platformHeroMatch = url.pathname.match(/^\/api\/platform\/landing\/hero\/([^/]+)$/);
   if (platformHeroMatch) {
     const slot = validSlot(decodeURIComponent(platformHeroMatch[1]!));

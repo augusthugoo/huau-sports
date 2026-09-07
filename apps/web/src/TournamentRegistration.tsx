@@ -38,6 +38,14 @@ const date = (unix: number) =>
     new Date(unix < 10_000_000_000 ? unix * 1000 : unix),
   );
 
+function whatsappHref(raw: string, message: string): string | null {
+  let digits = raw.replace(/\D/g, "");
+  if (/^09\d{7}$/.test(digits)) digits = `598${digits.slice(1)}`;
+  else if (/^9\d{7}$/.test(digits)) digits = `598${digits}`;
+  if (digits.length < 8 || digits.length > 15) return null;
+  return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`;
+}
+
 type PlayerProfile = {
   firstName: string;
   lastName: string;
@@ -112,6 +120,7 @@ export type PublicTournamentData = {
     description: string;
     contact: string;
   };
+  supportWhatsapp: string;
   regulations: { text: string; version: number };
   eligibilityPolicy: { duprRequired: boolean; duprMax: number | null; duprAsOfDate: string | null; allowNoDupr: boolean };
   registrationCloseAt: number | null;
@@ -420,6 +429,14 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
   const modalExplanation = explanationCategory
     ? explanationForPersistedFormat(explanationCategory.formatKind, explanationCategory.formatConfig, locale)
     : null;
+  const organizerWhatsappHref = whatsappHref(
+    data.publicInfo.contact,
+    tr(locale, `Hola, te contacto desde HUAU por el torneo "${data.tournament.name}".`, `Hi, I'm contacting you from HUAU about the tournament "${data.tournament.name}".`),
+  );
+  const supportWhatsappHref = whatsappHref(
+    data.supportWhatsapp,
+    tr(locale, `Hola, necesito ayuda con HUAU en el torneo "${data.tournament.name}".`, `Hi, I need help with HUAU for the tournament "${data.tournament.name}".`),
+  );
 
   return (
     <main className="public-tournament-page">
@@ -473,8 +490,30 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
           ) : (
             <p>{tr(locale, "Revisá las categorías disponibles, su formato oficial y el valor de inscripción.", "Review available categories, their official format and registration fee.")}</p>
           )}
-          {data.publicInfo.contact && (
-            <small>{tr(locale, "Contacto", "Contact")}: {data.publicInfo.contact}</small>
+          {(data.publicInfo.contact || data.supportWhatsapp) && (
+            <div className="public-tournament-contact-actions">
+              {data.publicInfo.contact && (
+                organizerWhatsappHref ? (
+                  <a className="public-whatsapp-link" href={organizerWhatsappHref} target="_blank" rel="noreferrer">
+                    <span>WHATSAPP</span>
+                    <strong>{tr(locale, "Contactar al organizador", "Contact organizer")}</strong>
+                    <small>{data.publicInfo.contact}</small>
+                  </a>
+                ) : (
+                  <div className="public-contact-plain">
+                    <span>{tr(locale, "Contacto organizador", "Organizer contact")}</span>
+                    <strong>{data.publicInfo.contact}</strong>
+                  </div>
+                )
+              )}
+              {supportWhatsappHref && (
+                <a className="public-whatsapp-link huau-support" href={supportWhatsappHref} target="_blank" rel="noreferrer">
+                  <span>HUAU SUPPORT</span>
+                  <strong>{tr(locale, "Soporte HUAU", "HUAU support")}</strong>
+                  <small>{data.supportWhatsapp}</small>
+                </a>
+              )}
+            </div>
           )}
           {data.regulations.text.trim() && (
             <button type="button" className="public-format-explanation-trigger public-regulations-trigger" onClick={() => setRegulationsOpen(true)}><span>{tr(locale, "Reglamento del torneo", "Tournament regulations")}</span><span aria-hidden="true">↗</span></button>

@@ -43,6 +43,7 @@ type LandingAdminData = {
   heroes: Array<{ slot: number; url: string; configured: boolean }>;
   leads: ContactLead[];
   contactStorageReady: boolean;
+  supportWhatsapp: string;
 };
 
 async function jsonApi<T>(path: string, init?: RequestInit): Promise<T> {
@@ -278,6 +279,7 @@ export function Landing({ locale, setLocale, go, authenticated = false }: { loca
 export function LandingAdminPanel({ locale }: { locale: Locale }) {
   const [data, setData] = useState<LandingAdminData | null>(null);
   const [busy, setBusy] = useState(0);
+  const [supportBusy, setSupportBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [version, setVersion] = useState(0);
 
@@ -315,6 +317,25 @@ export function LandingAdminPanel({ locale }: { locale: Locale }) {
     finally { setBusy(0); }
   };
 
+  const saveSupport = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setSupportBusy(true);
+    setMessage("");
+    try {
+      await jsonApi("/api/platform/support", {
+        method: "PUT",
+        body: JSON.stringify({ whatsapp: String(form.get("supportWhatsapp") || "").trim() }),
+      });
+      await load();
+      setMessage(tr(locale, "WhatsApp de soporte actualizado.", "Support WhatsApp updated."));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "SUPPORT_WHATSAPP_SAVE_FAILED");
+    } finally {
+      setSupportBusy(false);
+    }
+  };
+
   return (
     <section className="panel landing-admin-panel">
       <div className="panel-title"><div><div className="eyebrow">HUAU LANDING</div><h2>{tr(locale, "Portada pública", "Public landing")}</h2></div></div>
@@ -328,6 +349,29 @@ export function LandingAdminPanel({ locale }: { locale: Locale }) {
             <div className="landing-admin-actions"><label className={`ghost small${busy === slot ? " disabled" : ""}`}>{busy === slot ? "…" : tr(locale, "Reemplazar", "Replace")}<input type="file" accept="image/jpeg,image/png,image/webp,image/avif" disabled={busy !== 0} onChange={(event) => void upload(slot, event)} /></label>{hero?.configured && <button className="ghost small" disabled={busy !== 0} onClick={() => void remove(slot)}>{tr(locale, "Quitar", "Remove")}</button>}</div>
           </div>;
         })}
+      </div>
+      <div className="landing-support-admin">
+        <div>
+          <div className="eyebrow">HUAU SUPPORT</div>
+          <h3>{tr(locale, "WhatsApp de soporte", "Support WhatsApp")}</h3>
+          <p className="muted">{tr(locale, "Este número aparece en las páginas públicas de los torneos y abre un chat directo con soporte HUAU.", "This number appears on public tournament pages and opens a direct chat with HUAU support.")}</p>
+        </div>
+        <form onSubmit={(event) => void saveSupport(event)}>
+          <label>
+            <span>{tr(locale, "Número con código de país", "Number with country code")}</span>
+            <input
+              key={data?.supportWhatsapp ?? "loading-support"}
+              name="supportWhatsapp"
+              type="tel"
+              defaultValue={data?.supportWhatsapp ?? ""}
+              placeholder="+598 99 123 456"
+              maxLength={40}
+            />
+          </label>
+          <button className="light" disabled={supportBusy || !data}>
+            {supportBusy ? "…" : tr(locale, "Guardar soporte", "Save support")}
+          </button>
+        </form>
       </div>
       <LandingTutorialAdmin locale={locale} />
       <div className="landing-leads-head"><h3>{tr(locale, "Consultas de organizaciones", "Organization inquiries")}</h3><span>{data?.leads.length ?? 0}</span></div>
