@@ -1532,3 +1532,41 @@ textarea { resize:vertical; }
   stroke-linecap:round;
   stroke-linejoin:round;
 }
+
+/* Platform Admin — low-read user hard delete */
+.platform-admin-tabs { max-width:420px; }
+.platform-users-layout { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(340px,.85fr); gap:18px; align-items:start; }
+.platform-users-list, .platform-user-detail { min-height:260px; }
+.platform-users-note { margin:-10px 0 0; font-size:12px; }
+.platform-user-search { grid-template-columns:minmax(0,1fr) auto auto; align-items:center; margin:20px 0; }
+.platform-user-rows { display:grid; gap:10px; }
+.platform-user-row { display:flex; justify-content:space-between; align-items:center; gap:18px; padding:16px; border:1px solid #252525; border-radius:15px; background:#0a0a0a; }
+.platform-user-copy { min-width:0; display:grid; gap:5px; }
+.platform-user-copy > span, .platform-user-copy > small { color:#858580; font-size:12px; overflow-wrap:anywhere; }
+.platform-user-name-line { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
+.platform-user-name-line strong { font-size:16px; }
+.platform-users-more { margin-top:14px; }
+.platform-user-success { border:1px solid #303f30; background:#111811; border-radius:12px; padding:12px 14px; font-size:12px; line-height:1.5; }
+.platform-user-detail-head { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; }
+.platform-user-detail-head h2 { margin:0 0 5px; font-size:24px; }
+.platform-user-detail-head .eyebrow { margin-bottom:10px; }
+.platform-user-detail-head p { margin:0 0 18px; overflow-wrap:anywhere; }
+.platform-impact-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; margin-top:8px; }
+.platform-impact-card { border:1px solid #292929; background:#0a0a0a; border-radius:13px; padding:13px; display:grid; gap:5px; }
+.platform-impact-card span { color:#8d8d88; font-size:11px; }
+.platform-impact-card strong { font-size:22px; }
+.platform-delete-blocked { display:grid; gap:6px; border:1px solid #383838; border-radius:14px; padding:16px; margin-top:18px; }
+.platform-delete-blocked span { color:#92928e; font-size:12px; line-height:1.5; }
+.platform-hard-delete { margin-top:20px; padding-top:20px; border-top:1px solid #2a2a2a; display:grid; gap:13px; }
+.platform-hard-delete h3 { margin:0; color:var(--danger); }
+.platform-hard-delete p { margin:0; color:#999995; font-size:12px; line-height:1.6; }
+.platform-danger-button { width:100%; border:1px solid var(--danger); border-radius:12px; padding:12px 16px; background:transparent; color:var(--danger); font-weight:750; }
+.platform-danger-button:not(:disabled):hover { background:rgba(255,107,107,.08); }
+@media (max-width: 860px) {
+  .platform-users-layout { grid-template-columns:1fr; }
+}
+@media (max-width: 620px) {
+  .platform-user-search { grid-template-columns:1fr; }
+  .platform-user-row { align-items:flex-start; flex-direction:column; }
+  .platform-impact-grid { grid-template-columns:1fr; }
+}

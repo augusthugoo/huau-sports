@@ -15,6 +15,7 @@ import { handleRegistrationApi } from "./registration";
 import { handlePaymentApi } from "./payments";
 import { handleTournamentDayApi } from "./tournament-day";
 import { handleLandingApi } from "./landing";
+import { handlePlatformUsersApi } from "./platform-users";
 
 const json = (body: unknown, init: ResponseInit = {}) =>
   new Response(JSON.stringify(body), {
@@ -575,6 +576,12 @@ export default {
     if (url.pathname === "/api/platform/organizations" && request.method === "POST") {
       return handlePlatformCreateOrganization(request, env);
     }
+
+    const platformUsersResponse = await handlePlatformUsersApi(request, env, url, {
+      requireUser,
+      isPlatformAdmin,
+    });
+    if (platformUsersResponse) return platformUsersResponse;
 
     const tournamentDayResponse = await handleTournamentDayApi(request, env, url, {
       requireUser,

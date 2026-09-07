@@ -10,6 +10,7 @@ import { MyTournamentRegistrations, PublicTournamentRegistration } from "./Tourn
 import { MyTournamentPayments } from "./TournamentPayments";
 import { Landing, LandingAdminPanel } from "./Landing";
 import { BirthDateField } from "./BirthDateField";
+import { PlatformUsersAdmin } from "./PlatformUsersAdmin";
 
 type Membership = {
   id: string;
@@ -364,9 +365,81 @@ function TournamentList({organizationId,locale,go,me}:{organizationId:string;loc
 }
 
 function PlatformAdmin({locale,go,refreshMe}:{locale:Locale;go:(p:string)=>void;refreshMe:()=>Promise<void>}) {
+  const [section,setSection]=useState<"general"|"users">("general");
   const [message,setMessage]=useState("");
-  const submit=async(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();const f=new FormData(e.currentTarget);try{const r=await api<{organization:{slug:string}}>("/api/platform/organizations",{method:"POST",body:JSON.stringify({name:f.get("name"),slug:f.get("slug"),type:f.get("type"),description:f.get("description")})});setMessage("OK");await refreshMe();go(`/organizations/${r.organization.slug}`);}catch(err){setMessage(err instanceof Error?err.message:"error")}};
-  return <Shell locale={locale} go={go}><main className="dashboard"><section className="dashboard-head"><div><div className="eyebrow">HUAU</div><h1>{t(locale,"platform")}</h1></div></section><LandingAdminPanel locale={locale}/><section className="panel form-panel"><h2>{t(locale,"createOrganization")}</h2><form onSubmit={submit}><Field name="name" label={t(locale,"organizationName")}/><Field name="slug" label={t(locale,"organizationSlug")} required={false}/><label><span>{t(locale,"organizationType")}</span><select name="type" defaultValue="club"><option value="club">Club</option><option value="sports_complex">Sports complex</option><option value="community">Community</option><option value="academy">Academy</option><option value="organizer">Organizer</option><option value="league">League</option><option value="federation">Federation</option></select></label><label><span>{t(locale,"description")}</span><textarea name="description" rows={4}/></label><button className="light">{t(locale,"create")}</button>{message&&<p>{message}</p>}</form></section></main></Shell>;
+  const submit=async(e:FormEvent<HTMLFormElement>)=>{
+    e.preventDefault();
+    const f=new FormData(e.currentTarget);
+    try{
+      const r=await api<{organization:{slug:string}}>("/api/platform/organizations",{
+        method:"POST",
+        body:JSON.stringify({
+          name:f.get("name"),
+          slug:f.get("slug"),
+          type:f.get("type"),
+          description:f.get("description"),
+        }),
+      });
+      setMessage("OK");
+      await refreshMe();
+      go(`/organizations/${r.organization.slug}`);
+    }catch(err){
+      setMessage(err instanceof Error?err.message:"error");
+    }
+  };
+
+  return <Shell locale={locale} go={go}>
+    <main className="dashboard">
+      <section className="dashboard-head">
+        <div>
+          <div className="eyebrow">HUAU</div>
+          <h1>{t(locale,"platform")}</h1>
+        </div>
+      </section>
+
+      <div className="admin-module-strip platform-admin-tabs">
+        <button className={section==="general"?"active":""} onClick={()=>setSection("general")}>
+          {copy(locale,"General","General")}
+        </button>
+        <button className={section==="users"?"active":""} onClick={()=>setSection("users")}>
+          {copy(locale,"Usuarios","Users")}
+        </button>
+      </div>
+
+      {section==="users" ? (
+        <PlatformUsersAdmin locale={locale}/>
+      ) : (
+        <>
+          <LandingAdminPanel locale={locale}/>
+          <section className="panel form-panel">
+            <h2>{t(locale,"createOrganization")}</h2>
+            <form onSubmit={submit}>
+              <Field name="name" label={t(locale,"organizationName")}/>
+              <Field name="slug" label={t(locale,"organizationSlug")} required={false}/>
+              <label>
+                <span>{t(locale,"organizationType")}</span>
+                <select name="type" defaultValue="club">
+                  <option value="club">Club</option>
+                  <option value="sports_complex">Sports complex</option>
+                  <option value="community">Community</option>
+                  <option value="academy">Academy</option>
+                  <option value="organizer">Organizer</option>
+                  <option value="league">League</option>
+                  <option value="federation">Federation</option>
+                </select>
+              </label>
+              <label>
+                <span>{t(locale,"description")}</span>
+                <textarea name="description" rows={4}/>
+              </label>
+              <button className="light">{t(locale,"create")}</button>
+              {message&&<p>{message}</p>}
+            </form>
+          </section>
+        </>
+      )}
+    </main>
+  </Shell>;
 }
 
 function PasswordField({name,label,locale,autoComplete}:{name:string;label:string;locale:Locale;autoComplete:"current-password"|"new-password"}) {
