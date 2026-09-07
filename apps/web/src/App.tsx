@@ -41,6 +41,16 @@ type Me = {
   platformAdmin: boolean;
 };
 type Organization = { id: string; name: string; slug: string; type: string; status: string; description?: string | null };
+type PublicTournamentSummary = {
+  id: string;
+  name: string;
+  slug: string;
+  sport: string;
+  status: string;
+  startAt: number;
+  endAt: number | null;
+  heroImageUrl: string | null;
+};
 type JoinRequest = { id: string; userId: string; name: string; email: string; firstName?: string; lastName?: string; note?: string | null };
 
 type TournamentSummary = {
@@ -96,6 +106,16 @@ function usePath() {
 const copy = (locale: Locale, es: string, en: string) => (locale === "es" ? es : en);
 const toMs = (value: number) => (value < 10_000_000_000 ? value * 1000 : value);
 const displayDate = (value: number) => new Intl.DateTimeFormat("es-UY", { dateStyle: "medium" }).format(new Date(toMs(value)));
+function publicTournamentStatus(locale: Locale, status: string) {
+  const labels: Record<string, [string, string]> = {
+    registration_open: ["Inscripciones abiertas", "Registration open"],
+    registration_closed: ["Inscripciones cerradas", "Registration closed"],
+    draw_ready: ["Sorteo listo", "Draw ready"],
+    scheduled: ["Cronograma publicado", "Schedule published"],
+    live: ["En vivo", "Live"],
+  };
+  return labels[status]?.[locale === "es" ? 0 : 1] ?? status.replaceAll("_", " ");
+}
 
 export function App() {
   const { data: session, isPending } = authClient.useSession();
@@ -225,9 +245,15 @@ function RecoveryScreen({locale,go}:{locale:Locale;go:(p:string)=>void}) { retur
 
 function MyHuau({locale,setLocale,go,me,loading,refreshMe}:{locale:Locale;setLocale:(l:Locale)=>void;go:(p:string)=>void;me:Me|null;loading:boolean;refreshMe:()=>Promise<void>}) {
   const [organizations,setOrganizations]=useState<Organization[]>([]);
+  const [publicTournaments,setPublicTournaments]=useState<PublicTournamentSummary[]>([]);
   const [profileBusy,setProfileBusy]=useState(false);
   const [profileMessage,setProfileMessage]=useState("");
   useEffect(()=>{ void api<{organizations:Organization[]}>("/api/organizations").then(r=>setOrganizations(r.organizations)); },[]);
+  useEffect(()=>{
+    void api<{ok:true;tournaments:PublicTournamentSummary[]}>("/api/public/landing")
+      .then(r=>setPublicTournaments(r.tournaments))
+      .catch(()=>setPublicTournaments([]));
+  },[]);
   const adminOrgIds=useMemo(()=>new Set(me?.capabilities.filter(c=>c.capability==="org_admin"&&c.status==="active").map(c=>c.organizationId)??[]),[me]);
   const profileComplete=Boolean(me?.profile?.firstName&&me.profile.lastName&&me.profile.phone&&me.profile.birthDate&&me.profile.sportGender&&me.profile.sportGender!=="unspecified");
 
@@ -281,6 +307,24 @@ function MyHuau({locale,setLocale,go,me,loading,refreshMe}:{locale:Locale;setLoc
           </div>
           <div className="form-actions"><button className="light small" disabled={profileBusy}>{profileBusy?"…":copy(locale,"Guardar perfil","Save profile")}</button>{profileMessage&&<span className="muted">{profileMessage}</span>}</div>
         </form>
+      </div>
+
+      <div className="panel wide">
+        <div className="panel-title"><h2>{copy(locale,"Torneos públicos","Public tournaments")}</h2><span>{publicTournaments.length}</span></div>
+        {publicTournaments.length ? (
+          <div className="card-list">
+            {publicTournaments.map(tournament=><article className="org-card" key={tournament.id}>
+              <div>
+                <span className="pill">{tournament.sport}</span>
+                <h3>{tournament.name}</h3>
+                <p>{publicTournamentStatus(locale,tournament.status)} · {displayDate(tournament.startAt)}{tournament.endAt ? ` → ${displayDate(tournament.endAt)}` : ""}</p>
+              </div>
+              <div className="card-actions">
+                <button className="light small" onClick={()=>go(`/tournaments/${tournament.slug}`)}>{copy(locale,"Ver torneo","View tournament")}</button>
+              </div>
+            </article>)}
+          </div>
+        ) : <p className="muted">{copy(locale,"No hay torneos públicos disponibles en este momento.","There are no public tournaments available right now.")}</p>}
       </div>
 
       <div className="panel wide"><div className="panel-title"><h2>{t(locale,"organizations")}</h2><span>{me?.memberships.length??0}</span></div>{loading?<p className="muted">Loading…</p>:me?.memberships.length? <div className="card-list">{me.memberships.map(m=><article className="org-card" key={m.id}><div><span className="pill">{m.organizationType}</span><h3>{m.organizationName}</h3><p>{m.status}</p></div><div className="card-actions"><button className="ghost small" onClick={()=>go(`/organizations/${m.organizationSlug}`)}>{t(locale,"openOrganization")}</button>{adminOrgIds.has(m.organizationId)&&<button className="light small" onClick={()=>go(`/admin/organizations/${m.organizationId}`)}>{t(locale,"admin")}</button>}</div></article>)}</div>:<p className="muted">{t(locale,"noOrganizations")}</p>}</div>
