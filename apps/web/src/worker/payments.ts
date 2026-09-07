@@ -556,10 +556,30 @@ async function syncTournamentOrders(env: Env, tournamentId: string) {
   const tournament = await tournamentById(env, tournamentId);
   if (!tournament) return;
   const users = await env.HUAU_DB.prepare(
-    `SELECT DISTINCT user_id as userId FROM tournament_registrations WHERE tournament_id=? AND status NOT IN ('cancelled','rejected')`,
-  ).bind(tournamentId).all<{ userId: string }>();
+    `SELECT DISTINCT userId FROM (
+       SELECT user_id as userId
+         FROM tournament_registrations
+        WHERE tournament_id=? AND status NOT IN ('cancelled','rejected')
+       UNION
+       SELECT payer_user_id as userId
+         FROM payment_orders
+        WHERE tournament_id=? AND payer_kind='user' AND payer_user_id IS NOT NULL
+          AND status IN ('draft','awaiting_payment')
+     )`,
+  ).bind(tournamentId, tournamentId).all<{ userId: string }>();
   for (const item of users.results) await syncUserOrder(env, tournamentId, item.userId);
-  const profiles = await env.HUAU_DB.prepare(`SELECT id FROM tournament_player_profiles WHERE tournament_id=?`).bind(tournamentId).all<{ id: string }>();
+  const profiles = await env.HUAU_DB.prepare(
+    `SELECT DISTINCT id FROM (
+       SELECT id
+         FROM tournament_player_profiles
+        WHERE tournament_id=?
+       UNION
+       SELECT payer_profile_id as id
+         FROM payment_orders
+        WHERE tournament_id=? AND payer_kind='manual_profile' AND payer_profile_id IS NOT NULL
+          AND status IN ('draft','awaiting_payment')
+     )`,
+  ).bind(tournamentId, tournamentId).all<{ id: string }>();
   for (const profile of profiles.results) await syncManualProfileOrder(env, tournament, profile.id);
 }
 
@@ -567,8 +587,16 @@ async function syncMyOrders(request: Request, env: Env, access: AccessHelpers) {
   const user = await access.requireUser(request, env);
   if (!user) return json({ ok: false, code: "UNAUTHENTICATED" }, { status: 401 });
   const tournaments = await env.HUAU_DB.prepare(
-    `SELECT DISTINCT tournament_id as tournamentId FROM tournament_registrations WHERE user_id=? AND status NOT IN ('cancelled','rejected')`,
-  ).bind(user.id).all<{ tournamentId: string }>();
+    `SELECT DISTINCT tournamentId FROM (
+       SELECT tournament_id as tournamentId
+         FROM tournament_registrations
+        WHERE user_id=? AND status NOT IN ('cancelled','rejected')
+       UNION
+       SELECT tournament_id as tournamentId
+         FROM payment_orders
+        WHERE payer_user_id=? AND status IN ('draft','awaiting_payment')
+     )`,
+  ).bind(user.id, user.id).all<{ tournamentId: string }>();
   for (const row of tournaments.results) await syncUserOrder(env, row.tournamentId, user.id);
   return json({ ok: true });
 }
