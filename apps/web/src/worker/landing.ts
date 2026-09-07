@@ -1,3 +1,5 @@
+import { handleLandingTutorialApi, loadPublicLandingTutorials } from "./landing-tutorials";
+import type { PublicLandingTutorial } from "./landing-tutorials";
 type CurrentUser = { id: string; name: string; email: string };
 type AccessHelpers = {
   requireUser: (request: Request, env: Env) => Promise<CurrentUser | null>;
@@ -29,10 +31,11 @@ type PublicLandingPayload = {
   ok: true;
   heroes: Array<{ slot: number; url: string }>;
   tournaments: LandingTournamentRow[];
+  tutorials: PublicLandingTutorial[];
 };
 
 type PublicLandingSnapshot = {
-  version: 1;
+  version: 2;
   generatedAt: number;
   validUntil: number;
   payload: PublicLandingPayload;
@@ -69,14 +72,17 @@ async function buildPublicLandingSnapshot(env: Env): Promise<PublicLandingSnapsh
     timeExpiryCandidates.length ? Math.min(safetyExpiry, ...timeExpiryCandidates) : safetyExpiry,
   );
 
+  const tutorials = await loadPublicLandingTutorials(env);
+
   return {
-    version: 1,
+    version: 2,
     generatedAt,
     validUntil,
     payload: {
       ok: true,
       heroes: [1, 2, 3].map((slot) => ({ slot, url: `/api/public/landing/hero/${slot}` })),
       tournaments: rows.results,
+      tutorials,
     },
   };
 }
@@ -87,7 +93,7 @@ async function publicLanding(env: Env) {
     try {
       const snapshot = JSON.parse(await cached.text()) as PublicLandingSnapshot;
       if (
-        snapshot.version === 1 &&
+        snapshot.version === 2 &&
         snapshot.payload?.ok === true &&
         Number(snapshot.validUntil) > unixNow()
       ) {
@@ -198,6 +204,8 @@ async function updateHero(request: Request, slot: number, env: Env, access: Acce
 export async function handleLandingApi(request: Request, env: Env, url: URL, access: AccessHelpers): Promise<Response | null> {
   if (url.pathname === "/api/public/landing" && request.method === "GET") return publicLanding(env);
   if (url.pathname === "/api/public/contact" && request.method === "POST") return submitContact(request, env);
+  const tutorialResponse = await handleLandingTutorialApi(request, env, url, access);
+  if (tutorialResponse) return tutorialResponse;
   const publicHeroMatch = url.pathname.match(/^\/api\/public\/landing\/hero\/([1-3])$/);
   if (publicHeroMatch && request.method === "GET") return publicHero(Number(publicHeroMatch[1]), env);
   if (url.pathname === "/api/platform/landing" && request.method === "GET") return platformLanding(request, env, access);

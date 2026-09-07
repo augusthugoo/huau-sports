@@ -1570,3 +1570,15 @@ textarea { resize:vertical; }
   .platform-user-row { align-items:flex-start; flex-direction:column; }
   .platform-impact-grid { grid-template-columns:1fr; }
 }
+
+/* HUAU iPhone form focus zoom fix
+   Keep native pinch zoom enabled; Safari only needs 16px controls to avoid focus zoom. */
+@supports (-webkit-touch-callout: none) {
+  @media (max-width: 760px) {
+    input,
+    select,
+    textarea {
+      font-size: 16px !important;
+    }
+  }
+}

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 import type { Locale } from "./i18n";
 import "./Landing.css";
+import { LandingTutorialAdmin, LandingTutorialSection } from "./LandingTutorials";
+import type { LandingTutorial } from "./LandingTutorials";
 
 type Go = (path: string) => void;
 const tr = (locale: Locale, es: string, en: string) => (locale === "es" ? es : en);
@@ -21,6 +23,7 @@ type LandingData = {
   ok: true;
   heroes: Array<{ slot: number; url: string }>;
   tournaments: LandingTournament[];
+  tutorials: LandingTutorial[];
 };
 
 type ContactLead = {
@@ -225,6 +228,8 @@ export function Landing({ locale, setLocale, go, authenticated = false }: { loca
         ) : <div className="landing-empty">{tr(locale, "Los próximos torneos públicos van a aparecer acá.", "Upcoming public tournaments will appear here.")}</div>}
       </section>
 
+      <LandingTutorialSection locale={locale} tutorials={data?.tutorials ?? []} />
+
       <section className="player-callout">
         <div><span>{tr(locale, "PARA JUGADORES", "FOR PLAYERS")}</span><h2>{tr(locale, "¿Querés competir?", "Want to compete?")}</h2><p>{tr(locale, "Creá tu cuenta HUAU para inscribirte, completar tu perfil deportivo y seguir tus torneos desde un solo lugar.", "Create your HUAU account to register, complete your sports profile and follow your tournaments from one place.")}</p></div>
         <button className="landing-button inverted" onClick={() => go(authenticated ? "/app" : "/signup")}>{authenticated ? tr(locale, "Ir a mi perfil", "Go to my profile") : tr(locale, "Crear cuenta", "Create account")}</button>
@@ -324,6 +329,7 @@ export function LandingAdminPanel({ locale }: { locale: Locale }) {
           </div>;
         })}
       </div>
+      <LandingTutorialAdmin locale={locale} />
       <div className="landing-leads-head"><h3>{tr(locale, "Consultas de organizaciones", "Organization inquiries")}</h3><span>{data?.leads.length ?? 0}</span></div>
       {!data ? <div className="empty-state">{tr(locale, "Cargando…", "Loading…")}</div> : !data.contactStorageReady ? <div className="empty-state">{tr(locale, "Aplicá la migración 0013 para activar el formulario de contacto.", "Apply migration 0013 to activate contact storage.")}</div> : data.leads.length ? <div className="landing-leads-list">{data.leads.map((lead) => <article key={lead.id}><div><strong>{lead.organization}</strong><span>{lead.name} · {lead.email}{lead.phone ? ` · ${lead.phone}` : ""}</span></div><span className="pill">{lead.organizationType}</span><p>{lead.message}</p><small>{new Intl.DateTimeFormat(locale === "es" ? "es-UY" : "en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(lead.createdAt))}</small></article>)}</div> : <div className="empty-state">{tr(locale, "Todavía no hay consultas.", "No inquiries yet.")}</div>}
       {message && <p className="muted">{message}</p>}
