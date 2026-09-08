@@ -571,8 +571,8 @@ async function teamCandidateHardViolation(env: Env, category: CategoryRow, entry
 
 async function recalcCompetitiveEntry(env: Env, entryId: string) {
   const entry = await env.HUAU_DB.prepare(
-    `SELECT id,category_id as categoryId,entry_type as entryType,status,waitlist_position as waitlistPosition FROM tournament_entries WHERE id=?`,
-  ).bind(entryId).first<{ id: string; categoryId: string; entryType: "individual" | "pair" | "team"; status: string; waitlistPosition: number | null }>();
+    `SELECT id,category_id as categoryId,entry_type as entryType,status,waitlist_position as waitlistPosition,source_kind as sourceKind FROM tournament_entries WHERE id=?`,
+  ).bind(entryId).first<{ id: string; categoryId: string; entryType: "individual" | "pair" | "team"; status: string; waitlistPosition: number | null; sourceKind: string | null }>();
   if (!entry || ["withdrawn", "rejected"].includes(entry.status)) return;
   const category = await categoryById(env, entry.categoryId);
   if (!category) return;
@@ -609,6 +609,22 @@ async function recalcCompetitiveEntry(env: Env, entryId: string) {
   const registrations = await env.HUAU_DB.prepare(
     `SELECT status,final_amount_minor as finalAmountMinor FROM tournament_registrations WHERE entry_id=? AND status NOT IN ('cancelled','rejected')`,
   ).bind(entryId).all<{ status: string; finalAmountMinor: number }>();
+  if (
+    entry.entryType === "team" &&
+    entry.sourceKind === "online_registration" &&
+    members.results.length === 0 &&
+    registrations.results.length === 0
+  ) {
+    const stamp = now();
+    await env.HUAU_DB.prepare(
+      `UPDATE tournament_entries
+          SET status='withdrawn',waitlist_position=NULL,updated_at=?,version=version+1
+        WHERE id=?`,
+    ).bind(stamp, entry.id).run();
+    if (entry.status === "waitlisted" || entry.waitlistPosition) await compactWaitlist(env, entry.categoryId);
+    return;
+  }
+
   const paymentsReady = registrations.results.every((registration) => registration.finalAmountMinor === 0 || registration.status === "confirmed");
   const status = entry.status === "waitlisted"
     ? "waitlisted"

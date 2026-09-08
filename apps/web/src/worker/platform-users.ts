@@ -235,6 +235,42 @@ async function userImpact(
   });
 }
 
+async function onlineTeamEntryIdsForTarget(target: UserRow, env: Env): Promise<string[]> {
+  const result = await env.HUAU_DB.prepare(
+    `SELECT te.id
+       FROM tournament_entries te
+      WHERE te.entry_type='team'
+        AND te.source_kind='online_registration'
+        AND (te.captain_user_id=? OR te.created_by_user_id=?)
+     UNION
+     SELECT te.id
+       FROM tournament_entries te
+       JOIN tournament_registrations tr ON tr.entry_id=te.id
+      WHERE te.entry_type='team'
+        AND te.source_kind='online_registration'
+        AND tr.user_id=?
+     UNION
+     SELECT te.id
+       FROM tournament_entries te
+       JOIN entry_members em ON em.entry_id=te.id
+       LEFT JOIN organization_people op ON op.id=em.organization_person_id
+      WHERE te.entry_type='team'
+        AND te.source_kind='online_registration'
+        AND (em.invited_user_id=? OR op.user_id=? OR op.email=?)
+     UNION
+     SELECT te.id
+       FROM tournament_entries te
+       JOIN tournament_registrations tr ON tr.id=te.source_key
+      WHERE te.entry_type='team'
+        AND te.source_kind='online_registration'
+        AND tr.user_id=?`,
+  )
+    .bind(target.id, target.id, target.id, target.id, target.id, target.email, target.id)
+    .all<{ id: string }>();
+
+  return Array.from(new Set((result.results ?? []).map((row) => row.id).filter(Boolean)));
+}
+
 async function ownedR2Keys(target: UserRow, env: Env): Promise<string[]> {
   const result = await env.HUAU_DB.prepare(
     `SELECT avatar_r2_key AS objectKey
@@ -314,8 +350,30 @@ async function hardDeleteUser(
     return json({ ok: false, code: "EMAIL_CONFIRMATION_MISMATCH" }, { status: 400 });
   }
 
-  const r2Keys = await ownedR2Keys(target, env);
+  const [r2Keys, targetOnlineTeamEntryIds] = await Promise.all([
+    ownedR2Keys(target, env),
+    onlineTeamEntryIdsForTarget(target, env),
+  ]);
   const emailLike = `%${target.email}%`;
+  const orphanOnlineTeamSql = targetOnlineTeamEntryIds.length
+    ? `SELECT te.id
+         FROM tournament_entries te
+        WHERE te.id IN (${targetOnlineTeamEntryIds.map(() => "?").join(",")})
+          AND te.entry_type='team'
+          AND te.source_kind='online_registration'
+          AND NOT EXISTS (
+            SELECT 1
+              FROM tournament_registrations tr
+             WHERE tr.entry_id=te.id
+               AND tr.status NOT IN ('cancelled','rejected')
+          )
+          AND NOT EXISTS (
+            SELECT 1
+              FROM entry_members em
+             WHERE em.entry_id=te.id
+               AND em.status IN ('accepted','manual')
+          )`
+    : null;
 
   const statements = [
     env.HUAU_DB.prepare(
@@ -412,6 +470,20 @@ async function hardDeleteUser(
         WHERE invited_user_id=?
            OR organization_person_id IN (${targetPeopleSql})`,
     ).bind(target.id, target.id, target.email),
+    ...(orphanOnlineTeamSql ? [
+      env.HUAU_DB.prepare(
+        `UPDATE competition_encounters SET entry_a_id=NULL WHERE entry_a_id IN (${orphanOnlineTeamSql})`,
+      ).bind(...targetOnlineTeamEntryIds),
+      env.HUAU_DB.prepare(
+        `UPDATE competition_encounters SET entry_b_id=NULL WHERE entry_b_id IN (${orphanOnlineTeamSql})`,
+      ).bind(...targetOnlineTeamEntryIds),
+      env.HUAU_DB.prepare(
+        `UPDATE competition_encounters SET winner_entry_id=NULL WHERE winner_entry_id IN (${orphanOnlineTeamSql})`,
+      ).bind(...targetOnlineTeamEntryIds),
+      env.HUAU_DB.prepare(
+        `DELETE FROM tournament_entries WHERE id IN (${orphanOnlineTeamSql})`,
+      ).bind(...targetOnlineTeamEntryIds),
+    ] : []),
     env.HUAU_DB.prepare(
       `DELETE FROM tournament_player_profiles
         WHERE organization_person_id IN (${targetPeopleSql})`,
