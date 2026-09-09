@@ -947,13 +947,52 @@ export function EpicErrorModal({ locale, error, onClose }: { locale: Locale; err
   return <div className="epic-modal-backdrop" role="presentation" onMouseDown={(event)=>{if(event.target===event.currentTarget)onClose()}}><section className="epic-error-modal" role="dialog" aria-modal="true" aria-labelledby="epic-error-title"><button className="epic-modal-close" onClick={onClose} aria-label={tr(locale,"Cerrar","Close")}>×</button><div className="epic-error-icon">×</div><h2 id="epic-error-title">{message.title}</h2><div className="epic-error-lines">{message.lines.map((line,index)=><p key={`${line}-${index}`}>{line}</p>)}</div><button className="light" onClick={onClose}>{tr(locale,"Corregir","Fix it")}</button></section></div>;
 }
 
-export function EpicPublicLinkCard({ locale, snapshot }: { locale: Locale; snapshot: TournamentDayReformSnapshot }) {
+export function EpicPublicLinkCard({
+  locale,
+  snapshot,
+  busy = false,
+  onToggleLanding,
+}: {
+  locale: Locale;
+  snapshot: TournamentDayReformSnapshot;
+  busy?: boolean;
+  onToggleLanding?: (enabled: boolean) => Promise<void>;
+}) {
   const [copied,setCopied]=useState(false);
   const tournament=snapshot.workspace.core.tournament as any;
   const slug=String(tournament.slug??"").trim();
   const dirty=ensureDayLocalMeta(snapshot).publicDirty;
+  const promoted=Boolean(tournament.publicLive);
   if(!slug)return null;
   const url=`${window.location.origin}/tournaments/${encodeURIComponent(slug)}/live`;
   const copy=async()=>{await navigator.clipboard.writeText(url);setCopied(true);window.setTimeout(()=>setCopied(false),1800)};
-  return <article className="panel epic-public-link"><div><div className="eyebrow">{tr(locale,"PÁGINA PÚBLICA","PUBLIC PAGE")}</div><h2>{tr(locale,"Compartir torneo","Share tournament")}</h2><p className="muted">{tr(locale,"El seguimiento público es independiente de si la inscripción es abierta o por invitación.","Public tournament tracking is independent from open or invite-only registration.")}</p></div><div className="epic-public-url"><code>{url}</code><div><button className="ghost" onClick={()=>void copy()}>{copied?tr(locale,"Copiado ✓","Copied ✓"):tr(locale,"Copiar enlace","Copy link")}</button><button className="light" onClick={()=>window.open(url,"_blank","noopener")}>{tr(locale,"Abrir página pública","Open public page")} ↗</button></div></div><small>{dirty.lastStructurePublishedAt?tr(locale,"Estructura pública disponible.","Public structure available."):tr(locale,"Publicá información para habilitar la página.","Publish structure to enable the page.")}</small></article>;
+  return <article className="panel epic-public-link">
+    <div>
+      <div className="eyebrow">{tr(locale,"PÁGINA PÚBLICA","PUBLIC PAGE")}</div>
+      <h2>{tr(locale,"Compartir torneo","Share tournament")}</h2>
+      <p className="muted">{tr(locale,"Publicar el seguimiento Live y promocionarlo en la portada son decisiones separadas.","Publishing Live tracking and promoting it on the home page are separate decisions.")}</p>
+    </div>
+    <div className="epic-public-url">
+      <code>{url}</code>
+      <div>
+        <button className="ghost" onClick={()=>void copy()}>{copied?tr(locale,"Copiado ✓","Copied ✓"):tr(locale,"Copiar enlace","Copy link")}</button>
+        <button className="light" onClick={()=>window.open(url,"_blank","noopener")}>{tr(locale,"Abrir página pública","Open public page")} ↗</button>
+      </div>
+    </div>
+    <div className="toggle-row">
+      <span>{tr(locale,"Mostrar Live en portada","Show Live on home")}</span>
+      <button
+        type="button"
+        className={promoted?"light small":"ghost small"}
+        disabled={busy || !onToggleLanding}
+        onClick={()=>void onToggleLanding?.(!promoted)}
+      >{busy?"…":promoted?"ON":"OFF"}</button>
+    </div>
+    <small>{promoted
+      ? tr(locale,"La franja Live de huau.app puede mostrar este torneo cuando haya información pública publicada.","The huau.app Live ticker may show this tournament when public information is published.")
+      : tr(locale,"Este torneo NO aparece en la franja Live de la portada.","This tournament does NOT appear in the home-page Live ticker.")
+    }</small>
+    <small>{dirty.lastStructurePublishedAt?tr(locale,"Estructura pública disponible.","Public structure available."):tr(locale,"Publicá información para habilitar la página.","Publish structure to enable the page.")}</small>
+    {!onToggleLanding ? <small>{tr(locale,"La promoción en portada se controla desde Administración.","Home-page promotion is controlled from Administration.")}</small> : null}
+  </article>;
 }

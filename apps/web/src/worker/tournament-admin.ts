@@ -29,6 +29,10 @@ import {
   type TournamentGroup,
   type TournamentPersistenceBundle,
 } from "@huau/core";
+import {
+  cleanupDeletedTournamentPublicArtifacts,
+  setTournamentLandingPromotion,
+} from "./tournament-day-public";
 
 type CurrentUser = { id: string; name: string; email: string };
 type AccessHelpers = {
@@ -3390,6 +3394,9 @@ export async function handleTournamentAdminApi(
                 status=COALESCE(?,status),public_live=COALESCE(?,public_live),public_participants=COALESCE(?,public_participants),updated_at=? WHERE id=?`,
       ).bind(body.name?.trim() || null,body.courtCount ? Math.max(1,Math.trunc(body.courtCount)) : null,body.visibility ?? null,body.status ?? null,
         body.publicLive === undefined ? null : asBool(body.publicLive),body.publicParticipants === undefined ? null : asBool(body.publicParticipants),unixNow(),tournamentId).run();
+      if (body.publicLive !== undefined) {
+        await setTournamentLandingPromotion(env, tournamentId, body.publicLive);
+      }
       await invalidatePublicCatalogState(env, accessResult.tournament.slug);
       return json({ ok: true });
     }
@@ -3398,6 +3405,11 @@ export async function handleTournamentAdminApi(
       if (!body.confirmDelete) {
         return json({ ok: false, code: "TOURNAMENT_DELETE_CONFIRM_REQUIRED" }, { status: 409 });
       }
+      await cleanupDeletedTournamentPublicArtifacts(
+        env,
+        tournamentId,
+        accessResult.tournament.slug,
+      );
       await audit(env, accessResult.tournament, accessResult.user.id, "tournament.delete", `Deleted tournament ${accessResult.tournament.name}`, "tournament", tournamentId);
       await env.HUAU_DB.prepare(`DELETE FROM tournaments WHERE id=?`).bind(tournamentId).run();
       await invalidatePublicCatalogState(env, accessResult.tournament.slug);

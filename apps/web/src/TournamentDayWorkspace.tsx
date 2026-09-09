@@ -607,6 +607,37 @@ export function TournamentDayWorkspace(props: Props) {
     }
   };
 
+  const toggleLandingPromotion = async (enabled: boolean) => {
+    if (operatorToken) {
+      setError(tr(locale, "La promoción en portada requiere una sesión de administrador.", "Home-page promotion requires an administrator session."));
+      return;
+    }
+    const current = sessionRef.current;
+    if (!current) return;
+    setBusy("public-promotion");
+    setError("");
+    try {
+      await api(`/api/admin/tournaments/${encodeURIComponent(current.tournamentId)}`, {
+        method: "PUT",
+        body: JSON.stringify({ publicLive: enabled }),
+      });
+      const snapshot = initializeReformSnapshot(
+        cloneDay(current.snapshot) as TournamentDayReformSnapshot,
+      );
+      (snapshot.workspace.core.tournament as any).publicLive = enabled;
+      await install({ ...current, snapshot, updatedAt: Date.now() });
+      setNotice(
+        enabled
+          ? tr(locale, "Live habilitado para aparecer en la portada de HUAU.", "Live enabled for the HUAU home-page ticker.")
+          : tr(locale, "Live retirado de la portada de HUAU. La página pública puede seguir disponible por enlace.", "Live removed from the HUAU home page. The public page may remain available by link."),
+      );
+    } catch (promotionError) {
+      setError(promotionError instanceof Error ? promotionError.message : "TOURNAMENT_LANDING_PROMOTION_FAILED");
+    } finally {
+      setBusy("");
+    }
+  };
+
   const loadQaFixture = async () => {
     if (!qaMode) return;
     if (!window.confirm(tr(locale, "QA PRIVADO: esto agrega datos ficticios únicamente a la copia LOCAL actual. No lo uses sobre el torneo real. ¿Continuar?", "PRIVATE QA: this adds fake data only to the current LOCAL copy. Do not use it on the real tournament. Continue?"))) return;
@@ -783,7 +814,12 @@ export function TournamentDayWorkspace(props: Props) {
 
       {tab === "configuration" ? (
         <section className="td-stack">
-          <EpicPublicLinkCard locale={locale} snapshot={snapshot as TournamentDayReformSnapshot} />
+          <EpicPublicLinkCard
+            locale={locale}
+            snapshot={snapshot as TournamentDayReformSnapshot}
+            busy={busy === "public-promotion"}
+            {...(!operatorToken ? { onToggleLanding: toggleLandingPromotion } : {})}
+          />
           <IntegralConfigurationPanel
           locale={locale}
           snapshot={snapshot as TournamentDayReformSnapshot}

@@ -12,6 +12,7 @@ type ManifestEntry = {
   startAt: number;
   endAt: number | null;
   status: "scheduled" | "live" | "finished";
+  showOnLanding?: boolean;
   structureRevision: number;
   liveRevision: number;
   updatedAt: number;
@@ -96,13 +97,48 @@ async function writeManifest(env: Env, manifest: LiveManifest) {
   });
 }
 
+export async function setTournamentLandingPromotion(
+  env: Env,
+  tournamentId: string,
+  enabled: boolean,
+): Promise<boolean> {
+  const manifest = await readManifest(env);
+  const entry = manifest.tournaments.find((candidate) => candidate.tournamentId === tournamentId);
+  if (!entry) return false;
+  entry.showOnLanding = enabled;
+  entry.updatedAt = Date.now();
+  await writeManifest(env, manifest);
+  return true;
+}
+
+export async function cleanupDeletedTournamentPublicArtifacts(
+  env: Env,
+  tournamentId: string,
+  slug: string,
+): Promise<void> {
+  const manifest = await readManifest(env);
+  const next = manifest.tournaments.filter((entry) => entry.tournamentId !== tournamentId);
+  if (next.length !== manifest.tournaments.length) {
+    manifest.tournaments = next;
+    await writeManifest(env, manifest);
+  }
+  await Promise.all([
+    env.HUAU_ASSETS.delete(`public/tournaments/${tournamentId}/structure.json`),
+    env.HUAU_ASSETS.delete(`public/tournaments/${tournamentId}/live.json`),
+    env.HUAU_ASSETS.delete(`public/tournaments/${slug}/core.json`),
+    env.HUAU_ASSETS.delete(`public/tournaments/${slug}/community-link.json`),
+    env.HUAU_ASSETS.delete("public/landing.json"),
+  ]);
+}
+
 async function adminTournament(request: Request, env: Env, tournamentId: string, access: AccessHelpers) {
   const user = await access.requireUser(request, env);
   if (!user) return json({ ok: false, code: "UNAUTHENTICATED" }, { status: 401 });
   const tournament = await env.HUAU_DB.prepare(
-    `SELECT id,organizer_organization_id as organizationId,name,slug,sport,start_at as startAt,end_at as endAt
+    `SELECT id,organizer_organization_id as organizationId,name,slug,sport,start_at as startAt,end_at as endAt,
+            public_live as publicLive
        FROM tournaments WHERE id=?`,
-  ).bind(tournamentId).first<{ id: string; organizationId: string; name: string; slug: string; sport: string; startAt: number; endAt: number | null }>();
+  ).bind(tournamentId).first<{ id: string; organizationId: string; name: string; slug: string; sport: string; startAt: number; endAt: number | null; publicLive: number }>();
   if (!tournament) return json({ ok: false, code: "TOURNAMENT_NOT_FOUND" }, { status: 404 });
   if (!(await access.isOrgAdmin(user.id, tournament.organizationId, env, request))) {
     return json({ ok: false, code: "FORBIDDEN" }, { status: 403 });
@@ -119,16 +155,16 @@ async function sha256(value: string) {
 async function operatorTournament(env: Env, token: string) {
   const tokenHash = await sha256(token);
   const row = await env.HUAU_DB.prepare(
-    `SELECT t.id,t.name,t.slug,t.sport,t.start_at as startAt,t.end_at as endAt
+    `SELECT t.id,t.name,t.slug,t.sport,t.start_at as startAt,t.end_at as endAt,t.public_live as publicLive
        FROM tournament_day_state ds
        JOIN tournaments t ON t.id=ds.tournament_id
       WHERE ds.token_hash=? LIMIT 1`,
-  ).bind(tokenHash).first<{ id: string; name: string; slug: string; sport: string; startAt: number; endAt: number | null }>();
+  ).bind(tokenHash).first<{ id: string; name: string; slug: string; sport: string; startAt: number; endAt: number | null; publicLive: number }>();
   if (!row) return null;
   return row;
 }
 
-async function publishModel(env: Env, tournament: { id: string; name: string; slug: string; sport: string; startAt: number; endAt: number | null }, kind: "structure" | "live", body: unknown) {
+async function publishModel(env: Env, tournament: { id: string; name: string; slug: string; sport: string; startAt: number; endAt: number | null; publicLive: number }, kind: "structure" | "live", body: unknown) {
   const { model, serialized } = publicModelShape(body, kind, tournament.id);
   const key = `public/tournaments/${tournament.id}/${kind}.json`;
   await env.HUAU_ASSETS.put(key, serialized, {
@@ -152,6 +188,7 @@ async function publishModel(env: Env, tournament: { id: string; name: string; sl
     startAt: Number(tournament.startAt),
     endAt: tournament.endAt === null ? null : Number(tournament.endAt),
     status: requestedStatus,
+    showOnLanding: Boolean(tournament.publicLive),
     structureRevision: kind === "structure" ? Number(model.revision ?? 0) : Number(prior?.structureRevision ?? 0),
     liveRevision: kind === "live" ? Number(model.revision ?? 0) : Number(prior?.liveRevision ?? 0),
     updatedAt: Date.now(),
@@ -191,7 +228,7 @@ async function publicBundle(env: Env, slug: string) {
 export async function handleTournamentDayPublicApi(request: Request, env: Env, url: URL, access: AccessHelpers): Promise<Response | null> {
   if (url.pathname === "/api/public/live-tournaments" && request.method === "GET") {
     const manifest = await readManifest(env);
-    return new Response(JSON.stringify({ ok: true, ...manifest }), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "public, max-age=30, stale-while-revalidate=60" } });
+    return new Response(JSON.stringify({ ok: true, ...manifest }), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "public, max-age=5, must-revalidate" } });
   }
 
   const publicRoute = url.pathname.match(/^\/api\/public\/tournaments\/([^/]+)\/day-live$/);
