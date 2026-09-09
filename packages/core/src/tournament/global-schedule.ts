@@ -24,6 +24,15 @@ export type GlobalScheduleUnit = {
   minimumRestSlots?: number;
   preferredRestSlots?: number;
   priority?: number;
+  groupId?: string | null;
+  groupName?: string | null;
+  policyPhase?: number | null;
+  policySequenceKey?: string | null;
+  policySequenceIndex?: number | null;
+  allowedCourts?: number[];
+  preferredCourts?: number[];
+  exclusiveCourts?: number[];
+  maxConcurrentCourts?: number | null;
   rubbers?: GlobalScheduleRubber[];
 };
 
@@ -183,8 +192,11 @@ function courtFree(
 function dependenciesReady(
   unit: GlobalScheduleUnit,
   assignmentsByUnit: Map<string, GlobalScheduleAssignment>,
+  unitsById: Map<string, GlobalScheduleUnit>,
 ) {
-  return (unit.dependencyIds ?? []).every((dependencyId) => assignmentsByUnit.has(dependencyId));
+  return (unit.dependencyIds ?? []).every(
+    (dependencyId) => !unitsById.has(dependencyId) || assignmentsByUnit.has(dependencyId),
+  );
 }
 
 function dependencyEnd(unit: GlobalScheduleUnit, assignmentsByUnit: Map<string, GlobalScheduleAssignment>) {
@@ -225,6 +237,124 @@ function barrierEnd(
   );
 }
 
+function lowerPolicyPhaseUnits(unit: GlobalScheduleUnit, units: GlobalScheduleUnit[]) {
+  const phase = Number(unit.policyPhase ?? 0);
+  if (phase <= 1) return [];
+  return units.filter(
+    (candidate) =>
+      candidate.id !== unit.id &&
+      candidate.date === unit.date &&
+      Number(candidate.policyPhase ?? 0) > 0 &&
+      Number(candidate.policyPhase ?? 0) < phase,
+  );
+}
+
+function policyPhaseReady(
+  unit: GlobalScheduleUnit,
+  units: GlobalScheduleUnit[],
+  assignmentsByUnit: Map<string, GlobalScheduleAssignment>,
+) {
+  return lowerPolicyPhaseUnits(unit, units).every((candidate) => assignmentsByUnit.has(candidate.id));
+}
+
+function policyPhaseEnd(
+  unit: GlobalScheduleUnit,
+  units: GlobalScheduleUnit[],
+  assignmentsByUnit: Map<string, GlobalScheduleAssignment>,
+) {
+  return Math.max(
+    0,
+    ...lowerPolicyPhaseUnits(unit, units).map(
+      (candidate) => assignmentsByUnit.get(candidate.id)?.endAt ?? 0,
+    ),
+  );
+}
+
+function lowerPolicySequenceUnits(unit: GlobalScheduleUnit, units: GlobalScheduleUnit[]) {
+  const key = unit.policySequenceKey;
+  const index = Number(unit.policySequenceIndex ?? 0);
+  if (!key || index <= 1) return [];
+  return units.filter(
+    (candidate) =>
+      candidate.id !== unit.id &&
+      candidate.date === unit.date &&
+      candidate.policySequenceKey === key &&
+      Number(candidate.policySequenceIndex ?? 0) > 0 &&
+      Number(candidate.policySequenceIndex ?? 0) < index,
+  );
+}
+
+function policySequenceReady(
+  unit: GlobalScheduleUnit,
+  units: GlobalScheduleUnit[],
+  assignmentsByUnit: Map<string, GlobalScheduleAssignment>,
+) {
+  return lowerPolicySequenceUnits(unit, units).every((candidate) => assignmentsByUnit.has(candidate.id));
+}
+
+function policySequenceEnd(
+  unit: GlobalScheduleUnit,
+  units: GlobalScheduleUnit[],
+  assignmentsByUnit: Map<string, GlobalScheduleAssignment>,
+) {
+  return Math.max(
+    0,
+    ...lowerPolicySequenceUnits(unit, units).map(
+      (candidate) => assignmentsByUnit.get(candidate.id)?.endAt ?? 0,
+    ),
+  );
+}
+
+function exclusiveCourtOwners(units: GlobalScheduleUnit[], courtCount: number) {
+  const owners = new Map<number, Set<string>>();
+  for (const unit of units) {
+    for (const court of unit.exclusiveCourts ?? []) {
+      const value = Math.trunc(Number(court));
+      if (value < 1 || value > courtCount) continue;
+      const set = owners.get(value) ?? new Set<string>();
+      set.add(unit.categoryId);
+      owners.set(value, set);
+    }
+  }
+  return owners;
+}
+
+function courtOrder(
+  unit: GlobalScheduleUnit,
+  courtCount: number,
+  exclusiveOwners: Map<number, Set<string>>,
+) {
+  const all = Array.from({ length: courtCount }, (_, index) => index + 1);
+  const valid = (values: number[] | undefined) => [...new Set((values ?? [])
+    .map((value) => Math.trunc(Number(value)))
+    .filter((value) => value >= 1 && value <= courtCount))];
+  const exclusive = valid(unit.exclusiveCourts);
+  const allowed = valid(unit.allowedCourts);
+  let base = exclusive.length ? exclusive : allowed.length ? allowed : all;
+  base = base.filter((court) => {
+    const owners = exclusiveOwners.get(court);
+    return !owners?.size || owners.has(unit.categoryId);
+  });
+  const preferred = valid(unit.preferredCourts).filter((court) => base.includes(court));
+  return [...preferred, ...base.filter((court) => !preferred.includes(court))];
+}
+
+function categoryConcurrencyOk(
+  unit: GlobalScheduleUnit,
+  startAt: number,
+  endAt: number,
+  assignments: GlobalScheduleAssignment[],
+) {
+  const max = Number(unit.maxConcurrentCourts ?? 0);
+  if (!Number.isFinite(max) || max <= 0) return true;
+  const simultaneous = assignments.filter(
+    (assignment) =>
+      assignment.categoryId === unit.categoryId &&
+      intervalsOverlap(startAt, endAt, assignment.startAt, assignment.endAt),
+  ).length;
+  return simultaneous < max;
+}
+
 function unitOrderScore(unit: GlobalScheduleUnit, categoryCounts: Map<string, number>) {
   const stageWeight = unit.stage === "group" ? 0 : unit.stage === "playoff" ? 20 : unit.stage === "bronze" ? 30 : unit.stage === "final" ? 40 : 10;
   return (unit.priority ?? 0) * -1000 + stageWeight + (categoryCounts.get(unit.categoryId) ?? 0) * 3 + Number(unit.roundNumber ?? 0) + Number(unit.legNumber ?? 0) * 2;
@@ -259,6 +389,7 @@ export function generateGlobalTournamentSchedule(input: {
   const assignmentsByUnit = new Map<string, GlobalScheduleAssignment>();
   const closedCourts = input.closedCourts ?? [];
   const breaks = input.breaks ?? [];
+  const exclusiveOwners = exclusiveCourtOwners(units, courtCount);
 
   for (const lock of input.locks ?? []) {
     const unit = unitsById.get(lock.unitId);
@@ -271,7 +402,9 @@ export function generateGlobalTournamentSchedule(input: {
       lock.startAt < dayStart ||
       lock.endAt > dayEnd ||
       lock.endAt <= lock.startAt ||
+      !courtOrder(unit, courtCount, exclusiveOwners).includes(lock.court) ||
       !courtFree(lock.court, lock.startAt, lock.endAt, assignments, closedCourts, breaks) ||
+      !categoryConcurrencyOk(unit, lock.startAt, lock.endAt, assignments) ||
       !participantRestOk(unit, lock.startAt, lock.endAt, assignments, unitsById, settings, false);
     if (invalid) {
       conflicts.push({
@@ -304,13 +437,20 @@ export function generateGlobalTournamentSchedule(input: {
     progress = false;
     const ready = pending
       .filter((unit) => !assignmentsByUnit.has(unit.id))
-      .filter((unit) => dependenciesReady(unit, assignmentsByUnit))
+      .filter((unit) => dependenciesReady(unit, assignmentsByUnit, unitsById))
       .filter((unit) => barrierReady(unit, units, assignmentsByUnit))
+      .filter((unit) => policyPhaseReady(unit, units, assignmentsByUnit))
+      .filter((unit) => policySequenceReady(unit, units, assignmentsByUnit))
       .sort((a, b) => unitOrderScore(a, categoryCounts) - unitOrderScore(b, categoryCounts));
 
     for (const unit of ready) {
       const durationMs = assignmentDuration(unit) * MINUTE;
-      const earliestAt = Math.max(dependencyEnd(unit, assignmentsByUnit), barrierEnd(unit, units, assignmentsByUnit));
+      const earliestAt = Math.max(
+        dependencyEnd(unit, assignmentsByUnit),
+        barrierEnd(unit, units, assignmentsByUnit),
+        policyPhaseEnd(unit, units, assignmentsByUnit),
+        policySequenceEnd(unit, units, assignmentsByUnit),
+      );
       const dayEnd = localDateMinute(unit.date, parseClock(settings.dailyEnd));
       let best: { court: number; startAt: number; preferred: boolean } | null = null;
 
@@ -318,7 +458,8 @@ export function generateGlobalTournamentSchedule(input: {
         for (const startAt of candidateTimes(unit.date, settings, earliestAt)) {
           const endAt = startAt + durationMs;
           if (endAt > dayEnd) break;
-          for (let court = 1; court <= courtCount; court += 1) {
+          if (!categoryConcurrencyOk(unit, startAt, endAt, assignments)) continue;
+          for (const court of courtOrder(unit, courtCount, exclusiveOwners)) {
             if (!courtFree(court, startAt, endAt, assignments, closedCourts, breaks)) continue;
             if (!participantRestOk(unit, startAt, endAt, assignments, unitsById, settings, false)) continue;
             if (preferred && !participantRestOk(unit, startAt, endAt, assignments, unitsById, settings, true)) continue;
@@ -352,6 +493,7 @@ export function generateGlobalTournamentSchedule(input: {
     const unit = unitsById.get(assignment.unitId);
     if (!unit) continue;
     const dependencyViolation = (unit.dependencyIds ?? []).some((dependencyId) => {
+      if (!unitsById.has(dependencyId)) return false;
       const dependency = assignmentsByUnit.get(dependencyId);
       return !dependency || dependency.endAt > assignment.startAt;
     });
@@ -372,7 +514,12 @@ export function generateGlobalTournamentSchedule(input: {
 
   const unscheduled = pending.filter((unit) => !assignmentsByUnit.has(unit.id));
   for (const unit of unscheduled) {
-    const unresolved = (unit.dependencyIds ?? []).some((dependencyId) => !assignmentsByUnit.has(dependencyId));
+    const unresolved =
+      (unit.dependencyIds ?? []).some(
+        (dependencyId) => unitsById.has(dependencyId) && !assignmentsByUnit.has(dependencyId),
+      ) ||
+      !policyPhaseReady(unit, units, assignmentsByUnit) ||
+      !policySequenceReady(unit, units, assignmentsByUnit);
     conflicts.push({
       unitId: unit.id,
       code: unresolved ? "SCHEDULE_DEPENDENCY_UNRESOLVED" : "SCHEDULE_EXCEEDS_DAILY_END",

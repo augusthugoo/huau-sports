@@ -1033,13 +1033,14 @@ export function updateLocalTeamRoster(
   if (!category?.format) throw new Error("TEAM_FORMAT_NOT_FOUND");
   const entry = category.entries.find((candidate: any) => candidate.id === entryId);
   if (!entry) throw new Error("TEAM_NOT_FOUND");
-  if (
-    category.encounters.some((encounter: any) =>
-      encounter.matches.some((match: any) => Boolean(match.resultStatus)),
-    )
-  ) {
+
+  const hasRecordedResults = category.encounters.some((encounter: any) =>
+    encounter.matches.some((match: any) => Boolean(match.resultStatus)),
+  );
+  if (hasRecordedResults && !category.format.roster.substitutesAllowed) {
     throw new Error("TEAM_ROSTER_AFTER_RESULTS");
   }
+
   const occupied = new Map<string, string>();
   for (const otherEntry of category.entries as any[]) {
     if (otherEntry.id === entryId) continue;
@@ -1058,20 +1059,33 @@ export function updateLocalTeamRoster(
     throw error;
   }
 
-  const previousPersonIds = new Set<string>(
-    (entry.roster ?? []).map((member: any) => String(member.personId)),
+  const previousRoster = cloneDay(entry.roster ?? []) as TeamRosterMember[];
+  const previousPersonIds = new Set(previousRoster.map((member) => String(member.personId)));
+  const nextPersonIds = new Set(roster.map((member) => String(member.personId)));
+  const removedPersonIds = new Set(
+    [...previousPersonIds].filter((personId) => !nextPersonIds.has(personId)),
   );
-  const nextPersonIds = new Set(roster.map((member) => member.personId));
+
+  const history = new Map<string, TeamRosterMember>(
+    [...(entry.rosterHistory ?? []), ...previousRoster]
+      .map((member: TeamRosterMember) => [String(member.personId), member] as const),
+  );
+  entry.rosterHistory = [...history.values()];
   entry.roster = cloneDay(roster);
 
   const profileByPersonId = new Map(
-    (snapshot.team.profiles as any[]).map((profile) => [String(profile.personId), String(profile.profileId)] as const),
+    (snapshot.team.profiles as any[]).map((profile) => [
+      String(profile.personId),
+      String(profile.profileId ?? profile.id ?? ""),
+    ] as const),
   );
   const assignments = snapshot.workspace.participants.playerCategories as any[];
   for (let index = assignments.length - 1; index >= 0; index -= 1) {
     const assignment = assignments[index];
     if (assignment?.categoryId !== categoryId) continue;
-    const personId = [...profileByPersonId.entries()].find(([, profileId]) => profileId === assignment.playerProfileId)?.[0];
+    const personId = [...profileByPersonId.entries()].find(
+      ([, profileId]) => profileId && profileId === assignment.playerProfileId,
+    )?.[0];
     if (personId && previousPersonIds.has(personId) && !nextPersonIds.has(personId)) {
       assignments.splice(index, 1);
     }
@@ -1087,8 +1101,17 @@ export function updateLocalTeamRoster(
     else assignments.push(nextAssignment);
   }
 
+  // Historical encounters are immutable. Future lineups remain intact on pure additions;
+  // if a removed player was selected, only that future side is invalidated for review.
   for (const encounter of category.encounters as any[]) {
-    encounter.lineups = encounter.lineups.filter((lineup: any) => lineup.entryId !== entryId);
+    const encounterHasResults = (encounter.matches ?? []).some((match: any) => Boolean(match.resultStatus));
+    if (encounterHasResults || !removedPersonIds.size) continue;
+    encounter.lineups = (encounter.lineups ?? []).filter((lineup: any) => {
+      if (String(lineup.entryId) !== String(entryId)) return true;
+      return !(lineup.assignments ?? []).some((assignment: any) =>
+        (assignment.personIds ?? []).some((personId: string) => removedPersonIds.has(String(personId))),
+      );
+    });
   }
 }
 
@@ -1120,7 +1143,11 @@ export function generateLocalTeamStructure(
   const groups = Math.max(1, Math.min(Math.trunc(groupCount || 1), maxGroups));
   const sizes = balancedTeamSizes(category.entries.length, groups);
   const ordered = [...category.entries].sort(
-    (a, b) => a.displayName.localeCompare(b.displayName) || a.id.localeCompare(b.id),
+    (a, b) =>
+      Number(a.seedOrder ?? Number.MAX_SAFE_INTEGER) - Number(b.seedOrder ?? Number.MAX_SAFE_INTEGER) ||
+      Number(b.seedRating ?? 0) - Number(a.seedRating ?? 0) ||
+      a.displayName.localeCompare(b.displayName) ||
+      a.id.localeCompare(b.id),
   );
   const distributed = distributeTeamSnake(ordered, sizes);
   category.groups = [];

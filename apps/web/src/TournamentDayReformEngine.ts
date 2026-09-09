@@ -278,8 +278,6 @@ export function participantImpact(snapshot: TournamentDayReformSnapshot, profile
     const team = (snapshot.team.categories as any[]).find((row) => row.id === categoryId);
     return Boolean(standard?.encounters?.length || team?.encounters?.length);
   });
-  const schedule = snapshot.workspace.schedule.schedule as any[];
-  const scheduledRows = schedule.filter((row) => categories.has(String(row.categoryId)) && [row.entryAId, row.entryBId].some((id) => id && standardEntryContainsProfile(snapshot, String(id), profileId))).length;
   const teamEntryIds = new Set<string>();
   for (const category of snapshot.team.categories as any[]) {
     for (const entry of category.entries ?? []) {
@@ -288,6 +286,21 @@ export function participantImpact(snapshot: TournamentDayReformSnapshot, profile
       }
     }
   }
+  const schedule = snapshot.workspace.schedule.schedule as any[];
+  const affectedScheduleUnits = new Set<string>();
+  for (const row of schedule) {
+    if (!categories.has(String(row.categoryId))) continue;
+    const standardHit = [row.entryAId, row.entryBId].some(
+      (id) => id && standardEntryContainsProfile(snapshot, String(id), profileId),
+    );
+    const teamHit = [row.entryAId, row.entryBId].some(
+      (id) => id && teamEntryIds.has(String(id)),
+    );
+    if (standardHit || teamHit) {
+      affectedScheduleUnits.add(String(row.scheduleUnitId ?? row.encounterId ?? row.id));
+    }
+  }
+  const scheduledRows = affectedScheduleUnits.size;
   const finishedMatches =
     (snapshot.workspace.standard.matches as any[]).filter(
       (match) =>
@@ -521,6 +534,62 @@ function dayDate(snapshot: TournamentDayReformSnapshot, category: any) {
   return new Date(raw < 10_000_000_000 ? raw * 1000 : raw).toISOString().slice(0, 10);
 }
 
+function applySchedulePolicy(
+  snapshot: TournamentDayReformSnapshot,
+  units: GlobalScheduleUnit[],
+): GlobalScheduleUnit[] {
+  const policy = (snapshot.workspace.core.settings as any).schedulePolicy as
+    | { mode?: string; categories?: Record<string, any> }
+    | undefined;
+  if (!policy || !policy.categories) return units;
+
+  const mode = String(policy.mode ?? "efficiency");
+  const groupOrder = new Map<string, Map<string, number>>();
+  for (const categoryId of new Set(units.map((unit) => unit.categoryId))) {
+    const groups = [...new Map(
+      units
+        .filter((unit) => unit.categoryId === categoryId && unit.groupId)
+        .map((unit) => [String(unit.groupId), String(unit.groupName ?? unit.groupId)] as const),
+    ).entries()]
+      .sort((a, b) => a[1].localeCompare(b[1]));
+    groupOrder.set(categoryId, new Map(groups.map(([id], index) => [id, index + 1])));
+  }
+
+  return units.map((unit) => {
+    const rule = policy.categories?.[unit.categoryId] ?? {};
+    const order = Math.max(1, Number(rule.order ?? 999));
+    const phase = mode === "categories"
+      ? order
+      : mode === "blocks"
+        ? Math.max(1, Number(rule.phase ?? 1))
+        : 0;
+    const sequence = String(rule.sequence ?? "free");
+    let sequenceKey: string | null = null;
+    let sequenceIndex: number | null = null;
+    if (sequence === "rounds") {
+      sequenceKey = `rounds:${unit.categoryId}`;
+      sequenceIndex = Math.max(1, Number(unit.roundNumber ?? 1));
+    } else if ((sequence === "groups" || sequence === "group_pairs") && unit.groupId) {
+      const groupIndex = groupOrder.get(unit.categoryId)?.get(String(unit.groupId)) ?? 1;
+      sequenceKey = `groups:${unit.categoryId}`;
+      sequenceIndex = sequence === "group_pairs" ? Math.ceil(groupIndex / 2) : groupIndex;
+    }
+    return {
+      ...unit,
+      policyPhase: phase || null,
+      policySequenceKey: sequenceKey,
+      policySequenceIndex: sequenceIndex,
+      priority: mode === "priority" || mode === "blocks" ? -order : (unit.priority ?? 0),
+      allowedCourts: Array.isArray(rule.allowedCourts) ? rule.allowedCourts.map(Number) : [],
+      preferredCourts: Array.isArray(rule.preferredCourts) ? rule.preferredCourts.map(Number) : [],
+      exclusiveCourts: Array.isArray(rule.exclusiveCourts) ? rule.exclusiveCourts.map(Number) : [],
+      maxConcurrentCourts: rule.maxConcurrentCourts === null || rule.maxConcurrentCourts === undefined || rule.maxConcurrentCourts === ""
+        ? null
+        : Math.max(1, Number(rule.maxConcurrentCourts)),
+    };
+  });
+}
+
 function globalUnits(snapshot: TournamentDayReformSnapshot): GlobalScheduleUnit[] {
   const settings = snapshot.workspace.core.settings as any;
   const categories = new Map((snapshot.workspace.core.categories as any[]).map((category) => [String(category.id), category] as const));
@@ -552,6 +621,8 @@ function globalUnits(snapshot: TournamentDayReformSnapshot): GlobalScheduleUnit[
       stage: String(match.stage ?? "group"),
       roundLabel: match.roundLabel ?? null,
       roundNumber: match.roundNumber ?? encounter?.roundNumber ?? null,
+      groupId: match.groupId ? String(match.groupId) : null,
+      groupName: match.groupName ? String(match.groupName) : null,
       legNumber: match.legNumber ?? encounter?.legNumber ?? 1,
       barrierKey: match.groupId ? `${match.categoryId}:${match.groupId}` : null,
       participants,
@@ -579,6 +650,8 @@ function globalUnits(snapshot: TournamentDayReformSnapshot): GlobalScheduleUnit[
         stage: String(encounter.stage ?? "group"),
         roundLabel: encounter.roundLabel ?? null,
         roundNumber: encounter.roundNumber ?? null,
+        groupId: encounter.groupId ? String(encounter.groupId) : null,
+        groupName: encounter.groupName ? String(encounter.groupName) : null,
         legNumber: encounter.legNumber ?? 1,
         barrierKey: encounter.groupId ? `${teamCategory.id}:${encounter.groupId}` : null,
         participants: [...teamEntryParticipantKeys(teamCategory, encounter.entryAId), ...teamEntryParticipantKeys(teamCategory, encounter.entryBId)],
@@ -595,7 +668,7 @@ function globalUnits(snapshot: TournamentDayReformSnapshot): GlobalScheduleUnit[
       });
     }
   }
-  return units;
+  return applySchedulePolicy(snapshot, units);
 }
 
 function lockedUnits(snapshot: TournamentDayReformSnapshot, units: GlobalScheduleUnit[]): GlobalScheduleLock[] {
@@ -1055,7 +1128,12 @@ function publicScheduleRow(row: any) {
     startAt: Number(row.startAt ?? 0),
     endAt: Number(row.endAt ?? 0),
     status: String(row.status ?? "bound"),
+    groupId: row.groupId ? String(row.groupId) : null,
+    groupName: row.groupName ? String(row.groupName) : null,
+    roundNumber: row.roundNumber == null ? null : Number(row.roundNumber),
+    entryAId: row.entryAId ? String(row.entryAId) : null,
     sideA: row.sideA ? String(row.sideA) : null,
+    entryBId: row.entryBId ? String(row.entryBId) : null,
     sideB: row.sideB ? String(row.sideB) : null,
     rubberKey: row.rubberKey ? String(row.rubberKey) : null,
   };
@@ -1075,6 +1153,14 @@ export function buildPublicStructure(snapshot: TournamentDayReformSnapshot) {
       startAt: Number(tournament.startAt ?? 0),
       endAt: tournament.endAt ? Number(tournament.endAt) : null,
       courtCount: Number(tournament.courtCount ?? 1),
+      venue:
+        typeof tournament.venueName === "string"
+          ? tournament.venueName
+          : typeof tournament.locationName === "string"
+            ? tournament.locationName
+            : typeof tournament.venue === "string"
+              ? tournament.venue
+              : null,
     },
     revision: meta.publicDirty.structureRevision + 1,
     generatedAt: Date.now(),
@@ -1100,11 +1186,64 @@ function competitionCompleteLocal(snapshot: TournamentDayReformSnapshot) {
   return standard && team;
 }
 
+function publicTeamLineupNames(
+  snapshot: TournamentDayReformSnapshot,
+  category: any,
+  encounter: any,
+  entryId: string | null | undefined,
+  rubberKey: string,
+) {
+  if (!entryId) return [];
+  const lineup = (encounter.lineups ?? []).find((row: any) => String(row.entryId) === String(entryId));
+  const assignment = lineup?.assignments?.find((row: any) => String(row.rubberKey) === rubberKey);
+  const entry = (category.entries ?? []).find((row: any) => String(row.id) === String(entryId));
+  const knownRoster = [...(entry?.roster ?? []), ...(entry?.rosterHistory ?? [])];
+  const profiles = snapshot.team.profiles as any[];
+  return (assignment?.personIds ?? []).map((personId: string) => {
+    const member = knownRoster.find((row: any) => String(row.personId) === String(personId));
+    if (member?.name) return String(member.name);
+    const profile = profiles.find((row: any) => String(row.personId) === String(personId));
+    return String(profile?.displayName ?? "Jugador");
+  });
+}
+
 export function buildPublicLive(snapshot: TournamentDayReformSnapshot) {
   const tournament = snapshot.workspace.core.tournament as any;
   const meta = ensureDayLocalMeta(snapshot);
   const standardResults = (snapshot.workspace.standard.matches as any[]).filter((match) => match.status === "finished").map((match) => ({ id: String(match.matchId ?? match.encounterId), categoryId: String(match.categoryId), encounterId: String(match.encounterId), sideA: match.sideA ?? null, sideB: match.sideB ?? null, scoreA: match.scoreA ?? null, scoreB: match.scoreB ?? null, sets: cloneDay(match.sets ?? []), status: "finished" }));
-  const teamResults = (snapshot.team.categories as any[]).flatMap((category) => (category.encounters ?? []).map((encounter: any) => ({ categoryId: String(category.id), encounterId: String(encounter.id), sideA: encounter.sideA ?? null, sideB: encounter.sideB ?? null, status: String(encounter.status ?? "pending"), winnerEntryId: encounter.winnerEntryId ?? null, rubbers: (encounter.matches ?? []).map((match: any) => { const definition = (category.format?.encounter?.rubbers ?? []).find((rubber: any) => String(rubber.key) === String(match.rubberKey)); return { id: String(match.id), key: String(match.rubberKey ?? ""), order: Number(match.rubberOrder ?? 0), weight: Number(definition?.weight ?? 1), status: String(match.status ?? "pending"), winnerSide: match.winnerSide ?? null, scoreA: match.scoreA ?? null, scoreB: match.scoreB ?? null, sets: cloneDay(match.sets ?? []) }; }) })));
+  const teamResults = (snapshot.team.categories as any[]).flatMap((category) =>
+    (category.encounters ?? []).map((encounter: any) => ({
+      categoryId: String(category.id),
+      encounterId: String(encounter.id),
+      groupId: encounter.groupId ? String(encounter.groupId) : null,
+      groupName: encounter.groupName ? String(encounter.groupName) : null,
+      roundNumber: encounter.roundNumber == null ? null : Number(encounter.roundNumber),
+      sideA: encounter.sideA ?? null,
+      sideB: encounter.sideB ?? null,
+      status: String(encounter.status ?? "pending"),
+      winnerEntryId: encounter.winnerEntryId ?? null,
+      rubbers: (encounter.matches ?? []).map((match: any) => {
+        const definition = (category.format?.encounter?.rubbers ?? []).find(
+          (rubber: any) => String(rubber.key) === String(match.rubberKey),
+        );
+        const key = String(match.rubberKey ?? "");
+        return {
+          id: String(match.id),
+          key,
+          label: String(definition?.label ?? key),
+          order: Number(match.rubberOrder ?? 0),
+          weight: Number(definition?.weight ?? 1),
+          status: String(match.status ?? "pending"),
+          winnerSide: match.winnerSide ?? null,
+          scoreA: match.scoreA ?? null,
+          scoreB: match.scoreB ?? null,
+          sets: cloneDay(match.sets ?? []),
+          lineupA: publicTeamLineupNames(snapshot, category, encounter, encounter.entryAId, key),
+          lineupB: publicTeamLineupNames(snapshot, category, encounter, encounter.entryBId, key),
+        };
+      }),
+    })),
+  );
   return {
     schemaVersion: 1,
     kind: "live",
@@ -1137,6 +1276,29 @@ export function publicReadModelHasPrivateKeys(value: unknown): boolean {
 export function createQaFixture(base: TournamentDayReformSnapshot) {
   const snapshot = cloneDay(base) as TournamentDayReformSnapshot;
   initializeReformSnapshot(snapshot);
+
+  // QA is a sandbox island. Never index or append onto real/local tournament entities.
+  snapshot.workspace.core.categories = [];
+  snapshot.workspace.participants.players = [];
+  snapshot.workspace.participants.playerCategories = [];
+  snapshot.workspace.standard.entries = [];
+  snapshot.workspace.standard.groups = [];
+  snapshot.workspace.standard.matches = [];
+  snapshot.workspace.standard.drawSessions = [];
+  snapshot.workspace.standard.standings = [];
+  snapshot.workspace.standard.crossGroup = [];
+  snapshot.workspace.standard.categoryProgress = [];
+  snapshot.workspace.standard.competitions = [];
+  snapshot.workspace.schedule.schedule = [];
+  snapshot.team.profiles = [];
+  snapshot.team.categories = [];
+  snapshot.workspace.core.summary = {
+    ...(snapshot.workspace.core.summary ?? {}),
+    completedStandardMatches: 0,
+  };
+  delete snapshot.localMeta;
+  initializeReformSnapshot(snapshot);
+
   const existingCategories = snapshot.workspace.core.categories as any[];
   const makeCategory = (id: string, name: string) => {
     let core = existingCategories.find((category) => String(category.id) === id);

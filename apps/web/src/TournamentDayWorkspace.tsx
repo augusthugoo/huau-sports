@@ -52,17 +52,22 @@ import {
   type TournamentDayReformSnapshot,
 } from "./TournamentDayReformEngine";
 import {
-  FormatSimulator,
   IntegralConfigurationPanel,
   IntegralParticipantsPanel,
   IntegralResultsPanel,
   IntegralSchedulePanel,
-  IntegralStandardGroupEditor,
-  IntegralTeamCompetitionPanel,
-  IntegralTournamentDayTV,
 } from "./TournamentDayIntegralPanels";
+import {
+  EpicCompetitionStudio,
+  EpicErrorModal,
+  EpicFormatStudio,
+  EpicPublicLinkCard,
+  EpicSchedulePolicyPanel,
+  EpicTournamentDayTV,
+} from "./TournamentDayEpicPanels";
 import "./TournamentDay.css";
 import "./TournamentDayIntegral.css";
+import "./TournamentDayEpic.css";
 
 type Props = {
   locale: Locale;
@@ -640,7 +645,7 @@ export function TournamentDayWorkspace(props: Props) {
     teamMatches.filter((match: any) => !["finished", "skipped"].includes(match.status)).length;
 
   if (tvOnly) {
-    return <IntegralTournamentDayTV snapshot={snapshot as TournamentDayReformSnapshot} locale={locale} />;
+    return <EpicTournamentDayTV snapshot={snapshot as TournamentDayReformSnapshot} locale={locale} />;
   }
 
   const tabs: Array<[Tab, string]> = [
@@ -723,7 +728,7 @@ export function TournamentDayWorkspace(props: Props) {
         ))}
       </nav>
 
-      {error ? <div className="tpw-alert">{error}</div> : null}
+      <EpicErrorModal locale={locale} error={error} onClose={() => setError("")} />
       {notice ? <div className="notice-box">{notice}</div> : null}
 
       {tab === "overview" ? (
@@ -741,24 +746,28 @@ export function TournamentDayWorkspace(props: Props) {
       ) : null}
 
       {tab === "format" ? (
-        <section className="td-stack">
-          <DayFormat locale={locale} snapshot={snapshot} mutate={(fn, message) => mutate(fn, message, "structure")} />
-          <FormatSimulator locale={locale} snapshot={snapshot as TournamentDayReformSnapshot} />
-        </section>
+        <EpicFormatStudio
+          locale={locale}
+          snapshot={snapshot as TournamentDayReformSnapshot}
+          mutate={mutate}
+        />
       ) : null}
 
       {tab === "competition" ? (
-        <section className="td-stack">
-          <DayStandardCompetition locale={locale} snapshot={snapshot} mutate={(fn, message) => mutate(fn, message, "structure")} />
-          <IntegralStandardGroupEditor locale={locale} snapshot={snapshot as TournamentDayReformSnapshot} mutate={mutate} />
-          <IntegralTeamCompetitionPanel locale={locale} snapshot={snapshot as TournamentDayReformSnapshot} mutate={mutate} />
-        </section>
+        <EpicCompetitionStudio
+          locale={locale}
+          snapshot={snapshot as TournamentDayReformSnapshot}
+          mutate={mutate}
+        />
       ) : null}
 
 
 
       {tab === "schedule" ? (
-        <IntegralSchedulePanel locale={locale} snapshot={snapshot as TournamentDayReformSnapshot} mutate={mutate} />
+        <section className="td-stack">
+          <EpicSchedulePolicyPanel locale={locale} snapshot={snapshot as TournamentDayReformSnapshot} mutate={mutate} />
+          <IntegralSchedulePanel locale={locale} snapshot={snapshot as TournamentDayReformSnapshot} mutate={mutate} />
+        </section>
       ) : null}
 
       {tab === "results" ? (
@@ -770,10 +779,12 @@ export function TournamentDayWorkspace(props: Props) {
         />
       ) : null}
 
-      {tab === "tv" ? <IntegralTournamentDayTV snapshot={snapshot as TournamentDayReformSnapshot} locale={locale} embedded /> : null}
+      {tab === "tv" ? <EpicTournamentDayTV snapshot={snapshot as TournamentDayReformSnapshot} locale={locale} embedded /> : null}
 
       {tab === "configuration" ? (
-        <IntegralConfigurationPanel
+        <section className="td-stack">
+          <EpicPublicLinkCard locale={locale} snapshot={snapshot as TournamentDayReformSnapshot} />
+          <IntegralConfigurationPanel
           locale={locale}
           snapshot={snapshot as TournamentDayReformSnapshot}
           session={session}
@@ -793,6 +804,7 @@ export function TournamentDayWorkspace(props: Props) {
           mutate={mutate}
           {...(qaMode ? { onLoadQaFixture: loadQaFixture } : {})}
         />
+        </section>
       ) : null}
     </main>
   );
@@ -948,6 +960,8 @@ function DayParticipants({
   );
 }
 
+// Retained as a legacy fallback/reference; the active Tournament Day UI uses Epic panels.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function DayFormat({
   locale,
   snapshot,
@@ -1312,6 +1326,8 @@ function DayFormat({
   );
 }
 
+// Retained as a legacy fallback/reference; the active Tournament Day UI uses Epic panels.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function DayStandardCompetition({
   locale,
   snapshot,

@@ -4,6 +4,7 @@ import { registrationPriceMinor, resolveRegistrationPricing, resolveTeamIndividu
 import { FormatExplanationPanel, explanationForPersistedFormat } from "./FormatExplanationPanel";
 import { BirthDateField } from "./BirthDateField";
 import type { Locale } from "./i18n";
+import "./TournamentCommunityLink.css";
 
 type Go = (path: string) => void;
 const tr = (locale: Locale, es: string, en: string) => (locale === "es" ? es : en);
@@ -97,6 +98,8 @@ type PublicCategory = {
   registrationBlockedCode: string | null;
   viewerAlreadyRegistered: boolean;
 };
+
+type TournamentCommunityLinkConfig = { enabled: boolean; title: string; url: string };
 
 export type PublicTournamentData = {
   ok: true;
@@ -278,7 +281,22 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
+  const [communityLink, setCommunityLink] = useState<TournamentCommunityLinkConfig | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
+
+  useEffect(() => {
+    let alive = true;
+    api<{ ok: true; config: TournamentCommunityLinkConfig }>(
+      `/api/public/tournaments/${encodeURIComponent(slug)}/community-link`,
+    )
+      .then((result) => {
+        if (alive) setCommunityLink(result.config);
+      })
+      .catch(() => {
+        if (alive) setCommunityLink(null);
+      });
+    return () => { alive = false; };
+  }, [slug]);
   const [teamSelections, setTeamSelections] = useState<Record<string, TeamSelection>>({});
   const [explanationCategoryId, setExplanationCategoryId] = useState<string | null>(null);
   const [regulationsOpen, setRegulationsOpen] = useState(false);
@@ -515,6 +533,17 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
               )}
             </div>
           )}
+          {communityLink?.enabled && communityLink.url ? (
+            <a className="public-community-link-card" href={communityLink.url} target="_blank" rel="noreferrer">
+              <span className="public-community-link-icon">↗</span>
+              <span className="public-community-link-copy">
+                <span>{tr(locale,"COMUNIDAD DEL TORNEO","TOURNAMENT COMMUNITY")}</span>
+                <strong>{communityLink.title || tr(locale,"¿No tenés equipo o te faltan jugadores para completar?","Need a team or players to complete yours?")}</strong>
+                <small>{tr(locale,"Unite al grupo para encontrar equipo, completar tu roster o seguir avisos del torneo.","Join the group to find a team, complete your roster or follow tournament notices.")}</small>
+              </span>
+              <span className="public-community-link-arrow" aria-hidden="true">→</span>
+            </a>
+          ) : null}
           {data.regulations.text.trim() && (
             <button type="button" className="public-format-explanation-trigger public-regulations-trigger" onClick={() => setRegulationsOpen(true)}><span>{tr(locale, "Reglamento del torneo", "Tournament regulations")}</span><span aria-hidden="true">↗</span></button>
           )}

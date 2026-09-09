@@ -119,6 +119,8 @@ const unixNow = () => Math.floor(Date.now() / 1000);
 const asBool = (value: unknown) => (value ? 1 : 0);
 const publicLandingSnapshotKey = "public/landing.json";
 const publicTournamentSnapshotKey = (slug: string) => `public/tournaments/${slug}/core.json`;
+const tournamentCommunityLinkKey = (slug: string) => `public/tournaments/${slug}/community-link.json`;
+const DEFAULT_COMMUNITY_LINK_TITLE = "¿No tenés equipo o te faltan jugadores para completar?";
 
 async function invalidatePublicLandingSnapshot(env: Env) {
   await env.HUAU_ASSETS.delete(publicLandingSnapshotKey).catch(() => undefined);
@@ -3180,6 +3182,58 @@ export async function handleTournamentAdminApi(
   url: URL,
   access: AccessHelpers,
 ): Promise<Response | null> {
+  const publicCommunityRoute = url.pathname.match(/^\/api\/public\/tournaments\/([^/]+)\/community-link$/);
+  if (publicCommunityRoute && request.method === "GET") {
+    const slug = decodeURIComponent(publicCommunityRoute[1]!);
+    const object = await env.HUAU_ASSETS.get(tournamentCommunityLinkKey(slug));
+    if (!object) return json({ ok: true, config: { enabled: false, title: DEFAULT_COMMUNITY_LINK_TITLE, url: "" } }, { headers: { "cache-control": "public, max-age=30" } });
+    try {
+      const config = JSON.parse(await object.text()) as { enabled?: unknown; title?: unknown; url?: unknown };
+      return json({ ok: true, config: { enabled: Boolean(config.enabled), title: String(config.title ?? DEFAULT_COMMUNITY_LINK_TITLE), url: String(config.url ?? "") } }, { headers: { "cache-control": "public, max-age=30" } });
+    } catch {
+      return json({ ok: true, config: { enabled: false, title: DEFAULT_COMMUNITY_LINK_TITLE, url: "" } }, { headers: { "cache-control": "public, max-age=30" } });
+    }
+  }
+
+  const adminCommunityRoute = url.pathname.match(/^\/api\/admin\/tournaments\/([^/]+)\/community-link$/);
+  if (adminCommunityRoute && (request.method === "GET" || request.method === "PUT")) {
+    const tournamentId = decodeURIComponent(adminCommunityRoute[1]!);
+    const accessResult = await tournamentForAccess(tournamentId, request, env, access);
+    if (accessResult instanceof Response) return accessResult;
+    const key = tournamentCommunityLinkKey(accessResult.tournament.slug);
+    if (request.method === "GET") {
+      const object = await env.HUAU_ASSETS.get(key);
+      if (!object) return json({ ok: true, config: { enabled: false, title: DEFAULT_COMMUNITY_LINK_TITLE, url: "" } });
+      try {
+        const stored = JSON.parse(await object.text()) as { enabled?: unknown; title?: unknown; url?: unknown };
+        return json({ ok: true, config: { enabled: Boolean(stored.enabled), title: String(stored.title ?? DEFAULT_COMMUNITY_LINK_TITLE), url: String(stored.url ?? "") } });
+      } catch {
+        return json({ ok: true, config: { enabled: false, title: DEFAULT_COMMUNITY_LINK_TITLE, url: "" } });
+      }
+    }
+    const body = await readJson<{ enabled?: boolean; title?: string; url?: string }>(request);
+    const enabled = Boolean(body.enabled);
+    const title = String(body.title ?? DEFAULT_COMMUNITY_LINK_TITLE).trim() || DEFAULT_COMMUNITY_LINK_TITLE;
+    const rawUrl = String(body.url ?? "").trim();
+    if (title.length > 180) return json({ ok: false, code: "COMMUNITY_LINK_TITLE_TOO_LONG" }, { status: 400 });
+    let normalizedUrl = "";
+    if (rawUrl) {
+      try {
+        const parsed = new URL(rawUrl);
+        if (parsed.protocol !== "https:") throw new Error("INVALID");
+        normalizedUrl = parsed.toString();
+      } catch {
+        return json({ ok: false, code: "COMMUNITY_LINK_INVALID_URL" }, { status: 400 });
+      }
+    }
+    if (enabled && !normalizedUrl) return json({ ok: false, code: "COMMUNITY_LINK_URL_REQUIRED" }, { status: 400 });
+    const config = { enabled, title, url: normalizedUrl, updatedAt: Date.now() };
+    await env.HUAU_ASSETS.put(key, JSON.stringify(config), {
+      httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "public, max-age=30" },
+      customMetadata: { tournamentId, kind: "community-link" },
+    });
+    return json({ ok: true, config: { enabled, title, url: normalizedUrl } });
+  }
   const orgTournaments = url.pathname.match(/^\/api\/admin\/organizations\/([^/]+)\/tournaments$/);
   if (orgTournaments) {
     const organizationId = decodeURIComponent(orgTournaments[1]!);

@@ -1,0 +1,54 @@
+.public-community-link-card{
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr) auto;
+  gap:14px;
+  align-items:center;
+  margin-top:16px;
+  padding:16px 18px;
+  border:1px solid rgba(255,255,255,.14);
+  border-radius:16px;
+  background:linear-gradient(135deg,#171414,#0e0d0d);
+  color:#fff;
+  text-decoration:none;
+  transition:transform .18s ease,border-color .18s ease,background .18s ease;
+}
+.public-community-link-card:hover{
+  transform:translateY(-1px);
+  border-color:rgba(255,255,255,.28);
+  background:linear-gradient(135deg,#211c1c,#111);
+}
+.public-community-link-icon{
+  display:grid;
+  place-items:center;
+  width:46px;
+  height:46px;
+  border-radius:14px;
+  background:#fff;
+  color:#111;
+  font-size:1.25rem;
+  font-weight:900;
+}
+.public-community-link-copy{min-width:0;display:grid;gap:4px}
+.public-community-link-copy>span{font-size:.68rem;letter-spacing:.14em;font-weight:800;opacity:.62}
+.public-community-link-copy>strong{font-size:1rem;line-height:1.25}
+.public-community-link-copy>small{opacity:.68;line-height:1.35}
+.public-community-link-arrow{font-size:1.25rem;opacity:.72}
+.tournament-community-admin{display:grid;gap:14px}
+.tournament-community-admin .toggle-row{margin:0}
+.tournament-community-admin-grid{display:grid;grid-template-columns:1fr 1.45fr;gap:12px}
+.tournament-community-admin .community-preview{
+  border:1px solid rgba(255,255,255,.11);
+  border-radius:14px;
+  padding:13px 14px;
+  background:rgba(255,255,255,.025);
+  display:grid;
+  gap:5px;
+}
+.tournament-community-admin .community-preview small{opacity:.62}
+.community-admin-status{font-size:.82rem;opacity:.75}
+.community-admin-status.error{color:#ff9e9e;opacity:1}
+@media(max-width:760px){
+  .public-community-link-card{grid-template-columns:auto minmax(0,1fr)}
+  .public-community-link-arrow{display:none}
+  .tournament-community-admin-grid{grid-template-columns:1fr}
+}
