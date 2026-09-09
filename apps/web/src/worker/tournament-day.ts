@@ -6,6 +6,7 @@ import {
 } from "@huau/core";
 import { tournamentDayWorkspaceBundleForAdmin } from "./tournament-admin";
 import { tournamentDayTeamBundleForAdmin } from "./team-admin";
+import { dayOwnsPlayerCategory, dayOwnsTeamRoster } from "./tournament-day-ownership";
 
 type CurrentUser = { id: string; name: string; email: string };
 type AccessHelpers = {
@@ -47,6 +48,7 @@ type DaySnapshot = {
   tournamentId: string;
   baseRevision: number;
   createdAt: number;
+  localMeta?: Record<string, unknown>;
   workspace: {
     core: {
       tournament: Record<string, unknown>;
@@ -213,6 +215,7 @@ function snapshotShape(value: unknown, tournamentId: string): DaySnapshot {
     tournamentId,
     baseRevision: numberValue(root.baseRevision),
     createdAt: numberValue(root.createdAt, Date.now()),
+    ...(Object.keys(record(root.localMeta)).length ? { localMeta: record(root.localMeta) } : {}),
     workspace: {
       core: {
         tournament: record(core.tournament),
@@ -772,16 +775,26 @@ async function syncFinalizedSnapshot(
   if (localPeopleStatements.length) await runBatches(env.HUAU_DB, localPeopleStatements);
   if (localPlayerStatements.length) await runBatches(env.HUAU_DB, localPlayerStatements);
 
-  await env.HUAU_DB.prepare(
-    `DELETE FROM tournament_player_categories
-      WHERE category_id IN (SELECT id FROM tournament_categories WHERE tournament_id=?)`,
-  )
-    .bind(tournamentId)
-    .run();
-
   const playerCategoryStatements: D1PreparedStatement[] = [];
+  const localProfileIds = new Set(
+    snapshot.workspace.participants.players
+      .map((player) => stringValue(player.id))
+      .filter((profileId) => dayOwnsPlayerCategory(profileId)),
+  );
+  for (const sourceProfileId of localProfileIds) {
+    const mappedProfileId = playerMap.get(sourceProfileId);
+    if (!mappedProfileId) continue;
+    playerCategoryStatements.push(
+      env.HUAU_DB.prepare(
+        `DELETE FROM tournament_player_categories
+          WHERE player_profile_id=?
+            AND category_id IN (SELECT id FROM tournament_categories WHERE tournament_id=?)`,
+      ).bind(mappedProfileId, tournamentId),
+    );
+  }
   for (const assignment of snapshot.workspace.participants.playerCategories) {
     const sourceProfileId = stringValue(assignment.playerProfileId);
+    if (!dayOwnsPlayerCategory(sourceProfileId)) continue;
     const sourceCategoryId = stringValue(assignment.categoryId);
     const mappedProfileId = playerMap.get(sourceProfileId);
     const mappedCategoryId = categoryMap.get(sourceCategoryId);
@@ -1016,6 +1029,7 @@ async function syncFinalizedSnapshot(
       const sourceEntryId = stringValue(entry.id);
       const mappedEntryId = entryMap.get(sourceEntryId);
       if (!mappedEntryId) continue;
+      if (!dayOwnsTeamRoster(sourceEntryId)) continue;
       const roster: TeamRosterMember[] = [];
       for (const member of rows(entry.roster)) {
         const sourcePersonId = stringValue(member.personId);

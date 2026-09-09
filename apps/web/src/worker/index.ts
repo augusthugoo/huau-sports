@@ -14,6 +14,7 @@ import { handleTeamAdminApi } from "./team-admin";
 import { handleRegistrationApi } from "./registration";
 import { handlePaymentApi } from "./payments";
 import { handleTournamentDayApi } from "./tournament-day";
+import { handleTournamentDayPublicApi } from "./tournament-day-public";
 import { handleLandingApi } from "./landing";
 import { handlePlatformUsersApi } from "./platform-users";
 
@@ -553,6 +554,9 @@ export default {
         );
       }
     }
+
+    const tournamentDayPublicResponse = await handleTournamentDayPublicApi(request, env, url, { requireUser, isOrgAdmin });
+    if (tournamentDayPublicResponse) return tournamentDayPublicResponse;
 
     const landingResponse = await handleLandingApi(request, env, url, { requireUser, isPlatformAdmin });
     if (landingResponse) return landingResponse;

@@ -15,3 +15,4 @@ export * from "./registration";
 export * from "./payment";
 
 export * from "./explanation";
+export * from "./global-schedule";

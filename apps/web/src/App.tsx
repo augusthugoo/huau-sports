@@ -9,6 +9,8 @@ import { TournamentDayWorkspace } from "./TournamentDayWorkspace";
 import { MyTournamentRegistrations, PublicTournamentRegistration } from "./TournamentRegistration";
 import { MyTournamentPayments } from "./TournamentPayments";
 import { Landing, LandingAdminPanel } from "./Landing";
+import { TournamentLivePage } from "./TournamentLivePage";
+import { TournamentLiveRegistrationLink } from "./TournamentLiveLinks";
 import { BirthDateField } from "./BirthDateField";
 import { PlatformUsersAdmin } from "./PlatformUsersAdmin";
 
@@ -154,8 +156,17 @@ export function App() {
   if (path === "/signup" && !session?.user) return <AuthScreen mode="signup" locale={locale} go={go} onDone={refreshMe} />;
   if (path === "/recover" && !session?.user) return <RecoveryScreen locale={locale} go={go} />;
 
+  const publicTournamentLiveRoute = path.match(/^\/tournaments\/([^/]+)\/live$/);
+  if (publicTournamentLiveRoute) return <TournamentLivePage slug={decodeURIComponent(publicTournamentLiveRoute[1]!)} locale={locale} go={go} />;
+
   const publicTournamentRoute = path.match(/^\/tournaments\/([^/]+)$/);
-  if (publicTournamentRoute) return <PublicTournamentRegistration slug={decodeURIComponent(publicTournamentRoute[1]!)} locale={locale} go={go} onProfileSaved={refreshMe} />;
+  if (publicTournamentRoute) {
+    const slug = decodeURIComponent(publicTournamentRoute[1]!);
+    return <>
+      <TournamentLiveRegistrationLink slug={slug} locale={locale} go={go} />
+      <PublicTournamentRegistration slug={slug} locale={locale} go={go} onProfileSaved={refreshMe} />
+    </>;
+  }
 
   const operatorTournamentDayRoute = path.match(/^\/operate\/([^/]+)$/);
   if (operatorTournamentDayRoute) {

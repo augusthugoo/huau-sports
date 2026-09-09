@@ -4,6 +4,7 @@ import type { Locale } from "./i18n";
 import "./Landing.css";
 import { LandingTutorialAdmin, LandingTutorialSection } from "./LandingTutorials";
 import type { LandingTutorial } from "./LandingTutorials";
+import { TournamentLiveTicker } from "./TournamentLiveLinks";
 
 type Go = (path: string) => void;
 const tr = (locale: Locale, es: string, en: string) => (locale === "es" ? es : en);
@@ -164,7 +165,7 @@ export function Landing({ locale, setLocale, go, authenticated = false }: { loca
         </div>
       </div>
 
-
+      <TournamentLiveTicker locale={locale} go={go} />
 
       <section className={`landing-hero-carousel${hasHero ? " has-image" : ""}`} aria-label={tr(locale, "Presentación HUAU", "HUAU presentation")}>
         {hasHero && <img src={currentHero} alt="" onError={() => setBrokenHeroes((current) => ({ ...current, [slide + 1]: true }))} />}

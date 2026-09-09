@@ -1153,7 +1153,7 @@ export function generateLocalTeamStructure(
         categoryId,
         stage: "group",
         roundLabel: `Grupo ${groupName}`,
-        roundNumber: encounterIndex + 1,
+        roundNumber: plan.roundNumber ?? encounterIndex + 1,
         groupId,
         groupName,
         legNumber: plan.legNumber,

@@ -1,0 +1,12 @@
+.huau-live-ticker{position:relative;overflow:hidden;background:#3d111c;border-block:1px solid rgba(255,255,255,.12);color:#fff;min-height:42px;display:flex;align-items:center}
+.huau-live-ticker-track{display:flex;width:max-content;animation:huau-live-marquee 26s linear infinite}
+.huau-live-ticker:hover .huau-live-ticker-track{animation-play-state:paused}
+.huau-live-ticker button{appearance:none;border:0;background:transparent;color:inherit;display:flex;align-items:center;gap:10px;white-space:nowrap;padding:11px 28px;cursor:pointer;font:inherit}
+.huau-live-ticker button:hover{text-decoration:underline;text-underline-offset:3px}
+.huau-live-ticker b{font-size:.72rem;letter-spacing:.12em}.huau-live-ticker span{font-weight:700}.huau-live-ticker em{font-style:normal;opacity:.75;font-size:.83rem}
+.huau-live-ticker-dot{width:8px;height:8px;border-radius:50%;background:#e3c6cc;box-shadow:0 0 0 4px rgba(255,255,255,.05)}.huau-live-ticker-dot.live{background:#ff7d8e;box-shadow:0 0 0 4px rgba(255,125,142,.14)}
+@keyframes huau-live-marquee{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+@media (prefers-reduced-motion:reduce){.huau-live-ticker-track{animation:none;overflow-x:auto}}
+@media (max-width:700px){.huau-live-ticker button{padding-inline:18px}.huau-live-ticker em{display:none}}
+
+.huau-registration-live-link{position:relative;z-index:8;display:flex;justify-content:flex-end;max-width:1180px;margin:14px auto -4px;padding:0 22px}.huau-registration-live-link .ghost{background:#fff;border:1px solid rgba(81,18,37,.18);box-shadow:0 8px 24px rgba(42,14,24,.08)}@media(max-width:720px){.huau-registration-live-link{justify-content:stretch;padding:0 14px}.huau-registration-live-link .ghost{width:100%}}

@@ -160,6 +160,7 @@ export type TeamEncounterPlan = {
   groupId: string | null;
   groupName: string | null;
   legNumber: number;
+  roundNumber?: number;
   entryAId: string;
   entryBId: string;
   rubbers: TeamRubberDefinition[];

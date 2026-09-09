@@ -37,7 +37,32 @@ import {
   type TournamentDaySession,
 } from "./TournamentDayStorage";
 import type { TeamFormat, TeamLineupAssignment, TeamRosterMember } from "@huau/core";
+import {
+  applySafeAdminMerge,
+  buildPublicLive,
+  buildPublicStructure,
+  createQaFixture,
+  initializeReformSnapshot,
+  markLiveDirty,
+  markLivePublished,
+  markStructureDirty,
+  markStructurePublished,
+  previewAdminMerge,
+  type AdminMergePreview,
+  type TournamentDayReformSnapshot,
+} from "./TournamentDayReformEngine";
+import {
+  FormatSimulator,
+  IntegralConfigurationPanel,
+  IntegralParticipantsPanel,
+  IntegralResultsPanel,
+  IntegralSchedulePanel,
+  IntegralStandardGroupEditor,
+  IntegralTeamCompetitionPanel,
+  IntegralTournamentDayTV,
+} from "./TournamentDayIntegralPanels";
 import "./TournamentDay.css";
+import "./TournamentDayIntegral.css";
 
 type Props = {
   locale: Locale;
@@ -56,6 +81,7 @@ type Tab =
   | "schedule"
   | "results"
   | "tv"
+  | "configuration"
   | "recovery";
 
 class DayApiError extends Error {
@@ -148,11 +174,14 @@ export function TournamentDayWorkspace(props: Props) {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [adminDiff, setAdminDiff] = useState<AdminMergePreview | null>(null);
+  const adminIncomingRef = useRef<TournamentDayReformSnapshot | null>(null);
   const channelRef = useRef<BroadcastChannel | null>(null);
   const sessionRef = useRef<TournamentDaySession<TournamentDaySnapshot> | null>(null);
   const persistenceQueueRef = useRef<Promise<void>>(Promise.resolve());
   const storageKey = storageKeyFor(props);
   const tvOnly = new URLSearchParams(window.location.search).get("view") === "tv";
+  const qaMode = new URLSearchParams(window.location.search).get("qa") === "1";
 
   const install = useCallback(
     async (
@@ -214,7 +243,7 @@ export function TournamentDayWorkspace(props: Props) {
         if (local) {
           const repaired = {
             ...local,
-            snapshot: reconcileTournamentDaySnapshot(cloneDay(local.snapshot)),
+            snapshot: initializeReformSnapshot(reconcileTournamentDaySnapshot(cloneDay(local.snapshot)) as TournamentDayReformSnapshot),
             updatedAt: Date.now(),
           };
           await install(repaired, { broadcast: false });
@@ -229,7 +258,7 @@ export function TournamentDayWorkspace(props: Props) {
         }
         const source = await fetchSourceSnapshot();
         if (!active) return;
-        const snapshot = reconcileTournamentDaySnapshot(source.snapshot);
+        const snapshot = initializeReformSnapshot(reconcileTournamentDaySnapshot(source.snapshot) as TournamentDayReformSnapshot);
         const next: TournamentDaySession<TournamentDaySnapshot> = {
           schemaVersion: 1,
           storageKey,
@@ -299,14 +328,16 @@ export function TournamentDayWorkspace(props: Props) {
   }, [session?.tournamentId, storageKey]);
 
   const mutate = useCallback(
-    async (fn: (snapshot: TournamentDaySnapshot) => void, message?: string) => {
+    async (fn: (snapshot: TournamentDayReformSnapshot) => void, message?: string, kind: "structure" | "live" | "neutral" = "neutral") => {
       const current = sessionRef.current;
       if (!current) return;
       setError("");
       try {
-        const snapshot = cloneDay(current.snapshot);
+        const snapshot = initializeReformSnapshot(cloneDay(current.snapshot) as TournamentDayReformSnapshot);
         fn(snapshot);
         reconcileTournamentDaySnapshot(snapshot);
+        if (kind === "structure") markStructureDirty(snapshot);
+        if (kind === "live") markLiveDirty(snapshot);
         const next: TournamentDaySession<TournamentDaySnapshot> = {
           ...current,
           dirty: true,
@@ -417,7 +448,7 @@ export function TournamentDayWorkspace(props: Props) {
     setError("");
     try {
       const source = await fetchSourceSnapshot(fromD1);
-      const snapshot = reconcileTournamentDaySnapshot(source.snapshot);
+      const snapshot = initializeReformSnapshot(reconcileTournamentDaySnapshot(source.snapshot) as TournamentDayReformSnapshot);
       const next: TournamentDaySession<TournamentDaySnapshot> = {
         schemaVersion: 1,
         storageKey,
@@ -504,6 +535,82 @@ export function TournamentDayWorkspace(props: Props) {
     window.location.reload();
   };
 
+
+  const previewAdministration = async () => {
+    if (operatorToken) {
+      setError(tr(locale, "El diff contra Administración requiere abrir Tournament Day desde Tournament Hub con sesión de administrador.", "The Administration diff requires opening Tournament Day from Tournament Hub with an admin session."));
+      return;
+    }
+    const current = sessionRef.current;
+    if (!current) return;
+    setBusy("admin-diff");
+    setError("");
+    try {
+      const source = await fetchSourceSnapshot(true);
+      const incoming = initializeReformSnapshot(reconcileTournamentDaySnapshot(source.snapshot) as TournamentDayReformSnapshot);
+      adminIncomingRef.current = incoming;
+      const preview = previewAdminMerge(current.snapshot as TournamentDayReformSnapshot, incoming);
+      setAdminDiff(preview);
+      setNotice(tr(locale, "Diff de Administración listo. Todavía no se aplicó ningún cambio.", "Administration diff ready. No changes have been applied yet."));
+    } catch (adminError) {
+      setError(adminError instanceof Error ? adminError.message : "TOURNAMENT_DAY_ADMIN_DIFF_FAILED");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const applyAdministration = async () => {
+    const incoming = adminIncomingRef.current;
+    if (!incoming || !adminDiff) {
+      setError("TOURNAMENT_DAY_ADMIN_DIFF_REQUIRED");
+      return;
+    }
+    await mutate(
+      (next) => applySafeAdminMerge(next, incoming, adminDiff),
+      tr(locale, "Cambios seguros de Administración aplicados. Los conflictos quedaron sin tocar.", "Safe Administration changes applied. Conflicts were left untouched."),
+      "structure",
+    );
+    setAdminDiff(null);
+    adminIncomingRef.current = null;
+  };
+
+  const publishPublicModel = async (kind: "structure" | "live") => {
+    const current = sessionRef.current;
+    if (!current) return;
+    setBusy(kind === "structure" ? "public-structure" : "public-live");
+    setError("");
+    try {
+      const snapshot = initializeReformSnapshot(cloneDay(current.snapshot) as TournamentDayReformSnapshot);
+      const model = kind === "structure" ? buildPublicStructure(snapshot) : buildPublicLive(snapshot);
+      const endpoint = operatorToken
+        ? `/api/operate/${encodeURIComponent(operatorToken)}/public-${kind}`
+        : `/api/admin/tournaments/${encodeURIComponent(current.tournamentId)}/day-public/${kind}`;
+      const result = await api<{ ok: true; publishedAt: number; revision: number }>(endpoint, {
+        method: "PUT",
+        body: JSON.stringify(model),
+      });
+      if (kind === "structure") markStructurePublished(snapshot, result.publishedAt);
+      else markLivePublished(snapshot, result.publishedAt);
+      await install({ ...current, snapshot, updatedAt: Date.now() });
+      setNotice(kind === "structure"
+        ? tr(locale, `Información pública publicada · revisión ${result.revision}.`, `Public structure published · revision ${result.revision}.`)
+        : tr(locale, `Resultados públicos publicados · revisión ${result.revision}.`, `Public results published · revision ${result.revision}.`));
+    } catch (publicError) {
+      setError(publicError instanceof Error ? publicError.message : "TOURNAMENT_DAY_PUBLIC_PUBLISH_FAILED");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const loadQaFixture = async () => {
+    if (!qaMode) return;
+    if (!window.confirm(tr(locale, "QA PRIVADO: esto agrega datos ficticios únicamente a la copia LOCAL actual. No lo uses sobre el torneo real. ¿Continuar?", "PRIVATE QA: this adds fake data only to the current LOCAL copy. Do not use it on the real tournament. Continue?"))) return;
+    await mutate((next) => {
+      const fixture = createQaFixture(next);
+      Object.assign(next, fixture);
+    }, tr(locale, "Fixture QA local cargado: 65 jugadores, 6 equipos +40 y 7 equipos +50.", "Local QA fixture loaded: 65 players, 6 +40 teams and 7 +50 teams."), "structure");
+  };
+
   if (loading) {
     return <main className="td-day"><div className="td-loading">{tr(locale, "Preparando Tournament Day…", "Preparing Tournament Day…")}</div></main>;
   }
@@ -533,19 +640,17 @@ export function TournamentDayWorkspace(props: Props) {
     teamMatches.filter((match: any) => !["finished", "skipped"].includes(match.status)).length;
 
   if (tvOnly) {
-    return <TournamentDayTV snapshot={snapshot} locale={locale} />;
+    return <IntegralTournamentDayTV snapshot={snapshot as TournamentDayReformSnapshot} locale={locale} />;
   }
 
   const tabs: Array<[Tab, string]> = [
     ["overview", tr(locale, "Resumen", "Overview")],
     ["participants", tr(locale, "Participantes", "Participants")],
     ["format", tr(locale, "Formato", "Format")],
-    ["team", tr(locale, "Equipos", "Teams")],
     ["competition", tr(locale, "Competencia", "Competition")],
     ["schedule", tr(locale, "Cronograma", "Schedule")],
     ["results", tr(locale, "Resultados", "Results")],
-    ["tv", "TV"],
-    ["recovery", tr(locale, "Recuperación", "Recovery")],
+    ["configuration", tr(locale, "Configuración", "Settings")],
   ];
 
   const back = () => {
@@ -632,41 +737,61 @@ export function TournamentDayWorkspace(props: Props) {
       ) : null}
 
       {tab === "participants" ? (
-        <DayParticipants locale={locale} snapshot={snapshot} mutate={mutate} />
+        <IntegralParticipantsPanel locale={locale} snapshot={snapshot as TournamentDayReformSnapshot} mutate={mutate} />
       ) : null}
 
       {tab === "format" ? (
-        <DayFormat locale={locale} snapshot={snapshot} mutate={mutate} />
+        <section className="td-stack">
+          <DayFormat locale={locale} snapshot={snapshot} mutate={(fn, message) => mutate(fn, message, "structure")} />
+          <FormatSimulator locale={locale} snapshot={snapshot as TournamentDayReformSnapshot} />
+        </section>
       ) : null}
 
       {tab === "competition" ? (
-        <DayStandardCompetition locale={locale} snapshot={snapshot} mutate={mutate} />
+        <section className="td-stack">
+          <DayStandardCompetition locale={locale} snapshot={snapshot} mutate={(fn, message) => mutate(fn, message, "structure")} />
+          <IntegralStandardGroupEditor locale={locale} snapshot={snapshot as TournamentDayReformSnapshot} mutate={mutate} />
+          <IntegralTeamCompetitionPanel locale={locale} snapshot={snapshot as TournamentDayReformSnapshot} mutate={mutate} />
+        </section>
       ) : null}
 
-      {tab === "team" ? (
-        <DayTeam locale={locale} snapshot={snapshot} mutate={mutate} />
-      ) : null}
+
 
       {tab === "schedule" ? (
-        <DaySchedule locale={locale} snapshot={snapshot} mutate={mutate} />
+        <IntegralSchedulePanel locale={locale} snapshot={snapshot as TournamentDayReformSnapshot} mutate={mutate} />
       ) : null}
 
       {tab === "results" ? (
-        <DayResults locale={locale} snapshot={snapshot} mutate={mutate} />
+        <IntegralResultsPanel
+          locale={locale}
+          snapshot={snapshot as TournamentDayReformSnapshot}
+          renderStandard={(match) => <StandardResultCard locale={locale} match={match} mutate={(fn, message) => mutate(fn, message, "live")} />}
+          renderTeamRubber={(category, encounter, match) => <TeamResultCard locale={locale} category={category} encounter={encounter} match={match} mutate={(fn, message) => mutate(fn, message, "live")} />}
+        />
       ) : null}
 
-      {tab === "tv" ? <TournamentDayTV snapshot={snapshot} locale={locale} embedded /> : null}
+      {tab === "tv" ? <IntegralTournamentDayTV snapshot={snapshot as TournamentDayReformSnapshot} locale={locale} embedded /> : null}
 
-      {tab === "recovery" ? (
-        <DayRecovery
+      {tab === "configuration" ? (
+        <IntegralConfigurationPanel
           locale={locale}
+          snapshot={snapshot as TournamentDayReformSnapshot}
           session={session}
           busy={busy}
-          publish={publish}
-          reloadSource={reloadSource}
-          exportLocal={exportLocal}
-          importLocal={importLocal}
-          resetLocal={resetLocal}
+          adminDiff={adminDiff}
+          onPreviewAdmin={previewAdministration}
+          onApplyAdmin={applyAdministration}
+          onPublishStructure={() => publishPublicModel("structure")}
+          onPublishLive={() => publishPublicModel("live")}
+          onCheckpoint={() => publish(false)}
+          onFinalize={() => publish(true)}
+          onExport={exportLocal}
+          onImport={importLocal}
+          onReset={resetLocal}
+          onReloadPublished={() => reloadSource("published")}
+          {...(!operatorToken ? { onReloadAdmin: () => reloadSource("d1") } : {})}
+          mutate={mutate}
+          {...(qaMode ? { onLoadQaFixture: loadQaFixture } : {})}
         />
       ) : null}
     </main>
@@ -717,7 +842,7 @@ function DayOverview({
         <div className="td-quick">
           <button onClick={() => setTab("participants")}>{tr(locale, "Participantes", "Participants")} →</button>
           <button onClick={() => setTab("format")}>{tr(locale, "Formato", "Format")} →</button>
-          <button onClick={() => setTab("team")}>{tr(locale, "Equipos", "Teams")} →</button>
+          <button onClick={() => setTab("competition")}>{tr(locale, "Equipos", "Teams")} →</button>
           <button onClick={() => setTab("competition")}>{tr(locale, "Competencia", "Competition")} →</button>
           <button onClick={() => setTab("results")}>{tr(locale, "Resultados", "Results")} →</button>
           <button onClick={() => setTab("tv")}>TV →</button>
@@ -1912,3 +2037,5 @@ function DayRecovery({
     </section>
   );
 }
+
+export const tournamentDayLegacyPanelsForRegression = { DayParticipants, DayTeam, DaySchedule, DayResults, DayRecovery, TournamentDayTV };
