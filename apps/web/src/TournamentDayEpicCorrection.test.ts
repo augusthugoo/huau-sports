@@ -46,14 +46,24 @@ describe("epic Tournament Day corrections", () => {
     const qa = createQaFixture(base());
     expect(qa.workspace.participants.players).toHaveLength(65);
     expect(qa.workspace.participants.players.some((player: any) => player.id === "old-player")).toBe(false);
+    expect(new Set(qa.workspace.participants.players.map((player: any) => player.displayName)).size).toBe(65);
+    expect(qa.workspace.participants.players.some((player: any) => /^QA \d+$/.test(player.displayName))).toBe(false);
+    expect(qa.workspace.participants.players[0].displayName).toBe("Nicolás Silva");
+    expect(qa.workspace.participants.players[64].displayName).toBe("Alejandro Rivero");
     expect(qa.workspace.core.categories.map((category: any) => category.id).sort()).toEqual(["qa-team-40", "qa-team-50"]);
     expect(qa.team.categories).toHaveLength(2);
+    expect((qa.team.categories.find((category: any) => category.id === "qa-team-40") as any).entries.map((entry: any) => entry.displayName)).toEqual(
+      ["Costa Sur", "Los Ceibos", "Bahía Pickle", "Rambla Norte", "Monteverde", "Delta"],
+    );
+    expect((qa.team.categories.find((category: any) => category.id === "qa-team-50") as any).entries.map((entry: any) => entry.displayName)).toEqual(
+      ["Atlántico", "Laguna", "La Brava", "Arenas", "Solís", "Punta Norte", "Cordón Pickle"],
+    );
   });
 
   it("counts a Team encounter once in no-show schedule impact even when it has five rubber rows", () => {
     const qa = createQaFixture(base());
     const category = qa.team.categories.find((row: any) => row.id === "qa-team-40") as any;
-    const team = category.entries.find((entry: any) => entry.roster.some((member: any) => member.name === "QA 01"));
+    const team = category.entries.find((entry: any) => entry.roster.some((member: any) => member.name === "Nicolás Silva"));
     const encounter = category.encounters.find((row: any) => row.entryAId === team.id || row.entryBId === team.id);
     qa.workspace.schedule.schedule.push(
       ...encounter.matches.map((match: any) => ({
@@ -83,7 +93,7 @@ describe("epic Tournament Day corrections", () => {
     encounter.matches[0].scoreB = 10;
     const historical = JSON.stringify(encounter.matches[0]);
 
-    const extraProfile = (qa.team.profiles as any[]).find((profile: any) => profile.displayName === "QA 65");
+    const extraProfile = (qa.team.profiles as any[]).find((profile: any) => profile.displayName === "Alejandro Rivero");
     updateLocalTeamRoster(
       qa as TournamentDaySnapshot,
       category.id,
@@ -123,7 +133,9 @@ describe("epic Tournament Day corrections", () => {
     const live = buildPublicLive(qa);
     const published = live.results.team.find((row: any) => row.encounterId === encounter.id);
     expect(published.rubbers[0].lineupA.length).toBeGreaterThan(0);
-    expect(published.rubbers[0].lineupA[0]).toMatch(/^QA /);
+    expect(published.rubbers[0].lineupA[0]).not.toMatch(/^QA /);
+    expect(qa.workspace.participants.players.filter((player: any) => player.sportGender === "male")).toHaveLength(33);
+    expect(qa.workspace.participants.players.filter((player: any) => player.sportGender === "female")).toHaveLength(32);
     expect(JSON.stringify(live)).not.toContain("local-person:qa-");
   });
 });

@@ -1314,21 +1314,62 @@ export function createQaFixture(base: TournamentDayReformSnapshot) {
     if (!team.format) team.format = teamFormatPreset("senior_cup_2026");
     return team;
   };
-  const c40 = makeCategory("qa-team-40", "+40 Team QA");
-  const c50 = makeCategory("qa-team-50", "+50 Team QA");
-  const genders = Array.from({ length: 65 }, (_, index) => index % 2 === 0 ? "male" : "female");
-  for (let index = 0; index < 65; index += 1) {
+  const c40 = makeCategory("qa-team-40", "Equipos +40");
+  const c50 = makeCategory("qa-team-50", "Equipos +50");
+  const qaNames = [
+    "Nicolás Silva", "Camila Rodríguez",
+    "Martín Pereira", "Sofía Fernández",
+    "Joaquín García", "Lucía Martínez",
+    "Mateo González", "Valentina López",
+    "Santiago Cabrera", "Martina Sosa",
+    "Federico Bentancur", "Julieta Viera",
+    "Ignacio Suárez", "Florencia Ramos",
+    "Bruno Acosta", "Agustina Méndez",
+    "Facundo Moreira", "Manuela Castro",
+    "Tomás Olivera", "Catalina Núñez",
+    "Sebastián Rivero", "Josefina Correa",
+    "Gonzalo Barrios", "Paula Cardozo",
+    "Rodrigo Delgado", "Emilia Techera",
+    "Andrés Fagúndez", "Victoria Fontes",
+    "Leandro Machado", "María Paz Duarte",
+    "Franco Pintos", "Renata Álvarez",
+    "Diego Etcheverry", "Clara Lorenzo",
+    "Pablo Giménez", "Antonella Díaz",
+    "Álvaro Ferreira", "Milagros Píriz",
+    "Emiliano Santos", "Delfina Larrosa",
+    "Juan Manuel Pérez", "Micaela Romero",
+    "Mauricio Vidal", "Belén Cabrera",
+    "Ramiro Silveira", "Carolina Méndez",
+    "Hernán Freitas", "Malena Rocha",
+    "Lucas Perdomo", "Ana Inés Silva",
+    "Marcos Rodríguez", "Pilar Pereira",
+    "Agustín García", "Noelia Fernández",
+    "Felipe González", "Victoria López",
+    "Lautaro Sosa", "Jimena Martínez",
+    "Matías Suárez", "Rocío Viera",
+    "Gabriel Acosta", "Cecilia Ramos",
+    "Maximiliano Castro", "Lorena Núñez",
+    "Alejandro Rivero",
+  ] as const;
+  const genders = Array.from({ length: qaNames.length }, (_, index) => index % 2 === 0 ? "male" : "female");
+  for (let index = 0; index < qaNames.length; index += 1) {
     const id = `local-player:qa-${index + 1}`;
     if ((snapshot.workspace.participants.players as any[]).some((player) => player.id === id)) continue;
-    const displayName = `QA ${String(index + 1).padStart(2, "0")}`;
+    const displayName = qaNames[index]!;
     const personId = `local-person:qa-${index + 1}`;
     (snapshot.workspace.participants.players as any[]).push({ id, organizationPersonId: personId, displayName, sportGender: genders[index], club: "HUAU QA", contact: "", duprSingles: Number((3.1 + (index % 15) * 0.07).toFixed(3)), duprDoubles: Number((3.2 + (index % 17) * 0.065).toFixed(3)), paymentStatus: "paid", playerStatus: "confirmed", source: "qa" });
     (snapshot.team.profiles as any[]).push({ id, personId, displayName, sportGender: genders[index], duprSingles: Number((3.1 + (index % 15) * 0.07).toFixed(3)), duprDoubles: Number((3.2 + (index % 17) * 0.065).toFixed(3)) });
     ensureDayLocalMeta(snapshot).localParticipantIds.push(id);
   }
   const profiles = snapshot.team.profiles as any[];
+  const teamNamesByCategory: Record<string, readonly string[]> = {
+    "qa-team-40": ["Costa Sur", "Los Ceibos", "Bahía Pickle", "Rambla Norte", "Monteverde", "Delta"],
+    "qa-team-50": ["Atlántico", "Laguna", "La Brava", "Arenas", "Solís", "Punta Norte", "Cordón Pickle"],
+  };
   const buildTeams = (category: any, count: number, offset: number) => {
     category.entries = [];
+    const teamNames = teamNamesByCategory[String(category.id)] ?? [];
+    if (teamNames.length !== count) throw new Error("QA_TEAM_NAMES_MISMATCH");
     let cursor = offset;
     for (let teamIndex = 0; teamIndex < count; teamIndex += 1) {
       const size = 4 + (teamIndex % 3);
@@ -1338,7 +1379,7 @@ export function createQaFixture(base: TournamentDayReformSnapshot) {
       });
       cursor += size;
       const teamId = `local-team:${category.id}:${teamIndex + 1}`;
-      category.entries.push({ id: teamId, categoryId: category.id, displayName: `${category.name} · Equipo ${teamIndex + 1}`, status: "confirmed", roster, seedRating: Number((roster.reduce((sum: number, member: any) => { const profile = profiles.find((row) => row.personId === member.personId); return sum + Number(profile?.duprDoubles ?? 0); }, 0) / roster.length).toFixed(3)), seedOrder: teamIndex + 1 });
+      category.entries.push({ id: teamId, categoryId: category.id, displayName: teamNames[teamIndex]!, status: "confirmed", roster, seedRating: Number((roster.reduce((sum: number, member: any) => { const profile = profiles.find((row) => row.personId === member.personId); return sum + Number(profile?.duprDoubles ?? 0); }, 0) / roster.length).toFixed(3)), seedOrder: teamIndex + 1 });
       const meta = ensureDayLocalMeta(snapshot);
       if (!meta.localTeamIds.includes(teamId)) meta.localTeamIds.push(teamId);
       for (const member of roster) {
