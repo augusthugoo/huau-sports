@@ -60,6 +60,7 @@ export type DayLocalMeta = {
   localParticipantIds: string[];
   localTeamIds: string[];
   schedule: {
+    categoryDates: Record<string, string>;
     lockedUnitIds: string[];
     closedCourts: GlobalScheduleClosedCourt[];
     breaks: GlobalScheduleBreak[];
@@ -195,7 +196,7 @@ export function ensureDayLocalMeta(snapshot: TournamentDayReformSnapshot): DayLo
       teamTombstones: {},
       localParticipantIds: [],
       localTeamIds: [],
-      schedule: { lockedUnitIds: [], closedCourts: [], breaks: [], lastConflicts: [] },
+      schedule: { categoryDates: {}, lockedUnitIds: [], closedCourts: [], breaks: [], lastConflicts: [] },
       publicDirty: {
         structure: 0,
         live: 0,
@@ -216,7 +217,8 @@ export function ensureDayLocalMeta(snapshot: TournamentDayReformSnapshot): DayLo
   snapshot.localMeta.teamTombstones ??= {};
   snapshot.localMeta.localParticipantIds ??= [];
   snapshot.localMeta.localTeamIds ??= [];
-  snapshot.localMeta.schedule ??= { lockedUnitIds: [], closedCourts: [], breaks: [], lastConflicts: [] };
+  snapshot.localMeta.schedule ??= { categoryDates: {}, lockedUnitIds: [], closedCourts: [], breaks: [], lastConflicts: [] };
+  snapshot.localMeta.schedule.categoryDates ??= {};
   snapshot.localMeta.publicDirty ??= {
     structure: 0,
     live: 0,
@@ -529,9 +531,113 @@ function teamEntryParticipantKeys(category: any, entryId: string | null | undefi
 }
 
 function dayDate(snapshot: TournamentDayReformSnapshot, category: any) {
+  const categoryId = String(category?.id ?? "");
+  const override = categoryId
+    ? ensureDayLocalMeta(snapshot).schedule.categoryDates[categoryId]
+    : undefined;
+  if (override) return String(override);
   if (category?.scheduledDate) return String(category.scheduledDate);
   const raw = Number(snapshot.workspace.core.tournament.startAt ?? Date.now());
   return new Date(raw < 10_000_000_000 ? raw * 1000 : raw).toISOString().slice(0, 10);
+}
+
+function moveUnixToCalendarDate(value: number, targetDate: string) {
+  const raw = Number(value);
+  const seconds = raw < 10_000_000_000;
+  const date = new Date(seconds ? raw * 1000 : raw);
+  const [year, month, day] = targetDate.split("-").map(Number);
+  if (!year || !month || !day) throw new Error("SCHEDULE_CATEGORY_DATE_INVALID");
+  date.setFullYear(year, month - 1, day);
+  return seconds ? Math.floor(date.getTime() / 1000) : date.getTime();
+}
+
+function syncScheduleRowTargets(snapshot: TournamentDayReformSnapshot, row: any) {
+  if (String(row.categoryEntryType) === "team") {
+    const category = (snapshot.team.categories as any[]).find(
+      (candidate) => String(candidate.id) === String(row.categoryId),
+    );
+    const encounter = category?.encounters?.find(
+      (candidate: any) => String(candidate.id) === String(row.encounterId),
+    );
+    const match = encounter?.matches?.find(
+      (candidate: any) => String(candidate.id) === String(row.matchId),
+    );
+    if (match) {
+      match.scheduleStart = Number(row.startAt);
+      match.scheduleEnd = Number(row.endAt);
+      match.courtLabel = row.courtLabel ?? null;
+      match.scheduleStatus = row.status ?? "bound";
+    }
+    return;
+  }
+
+  const match = (snapshot.workspace.standard.matches as any[]).find(
+    (candidate) =>
+      String(candidate.categoryId) === String(row.categoryId) &&
+      (
+        String(candidate.matchId ?? "") === String(row.matchId ?? "") ||
+        String(candidate.encounterId ?? "") === String(row.encounterId ?? "")
+      ),
+  );
+  if (match) {
+    match.scheduleStart = Number(row.startAt);
+    match.scheduleEnd = Number(row.endAt);
+    match.courtLabel = row.courtLabel ?? null;
+  }
+}
+
+export function setCategoryScheduleDate(
+  snapshot: TournamentDayReformSnapshot,
+  categoryId: string,
+  targetDate: string,
+) {
+  const normalized = String(targetDate ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    throw new Error("SCHEDULE_CATEGORY_DATE_INVALID");
+  }
+
+  const categoryExists = (snapshot.workspace.core.categories as any[]).some(
+    (category) => String(category.id) === String(categoryId),
+  );
+  if (!categoryExists) throw new Error("SCHEDULE_CATEGORY_NOT_FOUND");
+
+  const meta = ensureDayLocalMeta(snapshot);
+  const hadPrevious = Object.prototype.hasOwnProperty.call(meta.schedule.categoryDates, categoryId);
+  const previousDate = meta.schedule.categoryDates[categoryId];
+  const rows = (snapshot.workspace.schedule.schedule as any[]).filter(
+    (row) => String(row.categoryId) === String(categoryId),
+  );
+  const backup = rows.map((row) => ({
+    row,
+    startAt: row.startAt,
+    endAt: row.endAt,
+    courtLabel: row.courtLabel,
+  }));
+
+  meta.schedule.categoryDates[categoryId] = normalized;
+  for (const row of rows) {
+    const duration = Number(row.endAt) - Number(row.startAt);
+    row.startAt = moveUnixToCalendarDate(Number(row.startAt), normalized);
+    row.endAt = Number(row.startAt) + duration;
+    syncScheduleRowTargets(snapshot, row);
+  }
+
+  const conflicts = rows.length ? validateGlobalSchedule(snapshot) : [];
+  if (conflicts.length) {
+    if (hadPrevious && previousDate) meta.schedule.categoryDates[categoryId] = previousDate;
+    else delete meta.schedule.categoryDates[categoryId];
+    for (const item of backup) {
+      item.row.startAt = item.startAt;
+      item.row.endAt = item.endAt;
+      item.row.courtLabel = item.courtLabel;
+      syncScheduleRowTargets(snapshot, item.row);
+    }
+    throw new Error(
+      `SCHEDULE_CATEGORY_DATE_CONFLICT:${conflicts.map((conflict) => conflict.unitId).join(",")}`,
+    );
+  }
+
+  markStructureDirty(snapshot);
 }
 
 function applySchedulePolicy(
@@ -873,9 +979,16 @@ export function updateScheduleUnit(snapshot: TournamentDayReformSnapshot, schedu
     if (patch.court) row.courtLabel = `Cancha ${patch.court}`;
   }
   if (rows.length === 1 && patch.durationMinutes) rows[0].endAt = startAt + duration;
+  for (const row of rows) syncScheduleRowTargets(snapshot, row);
   const conflicts = validateGlobalSchedule(snapshot);
   if (conflicts.length) {
-    for (const item of backup) { item.row.startAt = item.startAt; item.row.endAt = item.endAt; item.row.courtLabel = item.courtLabel; item.row.locked = item.locked; }
+    for (const item of backup) {
+      item.row.startAt = item.startAt;
+      item.row.endAt = item.endAt;
+      item.row.courtLabel = item.courtLabel;
+      item.row.locked = item.locked;
+      syncScheduleRowTargets(snapshot, item.row);
+    }
     throw new Error(`SCHEDULE_MANUAL_MOVE_CONFLICT:${conflicts.map((conflict: GlobalScheduleConflict) => conflict.unitId).join(",")}`);
   }
   setScheduleUnitLocked(snapshot, scheduleUnitId, true);
@@ -1115,9 +1228,29 @@ function publicStandardGroups(groups: any[]) {
   }));
 }
 
-function publicScheduleRow(row: any) {
+function publicRubberDisplay(
+  snapshot: TournamentDayReformSnapshot,
+  row: { categoryId?: unknown; rubberKey?: unknown; rubberCode?: unknown; rubberLabel?: unknown; rubberOrder?: unknown },
+) {
+  const category = (snapshot.team.categories as any[]).find(
+    (candidate) => String(candidate.id) === String(row.categoryId ?? ""),
+  );
+  const definition = (category?.format?.encounter?.rubbers ?? []).find(
+    (candidate: any) => String(candidate.key) === String(row.rubberKey ?? ""),
+  );
+  const candidate = String(definition?.displayCode ?? row.rubberCode ?? "").trim();
+  const technical = !candidate || /^custom[-_:]/i.test(candidate) || /^r?\d{8,}$/i.test(candidate);
+  const order = Math.max(0, Number(row.rubberOrder ?? definition?.order ?? 0));
+  const code = technical ? `R${order || 1}` : candidate;
+  const label = String(definition?.label ?? row.rubberLabel ?? code).trim() || code;
+  return { code, label, order };
+}
+
+function publicScheduleRow(snapshot: TournamentDayReformSnapshot, row: any) {
+  const rubber = row.rubberKey ? publicRubberDisplay(snapshot, row) : null;
   return {
     id: String(row.id),
+    scheduleUnitId: row.scheduleUnitId ? String(row.scheduleUnitId) : null,
     categoryId: String(row.categoryId),
     categoryName: String(row.categoryName ?? ""),
     kind: String(row.categoryEntryType ?? "individual"),
@@ -1136,7 +1269,10 @@ function publicScheduleRow(row: any) {
     sideA: row.sideA ? String(row.sideA) : null,
     entryBId: row.entryBId ? String(row.entryBId) : null,
     sideB: row.sideB ? String(row.sideB) : null,
-    rubberKey: row.rubberKey ? String(row.rubberCode ?? row.rubberKey) : null,
+    rubberKey: rubber?.code ?? null,
+    rubberCode: rubber?.code ?? null,
+    rubberLabel: rubber?.label ?? null,
+    rubberOrder: rubber?.order ?? null,
   };
 }
 
@@ -1162,17 +1298,20 @@ export function buildPublicStructure(snapshot: TournamentDayReformSnapshot) {
             : typeof tournament.venue === "string"
               ? tournament.venue
               : null,
+      heroImageUrl: tournament.publicHeroR2Key
+        ? `/api/public/tournaments/${encodeURIComponent(String(tournament.slug ?? ""))}/hero`
+        : null,
     },
     revision: meta.publicDirty.structureRevision + 1,
     generatedAt: Date.now(),
     categories: (snapshot.workspace.core.categories as any[]).map((category) => ({
-      id: String(category.id), name: String(category.name ?? ""), entryType: String(category.entryType ?? "individual"), competitionGender: String(category.competitionGender ?? "open"), scheduledDate: category.scheduledDate ?? null,
+      id: String(category.id), name: String(category.name ?? ""), entryType: String(category.entryType ?? "individual"), competitionGender: String(category.competitionGender ?? "open"), scheduledDate: meta.schedule.categoryDates[String(category.id)] ?? category.scheduledDate ?? null,
     })),
     players: (snapshot.workspace.participants.players as any[]).filter((player) => !meta.participantTombstones[String(player.id)] && !["no_show", "withdrawn_local"].includes(String(player.playerStatus))).map(publicPlayer),
     teams: (snapshot.team.categories as any[]).flatMap((category) => (category.entries ?? []).filter((entry: any) => !meta.teamTombstones[String(entry.id)]).map((entry: any) => publicTeam(category, entry))),
     standard: (snapshot.workspace.standard.competitions as any[]).map((competition) => ({ categoryId: String(competition.categoryId), format: cloneDay(competition.format), groups: publicStandardGroups(competition.groups ?? []), bracket: cloneDay((competition.encounters ?? []).filter((encounter: any) => encounter.stage !== "group").map((encounter: any) => ({ id: encounter.id, stage: encounter.stage, roundLabel: encounter.roundLabel, entryA: encounter.entryA?.name ?? null, entryB: encounter.entryB?.name ?? null, status: encounter.status }))) })),
     team: (snapshot.team.categories as any[]).map((category) => ({ categoryId: String(category.id), format: cloneDay(category.format), groups: cloneDay(category.groups ?? []).map((row: any) => ({ id: row.id, name: row.name, entryId: row.entryId, entryName: row.entryName })), bracket: cloneDay((category.encounters ?? []).filter((encounter: any) => encounter.stage !== "group").map((encounter: any) => ({ id: encounter.id, stage: encounter.stage, roundLabel: encounter.roundLabel, sideA: encounter.sideA, sideB: encounter.sideB, status: encounter.status }))) })),
-    schedule: (snapshot.workspace.schedule.schedule as any[]).map(publicScheduleRow),
+    schedule: (snapshot.workspace.schedule.schedule as any[]).map((row: any) => publicScheduleRow(snapshot, row)),
   };
 }
 
@@ -1232,11 +1371,17 @@ export function buildPublicLive(snapshot: TournamentDayReformSnapshot) {
           (rubber: any) => String(rubber.key) === String(match.rubberKey),
         );
         const internalKey = String(match.rubberKey ?? "");
-        const displayCode = String(definition?.displayCode ?? internalKey).trim() || internalKey;
+        const publicRubber = publicRubberDisplay(snapshot, {
+          categoryId: category.id,
+          rubberKey: internalKey,
+          rubberCode: definition?.displayCode,
+          rubberLabel: definition?.label,
+          rubberOrder: match.rubberOrder,
+        });
         return {
           id: String(match.id),
-          key: displayCode,
-          label: String(definition?.label ?? displayCode),
+          key: publicRubber.code,
+          label: publicRubber.label,
           order: Number(match.rubberOrder ?? 0),
           weight: Number(definition?.weight ?? 1),
           status: String(match.status ?? "pending"),
@@ -1257,7 +1402,7 @@ export function buildPublicLive(snapshot: TournamentDayReformSnapshot) {
     revision: meta.publicDirty.liveRevision + 1,
     generatedAt: Date.now(),
     status: competitionCompleteLocal(snapshot) ? "finished" : "live",
-    schedule: (snapshot.workspace.schedule.schedule as any[]).map(publicScheduleRow),
+    schedule: (snapshot.workspace.schedule.schedule as any[]).map((row: any) => publicScheduleRow(snapshot, row)),
     results: { standard: standardResults, team: teamResults },
     standings: { standard: cloneDay(snapshot.workspace.standard.standings ?? []), team: (snapshot.team.categories as any[]).flatMap((category) => (category.standings ?? []).map((standing: any) => ({ categoryId: category.id, categoryName: category.name, groupId: standing.groupId, groupName: standing.groupName, rows: cloneDay(standing.rows ?? []) }))) },
     bracket: {

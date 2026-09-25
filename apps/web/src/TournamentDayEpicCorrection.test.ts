@@ -3,8 +3,12 @@ import { describe, expect, it } from "vitest";
 import { saveLocalTeamLineup, updateLocalTeamRoster, type TournamentDaySnapshot } from "./TournamentDayEngine";
 import {
   buildPublicLive,
+  buildPublicStructure,
   createQaFixture,
+  ensureDayLocalMeta,
   participantImpact,
+  regenerateGlobalSchedule,
+  setCategoryScheduleDate,
   type TournamentDayReformSnapshot,
 } from "./TournamentDayReformEngine";
 
@@ -145,4 +149,35 @@ describe("epic Tournament Day corrections", () => {
     expect(qa.workspace.participants.players.filter((player: any) => player.sportGender === "female")).toHaveLength(32);
     expect(JSON.stringify(live)).not.toContain("local-person:qa-");
   });
+
+  it("keeps Tournament Day category dates local and publishes human schedule metadata", () => {
+    const qa = createQaFixture(base());
+    const category = qa.team.categories.find((row: any) => row.id === "qa-team-40") as any;
+    (qa.workspace.core.tournament as any).publicHeroR2Key = "tournaments/t-epic/public/hero/demo.webp";
+    category.format.encounter.rubbers[0].displayCode = "DBM";
+
+    regenerateGlobalSchedule(qa);
+    expect((qa.workspace.schedule.schedule as any[]).some((row) => String(row.categoryId) === category.id)).toBe(true);
+
+    setCategoryScheduleDate(qa, category.id, "2030-07-02");
+    expect(ensureDayLocalMeta(qa).schedule.categoryDates[category.id]).toBe("2030-07-02");
+
+    const movedRows = (qa.workspace.schedule.schedule as any[]).filter(
+      (row) => String(row.categoryId) === category.id,
+    );
+    expect(movedRows.length).toBeGreaterThan(0);
+    expect(new Date(Number(movedRows[0].startAt) * 1000).toISOString().slice(0, 10)).toBe("2030-07-02");
+
+    const structure = buildPublicStructure(qa) as any;
+    expect(structure.tournament.heroImageUrl).toBe("/api/public/tournaments/epic/hero");
+    expect(structure.categories.find((row: any) => row.id === category.id).scheduledDate).toBe("2030-07-02");
+
+    const published = structure.schedule.find(
+      (row: any) => String(row.categoryId) === category.id && Number(row.rubberOrder) === 1,
+    );
+    expect(published.scheduleUnitId).toContain(`team:${category.id}:`);
+    expect(published.rubberCode).toBe("DBM");
+    expect(published.rubberLabel).toBe("Dobles Masculino");
+  });
+
 });

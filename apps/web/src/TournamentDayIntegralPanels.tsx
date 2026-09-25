@@ -30,6 +30,7 @@ import {
   resetDayCategoryCompetition,
   restoreParticipant,
   setParticipantNoShow,
+  setCategoryScheduleDate,
   setScheduleUnitLocked,
   teamEntryRating,
   updateDayParticipant,
@@ -287,6 +288,10 @@ export function IntegralSchedulePanel({ locale, snapshot, mutate }: { locale: Lo
   const schedule=[...(snapshot.workspace.schedule.schedule as any[])].sort((a,b)=>Number(a.startAt)-Number(b.startAt)||String(a.courtLabel).localeCompare(String(b.courtLabel)));
   const scheduleMeta=ensureDayLocalMeta(snapshot).schedule;
   const settings=snapshot.workspace.core.settings as any;
+  const categories=snapshot.workspace.core.categories as any[];
+  const tournamentStart=Number(snapshot.workspace.core.tournament.startAt??Date.now());
+  const defaultCategoryDate=new Date(tournamentStart<10_000_000_000?tournamentStart*1000:tournamentStart).toISOString().slice(0,10);
+  const categoryDates=scheduleMeta.categoryDates??{};
   const saveOperatingWindow=async(event:FormEvent<HTMLFormElement>)=>{event.preventDefault();const data=new FormData(event.currentTarget);await mutate(next=>{const target=next.workspace.core.settings as any;target.dailyStart=String(data.get("dailyStart")??"09:00");target.dailyEnd=String(data.get("dailyEnd")??"20:00");target.defaultMatchMinutes=Math.max(5,Number(data.get("matchMinutes")??30));target.teamRubberMinutes=Math.max(5,Number(data.get("teamRubberMinutes")??target.defaultMatchMinutes));target.minimumRestSlots=Math.max(0,Number(data.get("minimumRestSlots")??1));target.preferredRestSlots=Math.max(target.minimumRestSlots,Number(data.get("preferredRestSlots")??target.minimumRestSlots));},tr(locale,"Ventana operativa actualizada. Regenerá el cronograma para aplicarla.","Operating window updated. Regenerate the schedule to apply it."),"structure");};
   const conflicts=scheduleMeta.lastConflicts;
   const standardMinutes=Math.max(5,Number(settings.defaultMatchMinutes??30));
@@ -305,6 +310,18 @@ export function IntegralSchedulePanel({ locale, snapshot, mutate }: { locale: Lo
       <form className="td-inline-form td-inline-dense td-schedule-window" onSubmit={saveOperatingWindow}><label><span>{tr(locale,"Inicio","Start")}</span><input name="dailyStart" type="time" defaultValue={String(settings.dailyStart??"09:00")} required /></label><label><span>{tr(locale,"Fin duro","Hard end")}</span><input name="dailyEnd" type="time" defaultValue={String(settings.dailyEnd??"20:00")} required /></label><label><span>{tr(locale,"Min/partido Standard","Min/Standard match")}</span><input name="matchMinutes" type="number" min="5" defaultValue={standardMinutes} /></label><label><span>{tr(locale,"Min/rubber Team","Min/Team rubber")}</span><input name="teamRubberMinutes" type="number" min="5" defaultValue={teamRubberMinutes} /></label><label><span>{tr(locale,"Descanso mínimo (bloques)","Minimum rest (slots)")}</span><input name="minimumRestSlots" type="number" min="0" defaultValue={Number(settings.minimumRestSlots??1)} /></label><label><span>{tr(locale,"Descanso preferido (bloques)","Preferred rest (slots)")}</span><input name="preferredRestSlots" type="number" min="0" defaultValue={Number(settings.preferredRestSlots??settings.minimumRestSlots??1)} /></label><button className="ghost small">{tr(locale,"Guardar ventana","Save window")}</button></form><div className="td-schedule-math"><span><b>{standardMinutes} min</b><small>{tr(locale,"duración de cada partido Standard","each Standard match")}</small></span><span><b>{teamRubberMinutes} min</b><small>{tr(locale,"duración estimada de cada rubber Team","each Team rubber")}</small></span><span><b>{minimumRestMinutes} min</b><small>{tr(locale,"descanso mínimo actual entre participaciones","current minimum rest between appearances")}</small></span><span><b>{preferredRestMinutes} min</b><small>{tr(locale,"descanso preferido actual","current preferred rest")}</small></span>{teamSeries.map((row)=><span key={row.name}><b>{row.rubbers} × {teamRubberMinutes} = {row.rubbers*teamRubberMinutes} min</b><small>{row.name} · {tr(locale,"reserva estimada de serie completa; el scheduler usa una grilla de 5 min","estimated full encounter reservation; scheduler uses a 5 min grid")}</small></span>)}</div>
       {conflicts.length ? <details className="td-conflict-summary"><summary><div><b>{conflicts.length} {tr(locale,"bloque(s) no pudieron programarse","block(s) could not be scheduled")}</b><span>{tr(locale,"El scheduler respetó el fin duro, descansos y restricciones. Abrí para ver detalles técnicos.","The scheduler respected hard end, rest and restrictions. Open for technical details.")}</span></div><em>{tr(locale,"Ver detalles","Details")}</em></summary><div className="td-conflict-details">{conflicts.map((conflict,index)=><div className="warning-line" key={`${conflict.code}-${index}`}><b>{conflict.code}</b> · {conflict.message}</div>)}</div></details> : null}
     </article>
+    <article className="panel td-schedule-category-days">
+      <div className="panel-title"><div><div className="eyebrow">DÍAS DE JUEGO</div><h2>{tr(locale,"Día operativo por categoría","Operational day by category")}</h2></div></div>
+      <p className="muted">{tr(locale,"Administración queda como referencia inicial. Acá Tournament Day manda: cambiar un día mueve la categoría completa y las próximas regeneraciones respetan este override local.","Administration remains the initial reference. Tournament Day is authoritative here: changing a day moves the full category and future regenerations respect this local override.")}</p>
+      <div className="td-category-day-grid">
+        {categories.map((category:any)=>{
+          const adminDate=String(category.scheduledDate??defaultCategoryDate);
+          const localDate=String(categoryDates[String(category.id)]??adminDate);
+          const overridden=Boolean(categoryDates[String(category.id)]);
+          return <label className={`td-category-day ${overridden?"overridden":""}`} key={category.id}><span><b>{category.name}</b><small>{overridden?tr(locale,`Tournament Day · Admin: ${adminDate}`,`Tournament Day · Admin: ${adminDate}`):tr(locale,`Referencia Admin: ${adminDate}`,`Admin reference: ${adminDate}`)}</small></span><input type="date" value={localDate} onChange={(event)=>{const value=event.target.value;if(!value)return;void mutate(next=>setCategoryScheduleDate(next,String(category.id),value),tr(locale,`Día de ${category.name} actualizado a ${value}.`,`Day for ${category.name} updated to ${value}.`),"structure")}} /></label>
+        })}
+      </div>
+    </article>
     <article className="panel td-schedule-constraints">
       <div className="panel-title"><div><div className="eyebrow">RESTRICCIONES MANUALES</div><h2>{tr(locale,"Canchas cerradas y descansos","Closed courts & breaks")}</h2></div></div>
       <div className="td-constraint-grid">
@@ -317,7 +334,31 @@ export function IntegralSchedulePanel({ locale, snapshot, mutate }: { locale: Lo
   </section>;
 }
 
-function ScheduleBlock({blockId,rows,locale,mutate}:{blockId:string;rows:any[];locale:Locale;mutate:DayMutate}){const first=rows[0];const team=first.categoryEntryType==="team";const locked=rows.some((r)=>r.locked);const save=async(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();const d=new FormData(e.currentTarget);const start=String(d.get("start")??"");const startAt=localDateTimeToUnix(start.slice(0,10),start.slice(11,16));const court=Number(String(d.get("court")??"1").replace(/\D/g,""))||1;await mutate(next=>updateScheduleUnit(next,blockId,{startAt,court}),tr(locale,"Bloque movido y validado.","Block moved and validated."))};return <form className={`td-schedule-row td-schedule-block ${team?"team-block":""}`} onSubmit={save}><div><strong>{first.sideA||first.roundLabel||first.categoryName}{first.sideB?` vs ${first.sideB}`:""}</strong><span>{first.categoryName} · {team?`${rows.length} rubbers · misma cancha`:first.stage} · {locked?"LOCKED":""}</span>{team?<small>{rows.map((r)=>String(r.rubberCode??r.rubberKey??"").toUpperCase()).filter(Boolean).join(" → ")}</small>:null}</div><label><span>{tr(locale,"Inicio","Start")}</span><input name="start" type="datetime-local" defaultValue={unixToLocalDateTime(Math.min(...rows.map((r)=>Number(r.startAt))))}/></label><label><span>{tr(locale,"Cancha","Court")}</span><input name="court" defaultValue={String(first.courtLabel).match(/\d+/)?.[0]??"1"}/></label><div className="form-actions"><button className="ghost small">{tr(locale,"Mover","Move")}</button><button type="button" className={locked?"light small":"ghost small"} onClick={()=>void mutate(next=>setScheduleUnitLocked(next,blockId,!locked),locked?tr(locale,"Bloque desbloqueado.","Block unlocked."):tr(locale,"Bloque bloqueado.","Block locked."))}>{locked?"🔒":"🔓"}</button></div></form>}
+function ScheduleBlock({blockId,rows,locale,mutate}:{blockId:string;rows:any[];locale:Locale;mutate:DayMutate}){
+  const first=rows[0];
+  const team=first.categoryEntryType==="team";
+  const locked=rows.some((r)=>r.locked);
+  const visibleRubber=(row:any,index:number)=>{
+    const candidate=String(row.rubberCode??row.rubberKey??"").trim();
+    return candidate&&!/^custom[-_:]/i.test(candidate)&&!/^r?\d{8,}$/i.test(candidate)
+      ? candidate
+      : `R${Number(row.rubberOrder??index+1)||index+1}`;
+  };
+  const readPatch=(form:HTMLFormElement)=>{
+    const data=new FormData(form);
+    const start=String(data.get("start")??"");
+    return {
+      startAt:localDateTimeToUnix(start.slice(0,10),start.slice(11,16)),
+      court:Number(String(data.get("court")??"1").replace(/\D/g,""))||1,
+    };
+  };
+  const save=async(event:FormEvent<HTMLFormElement>)=>{
+    event.preventDefault();
+    const patch=readPatch(event.currentTarget);
+    await mutate(next=>updateScheduleUnit(next,blockId,patch),tr(locale,"Bloque movido, guardado y bloqueado.","Block moved, saved and locked."));
+  };
+  return <form className={`td-schedule-row td-schedule-block ${team?"team-block":""}`} onSubmit={save}><div><strong>{first.sideA||first.roundLabel||first.categoryName}{first.sideB?` vs ${first.sideB}`:""}</strong><span>{first.categoryName} · {team?`${rows.length} rubbers · misma cancha`:first.stage} · {locked?"LOCKED":""}</span>{team?<small>{rows.map((r,index)=>visibleRubber(r,index)).filter(Boolean).join(" → ")}</small>:null}</div><label><span>{tr(locale,"Inicio","Start")}</span><input name="start" type="datetime-local" defaultValue={unixToLocalDateTime(Math.min(...rows.map((r)=>Number(r.startAt))))}/></label><label><span>{tr(locale,"Cancha","Court")}</span><input name="court" defaultValue={String(first.courtLabel).match(/\d+/)?.[0]??"1"}/></label><div className="form-actions"><button className="ghost small">{tr(locale,"Guardar posición","Save position")}</button><button type="button" className={locked?"light small":"ghost small"} onClick={(event)=>{if(locked){void mutate(next=>setScheduleUnitLocked(next,blockId,false),tr(locale,"Bloque desbloqueado.","Block unlocked."));return;}const form=event.currentTarget.form;if(!form)return;const patch=readPatch(form);void mutate(next=>updateScheduleUnit(next,blockId,patch),tr(locale,"Posición guardada y bloqueada.","Position saved and locked."));}}>{locked?tr(locale,"Desbloquear 🔓","Unlock 🔓"):tr(locale,"Guardar + bloquear 🔒","Save + lock 🔒")}</button></div></form>
+}
 
 function scheduleIndex(snapshot:TournamentDayReformSnapshot){const map=new Map<string,number>();for(const row of snapshot.workspace.schedule.schedule as any[]){const id=String(row.matchId??row.encounterId??"");if(!id)continue;const t=Number(row.startAt??0);const old=map.get(id);if(old===undefined||t<old)map.set(id,t)}return map}
 export function IntegralResultsPanel({locale,snapshot,renderStandard,renderTeamRubber}:{locale:Locale;snapshot:TournamentDayReformSnapshot;renderStandard:(match:any)=>ReactNode;renderTeamRubber:(category:any,encounter:any,match:any)=>ReactNode}){
