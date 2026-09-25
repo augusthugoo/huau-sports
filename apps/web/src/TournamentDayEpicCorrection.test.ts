@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, expect, it } from "vitest";
-import { updateLocalTeamRoster, type TournamentDaySnapshot } from "./TournamentDayEngine";
+import { saveLocalTeamLineup, updateLocalTeamRoster, type TournamentDaySnapshot } from "./TournamentDayEngine";
 import {
   buildPublicLive,
   createQaFixture,
@@ -58,6 +58,7 @@ describe("epic Tournament Day corrections", () => {
     expect((qa.team.categories.find((category: any) => category.id === "qa-team-50") as any).entries.map((entry: any) => entry.displayName)).toEqual(
       ["Atlántico", "Laguna", "La Brava", "Arenas", "Solís", "Punta Norte", "Cordón Pickle"],
     );
+    expect((qa.team.categories[0] as any).format.encounter.rubbers.map((rubber: any) => rubber.displayCode)).toEqual(["MD", "WD", "MS", "WS", "XD"]);
   });
 
   it("counts a Team encounter once in no-show schedule impact even when it has five rubber rows", () => {
@@ -119,19 +120,25 @@ describe("epic Tournament Day corrections", () => {
     const encounter = category.encounters[0];
     const entryA = category.entries.find((entry: any) => entry.id === encounter.entryAId);
     const entryB = category.entries.find((entry: any) => entry.id === encounter.entryBId);
-    encounter.lineups = [entryA, entryB].map((entry: any) => ({
-      entryId: entry.id,
-      status: "locked",
-      assignments: category.format.encounter.rubbers.map((rubber: any) => ({
-        rubberKey: rubber.key,
-        personIds: entry.roster
-          .filter((member: any) => rubber.gender === "male" ? member.sportGender === "male" : rubber.gender === "female" ? member.sportGender === "female" : true)
-          .slice(0, rubber.mode === "doubles" ? 2 : 1)
-          .map((member: any) => member.personId),
-      })),
-    }));
+    for (const entry of [entryA, entryB]) {
+      saveLocalTeamLineup(
+        qa as TournamentDaySnapshot,
+        category.id,
+        encounter.id,
+        entry.id,
+        category.format.encounter.rubbers.map((rubber: any) => ({
+          rubberKey: rubber.key,
+          personIds: entry.roster
+            .filter((member: any) => rubber.gender === "male" ? member.sportGender === "male" : rubber.gender === "female" ? member.sportGender === "female" : true)
+            .slice(0, rubber.mode === "doubles" ? 2 : 1)
+            .map((member: any) => member.personId),
+        })),
+      );
+    }
+    category.format.encounter.rubbers[0].displayCode = "MASC";
     const live = buildPublicLive(qa);
     const published = live.results.team.find((row: any) => row.encounterId === encounter.id);
+    expect(published.rubbers[0].key).toBe("MASC");
     expect(published.rubbers[0].lineupA.length).toBeGreaterThan(0);
     expect(published.rubbers[0].lineupA[0]).not.toMatch(/^QA /);
     expect(qa.workspace.participants.players.filter((player: any) => player.sportGender === "male")).toHaveLength(33);

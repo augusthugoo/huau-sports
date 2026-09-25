@@ -31,6 +31,7 @@ export function createMixedFiveRubberTeamFormat(mixedDoublesPlay: "always" | "if
       rubbers: [
         {
           key: "md",
+          displayCode: "MD",
           label: "Dobles Masculino",
           order: 1,
           mode: "doubles",
@@ -44,6 +45,7 @@ export function createMixedFiveRubberTeamFormat(mixedDoublesPlay: "always" | "if
         },
         {
           key: "wd",
+          displayCode: "WD",
           label: "Dobles Femenino",
           order: 2,
           mode: "doubles",
@@ -57,6 +59,7 @@ export function createMixedFiveRubberTeamFormat(mixedDoublesPlay: "always" | "if
         },
         {
           key: "ms",
+          displayCode: "MS",
           label: "Singles Masculino",
           order: 3,
           mode: "singles",
@@ -70,6 +73,7 @@ export function createMixedFiveRubberTeamFormat(mixedDoublesPlay: "always" | "if
         },
         {
           key: "ws",
+          displayCode: "WS",
           label: "Singles Femenino",
           order: 4,
           mode: "singles",
@@ -83,6 +87,7 @@ export function createMixedFiveRubberTeamFormat(mixedDoublesPlay: "always" | "if
         },
         {
           key: "xd",
+          displayCode: "XD",
           label: "Dobles Mixto",
           order: 5,
           mode: "doubles",

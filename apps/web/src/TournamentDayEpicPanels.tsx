@@ -1,8 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { Locale } from "./i18n";
 import {
+  advanceLocalLiveDraw,
   applyLocalTeamPreset,
   cloneDay,
   generateLocalStandardStructure,
@@ -10,15 +11,18 @@ import {
   saveLocalStandardFormat,
   saveLocalTeamLineup,
   setLocalTeamFormat,
+  startLocalLiveDraw,
 } from "./TournamentDayEngine";
 import type { TeamFormat, TeamLineupAssignment } from "@huau/core";
 import {
   ensureDayLocalMeta,
   markStructureDirty,
   moveLocalStandardEntryToGroup,
+  moveLocalTeamEntryToGroup,
   teamEntryRating,
   type TournamentDayReformSnapshot,
 } from "./TournamentDayReformEngine";
+import { FormatExplanationPanel, explanationForPersistedFormat } from "./FormatExplanationPanel";
 
 export type EpicDayMutate = (
   fn: (snapshot: TournamentDayReformSnapshot) => void,
@@ -28,6 +32,38 @@ export type EpicDayMutate = (
 
 const tr = (locale: Locale, es: string, en: string) => (locale === "es" ? es : en);
 const round2 = (value: number) => Math.round(value * 100) / 100;
+
+
+function rubberDisplayCode(rubber: any) {
+  return String(rubber?.displayCode ?? rubber?.key ?? "R").trim() || "R";
+}
+
+function lineupPersonIds(lineup: any, rubberKey: string) {
+  const rows = Array.isArray(lineup?.assignments) ? lineup.assignments : [];
+  const nested = rows.find(
+    (row: any) => String(row?.rubberKey) === rubberKey && Array.isArray(row?.personIds),
+  );
+  if (nested) return nested.personIds.map((personId: unknown) => String(personId));
+  return rows
+    .filter((row: any) => String(row?.rubberKey) === rubberKey && row?.personId)
+    .sort((a: any, b: any) => Number(a?.position ?? 0) - Number(b?.position ?? 0))
+    .map((row: any) => String(row.personId));
+}
+
+function seedingMethodFor(snapshot: TournamentDayReformSnapshot, category: any) {
+  const source = category?.entryType === "team"
+    ? (snapshot.team.categories as any[]).find((row) => String(row.id) === String(category?.id))
+    : category;
+  const value = String(source?.seedingMethod ?? source?.daySeedingMethod ?? "snake");
+  return ["snake", "random", "manual", "live"].includes(value) ? value : "snake";
+}
+
+function seedingMethodLabel(locale: Locale, method: string) {
+  if (method === "random") return tr(locale, "Aleatorio", "Random");
+  if (method === "manual") return tr(locale, "Manual", "Manual");
+  if (method === "live") return tr(locale, "Sorteo en vivo", "Live draw");
+  return tr(locale, "DUPR / serpentina", "DUPR / snake");
+}
 
 function toMs(value: number) {
   return value < 10_000_000_000 ? value * 1000 : value;
@@ -187,13 +223,19 @@ export function EpicFormatStudio({
   const preferred = Math.max(2, Number(settings.preferredGroup ?? 4));
   const recommended = suggestedGroups(entries, preferred, maxGroups);
   const [groups, setGroups] = useState(activeGroups || recommended);
-  const [seeding, setSeeding] = useState<"snake" | "random">("snake");
+  const storedSeeding = category ? seedingMethodFor(snapshot, category) : "snake";
+  const [seeding, setSeeding] = useState<"snake" | "random">(storedSeeding === "random" ? "random" : "snake");
+  const formRef = useRef<HTMLFormElement | null>(null);
+  const [simulation, setSimulation] = useState<any>(null);
 
   useEffect(() => {
     if (!category) return;
     const current = activeGroupCount(snapshot, String(category.id), category.entryType === "team");
     const count = categoryEntryCount(snapshot, category);
     setGroups(current || suggestedGroups(count, preferred, Math.max(1, Math.floor(count / 2))));
+    const method = seedingMethodFor(snapshot, category);
+    setSeeding(method === "random" ? "random" : "snake");
+    setSimulation(null);
   }, [categoryId]);
 
   if (!category) return <div className="empty-state">{tr(locale, "No hay categorías.", "No categories.")}</div>;
@@ -211,6 +253,24 @@ export function EpicFormatStudio({
     const sizes = balancedSizes(entries, count);
     return sizes.every((size) => size >= 2);
   });
+  const calculated = simulation ?? { rounds, qualifiers, wildcards, playoffMode, bronze, courts, availableMinutes, matchMinutes, rubberSlots: isTeam ? rubbers.length : 1 };
+  const calculateOptions = () => {
+    if (!formRef.current) return;
+    const data = new FormData(formRef.current);
+    const dailyStart = String(data.get("dailyStart") ?? settings.dailyStart ?? "09:00");
+    const dailyEnd = String(data.get("dailyEnd") ?? settings.dailyEnd ?? "20:00");
+    setSimulation({
+      rounds: Number(data.get("groupRounds")) === 2 ? 2 : 1,
+      qualifiers: Math.max(1, Number(data.get("qualifiers") ?? qualifiers)),
+      wildcards: Math.max(0, Number(data.get("wildcards") ?? wildcards)),
+      playoffMode: String(data.get("playoffMode") ?? playoffMode),
+      bronze: data.get("bronze") === "on",
+      courts: Math.max(1, Number(data.get("courts") ?? courts)),
+      availableMinutes: dayMinutes(dailyStart, dailyEnd),
+      matchMinutes: Math.max(5, Number(data.get("matchMinutes") ?? matchMinutes)),
+      rubberSlots: isTeam ? rubbers.length : 1,
+    });
+  };
 
   const apply = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -256,6 +316,7 @@ export function EpicFormatStudio({
           nextFormat.standings.criteria = (criteria.length ? criteria : ["standing_points", "head_to_head", "rubber_diff", "point_diff"]) as any;
           nextFormat.encounter.rubbers = nextFormat.encounter.rubbers.map((rubber, index) => ({
             ...rubber,
+            displayCode: String(data.get(`rubber:${rubber.key}:code`) ?? rubber.displayCode ?? rubber.key).trim() || String(rubber.key).toUpperCase(),
             label: String(data.get(`rubber:${rubber.key}:label`) ?? rubber.label).trim() || rubber.label,
             order: index + 1,
             mode: String(data.get(`rubber:${rubber.key}:mode`) ?? rubber.mode) as any,
@@ -268,6 +329,7 @@ export function EpicFormatStudio({
             scoringMode: String(data.get(`rubber:${rubber.key}:scoringMode`) ?? "").trim() || null,
           }));
           setLocalTeamFormat(next, String(category.id), nextFormat);
+          nextCategory.seedingMethod = seeding;
 
           const ordered = [...nextCategory.entries];
           if (seeding === "snake") {
@@ -307,6 +369,8 @@ export function EpicFormatStudio({
               pointTarget: Math.max(1, Number(data.get("medalTarget") ?? format?.medal?.pointTarget ?? 11)),
             },
           });
+          const coreCategory = (next.workspace.core.categories as any[]).find((row) => String(row.id) === String(category.id));
+          if (coreCategory) coreCategory.daySeedingMethod = seeding;
           generateLocalStandardStructure(next, String(category.id), groups, seeding);
         }
         next.workspace.schedule.schedule = [];
@@ -329,7 +393,7 @@ export function EpicFormatStudio({
       const nextFormat = cloneDay(nextCategory.format) as TeamFormat;
       if (action === "add") {
         const order = nextFormat.encounter.rubbers.length + 1;
-        nextFormat.encounter.rubbers.push({ key: `r${Date.now()}`, label: `${tr(locale,"Partido","Rubber")} ${order}`, order, mode: "doubles", gender: "open", play: "always", isTiebreaker: false, weight: 1, bestOf: 1, pointTarget: 15, scoringMode: null });
+        nextFormat.encounter.rubbers.push({ key: `custom-${Date.now()}-${order}`, displayCode: `R${order}`, label: `${tr(locale,"Partido","Rubber")} ${order}`, order, mode: "doubles", gender: "open", play: "always", isTiebreaker: false, weight: 1, bestOf: 1, pointTarget: 15, scoringMode: null });
       } else if (index >= 0 && index < nextFormat.encounter.rubbers.length) {
         if (action === "remove") {
           if (nextFormat.encounter.rubbers.length <= 1) throw new Error("TEAM_RUBBER_REQUIRED");
@@ -382,7 +446,7 @@ export function EpicFormatStudio({
         </div>
       </article>
 
-      <form className="td-stack" onSubmit={apply} key={String(category.id)}>
+      <form ref={formRef} className="td-stack" onSubmit={apply} key={String(category.id)}>
         <article className="panel epic-format-category">
           <div className="panel-title">
             <div>
@@ -458,7 +522,7 @@ export function EpicFormatStudio({
             <>
               <div className="epic-team-format-summary">
                 <div><span>{tr(locale,"Roster","Roster")}</span><strong>{format?.roster?.min ?? "—"}–{format?.roster?.max ?? "—"}</strong><small>{format?.roster?.composition ?? "—"}</small></div>
-                <div><span>{tr(locale,"Serie","Encounter")}</span><strong>{rubbers.length} rubbers</strong><small>{rubbers.map((rubber: any) => String(rubber.key).toUpperCase()).join(" → ")}</small></div>
+                <div><span>{tr(locale,"Serie","Encounter")}</span><strong>{rubbers.length} rubbers</strong><small>{rubbers.map((rubber: any) => rubberDisplayCode(rubber)).join(" → ")}</small></div>
                 <div><span>{tr(locale,"Desempate","Tiebreak")}</span><strong>{rubbers.find((rubber: any) => rubber.play === "if_tied" || rubber.isTiebreaker)?.label ?? tr(locale,"No","No")}</strong><small>{tr(locale,"misma cancha durante la serie","same court for the full encounter")}</small></div>
               </div>
               <details className="epic-advanced">
@@ -488,7 +552,7 @@ export function EpicFormatStudio({
                 <div className="epic-team-advanced-block">
                   <div className="panel-title"><h4>Rubbers</h4><button type="button" className="ghost small" onClick={()=>void mutateTeamRubber("add")}>{tr(locale,"Agregar rubber","Add rubber")}</button></div>
                   <div className="epic-team-rubber-editor">
-                    {rubbers.map((rubber: any, index: number) => <div key={rubber.key} className="epic-team-rubber-edit"><header><b>{index+1}</b><strong>{String(rubber.key).toUpperCase()}</strong><div><button type="button" className="ghost small" disabled={index===0} onClick={()=>void mutateTeamRubber("up",index)}>↑</button><button type="button" className="ghost small" disabled={index===rubbers.length-1} onClick={()=>void mutateTeamRubber("down",index)}>↓</button><button type="button" className="danger small" disabled={rubbers.length<=1} onClick={()=>void mutateTeamRubber("remove",index)}>×</button></div></header><label><span>{tr(locale,"Nombre","Label")}</span><input name={`rubber:${rubber.key}:label`} defaultValue={rubber.label} /></label><label><span>{tr(locale,"Modo","Mode")}</span><select name={`rubber:${rubber.key}:mode`} defaultValue={rubber.mode}><option value="singles">Singles</option><option value="doubles">Doubles</option></select></label><label><span>{tr(locale,"Género","Gender")}</span><select name={`rubber:${rubber.key}:gender`} defaultValue={rubber.gender}><option value="male">Male</option><option value="female">Female</option><option value="mixed">Mixed</option><option value="open">Open</option></select></label><label><span>{tr(locale,"Cuándo juega","Play condition")}</span><select name={`rubber:${rubber.key}:play`} defaultValue={rubber.play}><option value="always">Always</option><option value="if_tied">If tied</option></select></label><label><span>{tr(locale,"Peso","Weight")}</span><input name={`rubber:${rubber.key}:weight`} type="number" min="0" step="1" defaultValue={rubber.weight} /></label><label><span>Best of</span><select name={`rubber:${rubber.key}:bestOf`} defaultValue={String(rubber.bestOf)}><option value="1">1</option><option value="3">3</option></select></label><label><span>{tr(locale,"Puntos","Target")}</span><input name={`rubber:${rubber.key}:target`} type="number" min="1" defaultValue={rubber.pointTarget} /></label><label><span>{tr(locale,"Scoring","Scoring")}</span><input name={`rubber:${rubber.key}:scoringMode`} defaultValue={rubber.scoringMode ?? ""} /></label><label className="check epic-check"><input name={`rubber:${rubber.key}:tiebreaker`} type="checkbox" defaultChecked={Boolean(rubber.isTiebreaker)} /><span>{tr(locale,"Desempate","Tiebreaker")}</span></label></div>)}
+                    {rubbers.map((rubber: any, index: number) => <div key={rubber.key} className="epic-team-rubber-edit"><header><b>{index+1}</b><div><strong>{rubberDisplayCode(rubber)}</strong><small>{rubber.label}</small></div><div><button type="button" className="ghost small" disabled={index===0} onClick={()=>void mutateTeamRubber("up",index)}>↑</button><button type="button" className="ghost small" disabled={index===rubbers.length-1} onClick={()=>void mutateTeamRubber("down",index)}>↓</button><button type="button" className="danger small" disabled={rubbers.length<=1} onClick={()=>void mutateTeamRubber("remove",index)}>×</button></div></header><label><span>{tr(locale,"Código visible","Display code")}</span><input name={`rubber:${rubber.key}:code`} maxLength={12} defaultValue={rubberDisplayCode(rubber)} /></label><label><span>{tr(locale,"Nombre","Label")}</span><input name={`rubber:${rubber.key}:label`} defaultValue={rubber.label} /></label><label><span>{tr(locale,"Modo","Mode")}</span><select name={`rubber:${rubber.key}:mode`} defaultValue={rubber.mode}><option value="singles">Singles</option><option value="doubles">Doubles</option></select></label><label><span>{tr(locale,"Género","Gender")}</span><select name={`rubber:${rubber.key}:gender`} defaultValue={rubber.gender}><option value="male">Male</option><option value="female">Female</option><option value="mixed">Mixed</option><option value="open">Open</option></select></label><label><span>{tr(locale,"Cuándo juega","Play condition")}</span><select name={`rubber:${rubber.key}:play`} defaultValue={rubber.play}><option value="always">Always</option><option value="if_tied">If tied</option></select></label><label><span>{tr(locale,"Peso","Weight")}</span><input name={`rubber:${rubber.key}:weight`} type="number" min="0" step="1" defaultValue={rubber.weight} /></label><label><span>Best of</span><select name={`rubber:${rubber.key}:bestOf`} defaultValue={String(rubber.bestOf)}><option value="1">1</option><option value="3">3</option></select></label><label><span>{tr(locale,"Puntos","Target")}</span><input name={`rubber:${rubber.key}:target`} type="number" min="1" defaultValue={rubber.pointTarget} /></label><label><span>{tr(locale,"Scoring","Scoring")}</span><input name={`rubber:${rubber.key}:scoringMode`} defaultValue={rubber.scoringMode ?? ""} /></label><label className="check epic-check"><input name={`rubber:${rubber.key}:tiebreaker`} type="checkbox" defaultChecked={Boolean(rubber.isTiebreaker)} /><span>{tr(locale,"Desempate","Tiebreaker")}</span></label></div>)}
                   </div>
                 </div>
                 <div className="epic-team-advanced-block"><h4>{tr(locale,"Desempates de tabla","Standings tie-breaks")}</h4><div className="epic-criteria-grid">{["standing_points","encounter_wins","encounter_win_rate","head_to_head","rubber_diff","point_diff","points_for"].map((criterion)=><label className="check epic-check" key={criterion}><input name={`criterion:${criterion}`} type="checkbox" defaultChecked={(format?.standings?.criteria??[]).includes(criterion)} /><span>{criterion.replaceAll("_"," ")}</span></label>)}</div></div>
@@ -502,12 +566,13 @@ export function EpicFormatStudio({
             <div>
               <div className="eyebrow">{tr(locale,"SIMULACIÓN","SIMULATION")}</div>
               <h2>{tr(locale,"Elegí la estructura", "Choose the structure")}</h2>
+              <small className="muted">{simulation ? tr(locale,"Cálculo actualizado con los valores del formulario.","Calculation updated with current form values.") : tr(locale,"Mostrando la última configuración guardada. Tocá Calcular opciones después de cambiar reglas.","Showing the last saved configuration. Use Calculate options after changing rules.")}</small>
             </div>
-            <span>{entries} · {courts} {tr(locale,"canchas","courts")} · {matchMinutes} min</span>
+            <div className="epic-simulation-actions"><span>{entries} · {calculated.courts} {tr(locale,"canchas","courts")} · {calculated.matchMinutes} min</span><button type="button" className="ghost small" onClick={calculateOptions}>{tr(locale,"Calcular opciones","Calculate options")}</button></div>
           </div>
           <div className="epic-option-grid">
             {optionCounts.map((count) => {
-              const estimate = capacityEstimate({ entries, groups: count, rounds, qualifiers, wildcards, playoffMode, bronze, courts, availableMinutes, matchMinutes, isTeam, rubberSlots: isTeam ? rubbers.length : 1 });
+              const estimate = capacityEstimate({ entries, groups: count, rounds: calculated.rounds, qualifiers: calculated.qualifiers, wildcards: calculated.wildcards, playoffMode: calculated.playoffMode, bronze: calculated.bronze, courts: calculated.courts, availableMinutes: calculated.availableMinutes, matchMinutes: calculated.matchMinutes, isTeam, rubberSlots: calculated.rubberSlots });
               const recommendedOption = count === recommended;
               const selected = count === groups;
               return (
@@ -521,7 +586,7 @@ export function EpicFormatStudio({
                     <span><strong>{Math.floor(estimate.elapsed / 60)}h {estimate.elapsed % 60}m</strong>{tr(locale,"duración estimada","estimated duration")}</span>
                     <span><strong>{Math.min(entries, count * qualifiers + wildcards)}</strong>{tr(locale,"clasificación","qualifying")}</span>
                   </div>
-                  <small>{rounds} {tr(locale,"vuelta(s) · fase de grupos","round(s) · group phase")} {estimate.groupSeries} · {tr(locale,"fase posterior","post-group")} {estimate.finals}</small>
+                  <small>{calculated.rounds} {tr(locale,"vuelta(s) · fase de grupos","round(s) · group phase")} {estimate.groupSeries} · {tr(locale,"fase posterior","post-group")} {estimate.finals}</small>
                 </button>
               );
             })}
@@ -541,6 +606,8 @@ export function EpicFormatStudio({
           </div>
         </article>
       </form>
+
+      {format ? (() => { const explanation = explanationForPersistedFormat(isTeam ? "team" : "standard", format, locale); return explanation ? <FormatExplanationPanel explanation={explanation} locale={locale} compact title={tr(locale,"Explicación del formato activo","Active format explanation")} /> : null; })() : null}
 
       {isTeam ? (
         <article className="panel epic-preset-strip">
@@ -621,8 +688,8 @@ function EpicLineupSide({
   const existing = (encounter.lineups ?? []).find((row: any) => String(row.entryId) === String(entryId));
   const suggested = existing ?? latestLockedLineup(category, encounter, entryId);
   const checked = new Set(
-    (suggested?.assignments ?? []).flatMap((assignment: any) =>
-      (assignment.personIds ?? []).map((personId: string) => `${assignment.rubberKey}:${personId}`),
+    (category.format?.encounter?.rubbers ?? []).flatMap((rubber: any) =>
+      lineupPersonIds(suggested, String(rubber.key)).map((personId: string) => `${rubber.key}:${personId}`),
     ),
   );
   const fromBase = !existing && Boolean(suggested);
@@ -645,14 +712,14 @@ function EpicLineupSide({
 
   if (!entry) return null;
   return (
-    <form className="epic-lineup-side" onSubmit={save} key={`${encounter.id}:${entryId}:${suggested?.updatedAt ?? "base"}`}>
+    <form className="epic-lineup-side" onSubmit={save} key={`${encounter.id}:${entryId}:${existing?.lockedAt ?? suggested?.lockedAt ?? "base"}`}>
       <header>
         <div><strong>{entry.displayName}</strong><small>{entry.roster?.length ?? 0} {tr(locale,"jugadores","players")}</small></div>
         {existing?.status === "locked" ? <span className="epic-status-ok">✓ {tr(locale,"Bloqueada","Locked")}</span> : fromBase ? <span className="epic-badge">{tr(locale,"Base sugerida","Suggested base")}</span> : <span className="epic-status-muted">{tr(locale,"Sin bloquear","Unlocked")}</span>}
       </header>
       {(category.format?.encounter?.rubbers ?? []).map((rubber: any) => (
         <div className="epic-lineup-rubber" key={rubber.key}>
-          <div className="epic-rubber-title"><strong>{String(rubber.key).toUpperCase()}</strong><span>{rubber.label}</span><em>{rubber.gender}</em></div>
+          <div className="epic-rubber-title"><strong>{rubberDisplayCode(rubber)}</strong><span>{rubber.label}</span><em>{rubber.gender}</em></div>
           <div className="epic-player-choice-grid">
             {(entry.roster ?? []).map((member: any) => {
               const eligible = rubberEligible(rubber, member);
@@ -693,7 +760,7 @@ function TeamRoundView({ locale, category, groupId, mutate }: { locale: Locale; 
       <header><div><span className="eyebrow">{tr(locale,"GRUPO","GROUP")} {groupRows[0]?.name}</span><h3>{groupRows.length} {tr(locale,"equipos","teams")}</h3></div></header>
       <div className="epic-group-members">
         {groupRows.map((row: any, index: number) => (
-          <span key={row.entryId}><b>{index + 1}</b><strong>{row.entryName}</strong></span>
+          <span key={row.entryId}><b>{index + 1}</b><strong>{row.entryName}</strong><select value={groupId} aria-label={tr(locale,"Mover equipo de grupo","Move team between groups")} onChange={(event)=>void mutate(next=>moveLocalTeamEntryToGroup(next,String(category.id),String(row.entryId),event.target.value),tr(locale,"Equipo movido y cruces Team recalculados.","Team moved and Team encounters rebuilt."),"structure")}>{[...new Map<string,string>((category.groups??[]).map((groupRow:any)=>[String(groupRow.id),String(groupRow.name)] as [string,string])).entries()].map(([id,name])=><option key={id} value={id}>{tr(locale,"Grupo","Group")} {name}</option>)}</select></span>
         ))}
       </div>
       <div className="epic-rounds">
@@ -724,6 +791,55 @@ function TeamRoundView({ locale, category, groupId, mutate }: { locale: Locale; 
       </div>
     </div>
   );
+}
+
+
+function EpicStandardDrawControls({ locale, snapshot, category, competition, mutate }: { locale: Locale; snapshot: TournamentDayReformSnapshot; category: any; competition: any; mutate: EpicDayMutate }) {
+  const entries = (snapshot.workspace.standard.entries as any[]).filter((row) => String(row.categoryId) === String(category.id));
+  const maxGroups = Math.max(1, Math.floor(entries.length / 2));
+  const [groups,setGroups] = useState(Math.max(1, competition?.groups?.length ?? 1));
+  const session = (snapshot.workspace.standard.drawSessions as any[]).find((row) => String(row.categoryId) === String(category.id));
+  let drawState: any = null;
+  try { drawState = session?.stateJson ? JSON.parse(String(session.stateJson)) : null; } catch { drawState = null; }
+  const entryName = (id: string) => entries.find((entry) => String(entry.id) === String(id))?.displayName ?? id;
+  const generate = async (method: "snake" | "random" | "manual") => {
+    await mutate((next) => {
+      const core = (next.workspace.core.categories as any[]).find((row) => String(row.id) === String(category.id));
+      if (core) core.daySeedingMethod = method;
+      generateLocalStandardStructure(next, String(category.id), groups, method === "random" ? "random" : "snake");
+    }, method === "manual" ? tr(locale,"Base manual generada. Mové participantes entre grupos debajo.","Manual base generated. Move entries between groups below.") : tr(locale,"Grupos regenerados localmente.","Groups regenerated locally."), "structure");
+  };
+  const prepareLive = async () => mutate((next) => {
+    const core = (next.workspace.core.categories as any[]).find((row) => String(row.id) === String(category.id));
+    if (core) core.daySeedingMethod = "live";
+    startLocalLiveDraw(next, String(category.id), groups);
+  }, tr(locale,"Sorteo en vivo preparado localmente.","Live draw prepared locally."), "structure");
+  const reveal = async () => mutate((next) => advanceLocalLiveDraw(next, String(category.id)), tr(locale,"Siguiente entrada sorteada.","Next entry drawn."), "structure");
+  const activeMethod = seedingMethodFor(snapshot, category);
+  return <article className="panel epic-draw-panel">
+    <div className="panel-title"><div><div className="eyebrow">{tr(locale,"SIEMBRA Y SORTEO","SEEDING & DRAW")}</div><h3>{seedingMethodLabel(locale,activeMethod)}</h3><p className="muted">{tr(locale,"Podés regenerar antes de cargar resultados. Manual parte de una base editable; Sorteo en vivo materializa los grupos al revelar la última entrada.","You can regenerate before results exist. Manual starts from an editable base; Live Draw materializes groups after the last reveal.")}</p></div><label className="epic-draw-groups"><span>{tr(locale,"Grupos","Groups")}</span><input type="number" min="1" max={maxGroups} value={groups} onChange={(event)=>setGroups(Math.max(1,Math.min(maxGroups,Number(event.target.value)||1)))} /></label></div>
+    <div className="epic-draw-methods"><button type="button" className={activeMethod==="snake"?"light":"ghost"} onClick={()=>void generate("snake")}>DUPR</button><button type="button" className={activeMethod==="random"?"light":"ghost"} onClick={()=>void generate("random")}>{tr(locale,"Aleatorio","Random")}</button><button type="button" className={activeMethod==="manual"?"light":"ghost"} onClick={()=>void generate("manual")}>{tr(locale,"Manual","Manual")}</button><button type="button" className={activeMethod==="live"?"light":"ghost"} onClick={()=>void prepareLive()}>{tr(locale,drawState&&drawState.status!=="complete"?"Reiniciar sorteo en vivo":"Sorteo en vivo",drawState&&drawState.status!=="complete"?"Restart live draw":"Live draw")}</button></div>
+    {drawState ? <div className="epic-live-draw-panel"><div className="epic-live-draw-reveal"><small>{drawState.status==="complete"?tr(locale,"SORTEO COMPLETO","DRAW COMPLETE"):tr(locale,"ÚLTIMO SORTEO","LAST DRAW")}</small><strong>{drawState.lastEntryId?entryName(String(drawState.lastEntryId)):"HUAU"}</strong><span>{drawState.lastGroup?`${tr(locale,"Grupo","Group")} ${drawState.lastGroup}`:"—"}</span><em>{Number(drawState.revealIndex??0)}/{entries.length}</em></div><div className="epic-live-draw-groups">{(Object.entries(drawState.assignments??{}) as Array<[string,string[]]>).map(([label,ids])=><section key={label}><b>{tr(locale,"Grupo","Group")} {label}</b>{(ids as string[]).map((id)=><span key={id}>{entryName(id)}</span>)}</section>)}</div>{drawState.status!=="complete"?<button type="button" className="light" onClick={()=>void reveal()}>{tr(locale,"Sacar siguiente","Draw next")}</button>:null}</div> : null}
+  </article>;
+}
+
+function EpicTeamDrawControls({ locale, category, mutate }: { locale: Locale; category: any; mutate: EpicDayMutate }) {
+  const groupCount = Math.max(1, new Set((category.groups??[]).map((row:any)=>String(row.id))).size || 1);
+  const activeMethod = String(category.seedingMethod ?? "snake");
+  const generate = async (method: "snake" | "random" | "manual") => mutate((next) => {
+    const nextCategory = (next.team.categories as any[]).find((row)=>String(row.id)===String(category.id));
+    if (!nextCategory) throw new Error("TEAM_CATEGORY_NOT_FOUND");
+    nextCategory.seedingMethod = method;
+    if (method !== "manual") {
+      const ordered = [...nextCategory.entries];
+      if (method === "snake") ordered.sort((a:any,b:any)=>teamEntryRating(next,String(category.id),String(b.id))-teamEntryRating(next,String(category.id),String(a.id))||String(a.displayName).localeCompare(String(b.displayName)));
+      else ordered.sort(()=>Math.random()-0.5);
+      ordered.forEach((entry:any,index:number)=>{ entry.seedOrder=index+1; entry.seedRating=teamEntryRating(next,String(category.id),String(entry.id)); });
+      generateLocalTeamStructure(next,String(category.id),groupCount);
+    }
+    markStructureDirty(next);
+  }, method==="manual"?tr(locale,"Modo manual activo. Mové equipos entre grupos debajo.","Manual mode enabled. Move teams between groups below."):tr(locale,"Siembra Team regenerada.","Team seeding regenerated."), "structure");
+  return <article className="panel epic-draw-panel"><div className="panel-title"><div><div className="eyebrow">{tr(locale,"SIEMBRA TEAM","TEAM SEEDING")}</div><h3>{seedingMethodLabel(locale,activeMethod)}</h3><p className="muted">{tr(locale,"DUPR y Aleatorio regeneran la distribución. Manual conserva la estructura y habilita mover equipos desde cada grupo.","DUPR and Random regenerate distribution. Manual keeps the structure and lets you move teams from each group.")}</p></div></div><div className="epic-draw-methods"><button type="button" className={activeMethod==="snake"?"light":"ghost"} onClick={()=>void generate("snake")}>DUPR</button><button type="button" className={activeMethod==="random"?"light":"ghost"} onClick={()=>void generate("random")}>{tr(locale,"Aleatorio","Random")}</button><button type="button" className={activeMethod==="manual"?"light":"ghost"} onClick={()=>void generate("manual")}>{tr(locale,"Manual","Manual")}</button></div></article>;
 }
 
 export function EpicCompetitionStudio({
@@ -771,8 +887,11 @@ export function EpicCompetitionStudio({
 
       <article className="panel epic-sport-criteria">
         <div><strong>{tr(locale,"Criterio deportivo","Sport logic")}</strong><p>{stageDescription(locale, format)}</p></div>
-        <span>{formatModeLabel(locale, String(format?.competition?.playoffMode ?? format?.playoffMode ?? "standard"))}</span>
+        <span>{seedingMethodLabel(locale,seedingMethodFor(snapshot,core))} · {formatModeLabel(locale, String(format?.competition?.playoffMode ?? format?.playoffMode ?? "standard"))}</span>
       </article>
+
+      {!isTeam && competition ? <EpicStandardDrawControls locale={locale} snapshot={snapshot} category={core} competition={competition} mutate={mutate} /> : null}
+      {isTeam && teamCategory ? <EpicTeamDrawControls locale={locale} category={teamCategory} mutate={mutate} /> : null}
 
       {!isTeam && competition ? (
         <>
@@ -794,7 +913,7 @@ export function EpicCompetitionStudio({
 
       {isTeam && teamCategory ? (
         <>
-          <article className="panel epic-seed-overview"><div className="panel-title"><div><div className="eyebrow">{tr(locale,"SIEMBRA ACTUAL","CURRENT SEEDING")}</div><h3>DUPR / seedOrder</h3></div></div><div className="td-seed-list">{[...(teamCategory.entries??[])].sort((a:any,b:any)=>Number(a.seedOrder??999)-Number(b.seedOrder??999)).map((entry:any,index:number)=><span key={entry.id}><b>{index+1}</b>{entry.displayName}<em>{round2(teamEntryRating(snapshot,String(teamCategory.id),String(entry.id))).toFixed(3)}</em></span>)}</div></article>
+          <article className="panel epic-seed-overview"><div className="panel-title"><div><div className="eyebrow">{tr(locale,"SIEMBRA ACTUAL","CURRENT SEEDING")}</div><h3>{seedingMethodLabel(locale,String(teamCategory.seedingMethod??"snake"))}</h3></div></div><div className="td-seed-list">{[...(teamCategory.entries??[])].sort((a:any,b:any)=>Number(a.seedOrder??999)-Number(b.seedOrder??999)).map((entry:any,index:number)=><span key={entry.id}><b>{index+1}</b>{entry.displayName}<em>{round2(teamEntryRating(snapshot,String(teamCategory.id),String(entry.id))).toFixed(3)}</em></span>)}</div></article>
           <div className="epic-team-groups">{[...new Set<string>((teamCategory.groups??[]).map((row:any)=>String(row.id)))].map((groupId)=><TeamRoundView key={groupId} locale={locale} category={teamCategory} groupId={groupId} mutate={mutate}/>)}</div>
           {(teamCategory.encounters ?? []).some((row:any)=>row.stage!=="group") ? <article className="panel"><div className="eyebrow">{tr(locale,"FASE POSTERIOR","POST-GROUP PHASE")}</div><div className="epic-bracket-grid">{(teamCategory.encounters??[]).filter((row:any)=>row.stage!=="group").map((row:any)=>{const score=teamEncounterScore(teamCategory,row);return <div key={row.id}><span>{row.roundLabel??row.stage}</span><strong>{row.sideA??"TBD"}</strong><em>{score.a} — {score.b}</em><strong>{row.sideB??"TBD"}</strong><small>{row.status}</small></div>})}</div></article> : null}
           {teamCategory.standings?.length ? <article className="panel"><div className="eyebrow">STANDINGS</div><div className="td-standing-grid">{teamCategory.standings.map((standing:any)=><div className="td-standing-card" key={standing.groupId}><strong>{tr(locale,"Grupo","Group")} {standing.groupName}</strong>{standing.rows.map((row:any,index:number)=><span key={row.entryId}>{index+1}. {row.entryName} · <b>{row.standingPoints} PTS</b> · {row.wins}-{row.losses}</span>)}</div>)}</div></article> : null}
@@ -868,10 +987,9 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
 
 function teamTvLineupNames(category: any, encounter: any, entryId: string, rubberKey: string) {
   const lineup = (encounter.lineups ?? []).find((row: any) => String(row.entryId) === String(entryId));
-  const assignment = lineup?.assignments?.find((row: any) => String(row.rubberKey) === String(rubberKey));
   const entry = (category.entries ?? []).find((row: any) => String(row.id) === String(entryId));
   const knownRoster = [...(entry?.roster ?? []), ...(entry?.rosterHistory ?? [])];
-  const names = (assignment?.personIds ?? []).map((personId: string) =>
+  const names = lineupPersonIds(lineup, String(rubberKey)).map((personId: string) =>
     knownRoster.find((member: any) => String(member.personId) === String(personId))?.name ?? personId,
   );
   return names.join(" / ") || "—";
@@ -887,8 +1005,8 @@ function EpicTvTeamCard({ locale, category, encounter, scheduleRows }: { locale:
   return <article className="epic-tv-team-card">
     <header><span>{category.name} · {encounter.groupName ? `${tr(locale,"Grupo","Group")} ${encounter.groupName}` : encounter.roundLabel ?? encounter.stage}</span><b>{first?.courtLabel ?? active?.courtLabel ?? ""}</b></header>
     <div className="epic-tv-score"><strong>{encounter.sideA}</strong><b>{score.a}</b><em>—</em><b>{score.b}</b><strong>{encounter.sideB}</strong></div>
-    {active ? <div className="epic-tv-rubber"><span>{String(active.rubberKey).toUpperCase()} · {definition?.label ?? active.rubberKey}</span><div><strong>{teamTvLineupNames(category,encounter,String(encounter.entryAId),String(active.rubberKey))}</strong><em>vs</em><strong>{teamTvLineupNames(category,encounter,String(encounter.entryBId),String(active.rubberKey))}</strong></div>{active.resultStatus ? <b>{active.scoreA ?? "—"} — {active.scoreB ?? "—"}</b> : <small>{tr(locale,"Rubber actual / próximo","Current / next rubber")}</small>}</div> : null}
-    <div className="epic-tv-progress">{ordered.map((match:any)=>{const def=defs.find((row:any)=>String(row.key)===String(match.rubberKey));return <span className={match.status==="finished"?"done":match.status==="skipped"?"skip":["ready","in_progress"].includes(String(match.status))?"live":""} key={match.id}>{String(match.rubberKey).toUpperCase()}{def?.play==="if_tied"?"*":""}</span>})}</div>
+    {active ? <div className="epic-tv-rubber"><span>{rubberDisplayCode(definition ?? active)} · {definition?.label ?? active.rubberKey}</span><div><strong>{teamTvLineupNames(category,encounter,String(encounter.entryAId),String(active.rubberKey))}</strong><em>vs</em><strong>{teamTvLineupNames(category,encounter,String(encounter.entryBId),String(active.rubberKey))}</strong></div>{active.resultStatus ? <b>{active.scoreA ?? "—"} — {active.scoreB ?? "—"}</b> : <small>{tr(locale,"Rubber actual / próximo","Current / next rubber")}</small>}</div> : null}
+    <div className="epic-tv-progress">{ordered.map((match:any)=>{const def=defs.find((row:any)=>String(row.key)===String(match.rubberKey));return <span className={match.status==="finished"?"done":match.status==="skipped"?"skip":["ready","in_progress"].includes(String(match.status))?"live":""} key={match.id}>{rubberDisplayCode(def ?? match)}{def?.play==="if_tied"?"*":""}</span>})}</div>
   </article>;
 }
 
@@ -910,9 +1028,9 @@ export function EpicTournamentDayTV({ snapshot, locale, embedded = false }: { sn
   const display=(mode==="auto"?(current.length?current:future.slice(0,6)):blocks.filter((block)=>block.rows.some((r)=>r.status!=="completed"&&r.status!=="cancelled")).slice(0,12));
   const teamStandings=teamCategories.flatMap((category)=>(category.standings??[]).map((standing:any)=>({categoryName:category.name,...standing})));
   return <section className={`epic-tv ${embedded?"embedded":""}`}>
-    <header className="epic-tv-header"><div><span className="eyebrow">HUAU LIVE · LOCAL · 0 D1</span><h1>{snapshot.workspace.core.tournament.name}</h1></div><span className="epic-live-dot">● LIVE</span></header>
+    <header className="epic-tv-header"><div className="epic-tv-brand"><img src="/huau-tournament-logo.png" alt="HUAU Tournament"/><div><span className="eyebrow">HUAU LIVE · LOCAL · 0 D1</span><h1>{snapshot.workspace.core.tournament.name}</h1></div></div><span className="epic-live-dot">● LIVE</span></header>
     <div className="epic-tv-controls"><button className={mode==="auto"?"active":""} onClick={()=>setMode("auto")}>auto</button><button className={mode==="general"?"active":""} onClick={()=>setMode("general")}>general</button><button className={mode==="category"?"active":""} onClick={()=>setMode("category")}>category</button><button className={mode==="courts"?"active":""} onClick={()=>setMode("courts")}>courts</button>{mode==="category"?<select value={categoryId} onChange={(e)=>setCategoryId(e.target.value)}><option value="">{tr(locale,"Todas","All")}</option>{categories.map((category)=><option key={category.id} value={category.id}>{category.name}</option>)}</select>:null}{mode==="courts"?<select value={court} onChange={(e)=>setCourt(e.target.value)}><option value="">{tr(locale,"Todas","All")}</option>{Array.from({length:Math.max(1,Number(snapshot.workspace.core.tournament.courtCount??1))},(_,index)=><option key={index+1} value={String(index+1)}>Cancha {index+1}</option>)}</select>:null}</div>
-    <div className="epic-tv-layout"><main><div className="epic-tv-section-title"><span>{current.length?tr(locale,"AHORA","NOW"):tr(locale,"AHORA / PRÓXIMOS","NOW / NEXT")}</span><b>{display.length}</b></div><div className="epic-tv-cards">{display.map((block)=>{const first=block.first;if(first.categoryEntryType==="team"){const category=teamCategories.find((row)=>String(row.id)===String(first.categoryId));const encounter=category?.encounters?.find((row:any)=>String(row.id)===String(first.encounterId));if(category&&encounter)return <EpicTvTeamCard key={block.id} locale={locale} category={category} encounter={encounter} scheduleRows={block.rows}/>;}return <article className="epic-tv-standard-card" key={block.id}><header><span>{first.categoryName}</span><b>{first.courtLabel}</b></header><div><strong>{first.sideA||first.roundLabel||first.categoryName}</strong>{first.sideB?<><em>vs</em><strong>{first.sideB}</strong></>:null}</div><small>{new Date(toMs(Number(first.startAt))).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})} · {first.roundLabel??first.stage}</small></article>})}</div></main><aside><div className="epic-tv-section-title"><span>{tr(locale,"TABLAS","STANDINGS")}</span></div>{teamStandings.length?<div className="epic-tv-standings">{teamStandings.map((standing:any)=><section key={`${standing.categoryName}:${standing.groupId}`}><h3>{standing.categoryName} · {standing.groupName}</h3>{(standing.rows??[]).slice(0,8).map((row:any,index:number)=><div key={row.entryId}><b>{index+1}</b><strong>{row.entryName}</strong><span>{row.standingPoints} PTS</span></div>)}</section>)}</div>:<p className="epic-tv-empty">{tr(locale,"Las tablas aparecerán con los primeros resultados.","Standings will appear after the first results.")}</p>}</aside></div>
+    <div className="epic-tv-layout"><main><div className="epic-tv-section-title"><span>{current.length?tr(locale,"AHORA","NOW"):tr(locale,"AHORA / PRÓXIMOS","NOW / NEXT")}</span><b>{display.length}</b></div><div className="epic-tv-cards">{display.map((block)=>{const first=block.first;if(first.categoryEntryType==="team"){const category=teamCategories.find((row)=>String(row.id)===String(first.categoryId));const encounter=category?.encounters?.find((row:any)=>String(row.id)===String(first.encounterId));if(category&&encounter)return <EpicTvTeamCard key={block.id} locale={locale} category={category} encounter={encounter} scheduleRows={block.rows}/>;}return <article className="epic-tv-standard-card" key={block.id}><header><span>{first.categoryName}</span><b>{first.courtLabel}</b></header><div><strong>{first.sideA||first.roundLabel||first.categoryName}</strong>{first.sideB?<><em>vs</em><strong>{first.sideB}</strong></>:null}</div><small>{new Date(toMs(Number(first.startAt))).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})} · {first.roundLabel??first.stage}</small></article>})}</div></main><aside><div className="epic-tv-section-title"><span>{tr(locale,"TABLAS","STANDINGS")}</span></div>{teamStandings.length?<div className="epic-tv-standings">{teamStandings.map((standing:any)=><section key={`${standing.categoryName}:${standing.groupId}`}><h3>{standing.categoryName} · {standing.groupName}</h3>{(standing.rows??[]).slice(0,8).map((row:any,index:number)=><div key={row.entryId}><b>{index+1}</b><strong>{row.entryName}</strong><span>{row.played} PJ · {row.wins} PG · {row.losses} PP · {row.standingPoints} PTS</span></div>)}</section>)}</div>:<p className="epic-tv-empty">{tr(locale,"Las tablas aparecerán con los primeros resultados.","Standings will appear after the first results.")}</p>}</aside></div>
   </section>;
 }
 

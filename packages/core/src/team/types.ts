@@ -27,6 +27,8 @@ export type TeamRosterConfig = {
 
 export type TeamRubberDefinition = {
   key: string;
+  /** Human-facing code. `key` remains the stable internal relation id. */
+  displayCode?: string;
   label: string;
   order: number;
   mode: TeamRubberMode;

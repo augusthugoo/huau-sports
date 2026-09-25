@@ -27,6 +27,9 @@ function nonNegativeInteger(value: number): boolean {
 function validateRubber(issues: TeamValidationIssue[], rubber: TeamRubberDefinition, index: number): void {
   const path = `encounter.rubbers.${index}`;
   if (rubber.key.trim().length === 0) pushIssue(issues, "RUBBER_KEY_REQUIRED", `${path}.key`, "Rubber key is required.");
+  if (rubber.displayCode !== undefined && rubber.displayCode.trim().length === 0) {
+    pushIssue(issues, "RUBBER_DISPLAY_CODE_REQUIRED", `${path}.displayCode`, "Rubber display code cannot be empty.");
+  }
   if (rubber.label.trim().length === 0) pushIssue(issues, "RUBBER_LABEL_REQUIRED", `${path}.label`, "Rubber label is required.");
   if (!positiveInteger(rubber.order)) pushIssue(issues, "RUBBER_ORDER_INVALID", `${path}.order`, "Rubber order must be a positive integer.");
   if (!Number.isFinite(rubber.weight) || rubber.weight <= 0) {
@@ -337,6 +340,10 @@ export function parseTeamFormat(value: unknown): TeamFormat {
         if (bestOf !== 1 && bestOf !== 3) throw new Error(`TEAM_FORMAT_INVALID:encounter.rubbers.${index}.bestOf`);
         return {
           key: asString(rubber.key, `encounter.rubbers.${index}.key`),
+          displayCode:
+            rubber.displayCode === undefined
+              ? asString(rubber.key, `encounter.rubbers.${index}.key`).toUpperCase()
+              : asString(rubber.displayCode, `encounter.rubbers.${index}.displayCode`),
           label: asString(rubber.label, `encounter.rubbers.${index}.label`),
           order: asNumber(rubber.order, `encounter.rubbers.${index}.order`),
           mode: asEnum(rubber.mode, ["singles", "doubles"] as const, `encounter.rubbers.${index}.mode`),

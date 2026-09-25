@@ -788,6 +788,7 @@ export function regenerateGlobalSchedule(snapshot: TournamentDayReformSnapshot, 
           entryBId: encounter.entryBId,
           sideB: encounter.sideB,
           rubberKey: match.rubberKey,
+          rubberCode: String((category?.format?.encounter?.rubbers ?? []).find((definition: any) => String(definition.key) === String(match.rubberKey))?.displayCode ?? match.rubberKey ?? ""),
           rubberOrder: match.rubberOrder,
           conditional: Boolean(rubber.conditional),
           locked: assignment.locked,
@@ -1135,7 +1136,7 @@ function publicScheduleRow(row: any) {
     sideA: row.sideA ? String(row.sideA) : null,
     entryBId: row.entryBId ? String(row.entryBId) : null,
     sideB: row.sideB ? String(row.sideB) : null,
-    rubberKey: row.rubberKey ? String(row.rubberKey) : null,
+    rubberKey: row.rubberKey ? String(row.rubberCode ?? row.rubberKey) : null,
   };
 }
 
@@ -1195,11 +1196,15 @@ function publicTeamLineupNames(
 ) {
   if (!entryId) return [];
   const lineup = (encounter.lineups ?? []).find((row: any) => String(row.entryId) === String(entryId));
-  const assignment = lineup?.assignments?.find((row: any) => String(row.rubberKey) === rubberKey);
+  const assignments = Array.isArray(lineup?.assignments) ? lineup.assignments : [];
+  const nested = assignments.find((row: any) => String(row.rubberKey) === rubberKey && Array.isArray(row.personIds));
+  const personIds = nested
+    ? nested.personIds.map((personId: unknown) => String(personId))
+    : assignments.filter((row: any) => String(row.rubberKey) === rubberKey && row.personId).sort((a: any,b: any)=>Number(a.position??0)-Number(b.position??0)).map((row: any)=>String(row.personId));
   const entry = (category.entries ?? []).find((row: any) => String(row.id) === String(entryId));
   const knownRoster = [...(entry?.roster ?? []), ...(entry?.rosterHistory ?? [])];
   const profiles = snapshot.team.profiles as any[];
-  return (assignment?.personIds ?? []).map((personId: string) => {
+  return personIds.map((personId: string) => {
     const member = knownRoster.find((row: any) => String(row.personId) === String(personId));
     if (member?.name) return String(member.name);
     const profile = profiles.find((row: any) => String(row.personId) === String(personId));
@@ -1226,11 +1231,12 @@ export function buildPublicLive(snapshot: TournamentDayReformSnapshot) {
         const definition = (category.format?.encounter?.rubbers ?? []).find(
           (rubber: any) => String(rubber.key) === String(match.rubberKey),
         );
-        const key = String(match.rubberKey ?? "");
+        const internalKey = String(match.rubberKey ?? "");
+        const displayCode = String(definition?.displayCode ?? internalKey).trim() || internalKey;
         return {
           id: String(match.id),
-          key,
-          label: String(definition?.label ?? key),
+          key: displayCode,
+          label: String(definition?.label ?? displayCode),
           order: Number(match.rubberOrder ?? 0),
           weight: Number(definition?.weight ?? 1),
           status: String(match.status ?? "pending"),
@@ -1238,8 +1244,8 @@ export function buildPublicLive(snapshot: TournamentDayReformSnapshot) {
           scoreA: match.scoreA ?? null,
           scoreB: match.scoreB ?? null,
           sets: cloneDay(match.sets ?? []),
-          lineupA: publicTeamLineupNames(snapshot, category, encounter, encounter.entryAId, key),
-          lineupB: publicTeamLineupNames(snapshot, category, encounter, encounter.entryBId, key),
+          lineupA: publicTeamLineupNames(snapshot, category, encounter, encounter.entryAId, internalKey),
+          lineupB: publicTeamLineupNames(snapshot, category, encounter, encounter.entryBId, internalKey),
         };
       }),
     })),
