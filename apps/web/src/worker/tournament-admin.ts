@@ -420,6 +420,18 @@ async function syncDerivedEntriesForCategory(env: Env, categoryId: string, userI
     `SELECT id,entry_type as entryType FROM tournament_categories WHERE id=?`,
   ).bind(categoryId).first<{ id: string; entryType: "individual" | "pair" | "team" }>();
   if (!category || category.entryType === "team") return;
+  const onlinePeople = category.entryType === "individual"
+    ? await env.HUAU_DB.prepare(
+      `SELECT DISTINCT em.organization_person_id as personId
+         FROM tournament_entries e
+         JOIN entry_members em ON em.entry_id=e.id AND em.status IN ('accepted','manual')
+        WHERE e.category_id=?
+          AND e.entry_type='individual'
+          AND e.source_kind='online_registration'
+          AND e.status NOT IN ('withdrawn','rejected')`,
+    ).bind(categoryId).all<{ personId: string }>()
+    : { results: [] as Array<{ personId: string }> };
+  const onlinePersonIds = new Set(onlinePeople.results.map((row) => row.personId));
   const rows = await env.HUAU_DB.prepare(
     `SELECT pc.player_profile_id as playerId,pc.partner_profile_id as partnerId,
             p.display_name as name,p.dupr_singles as duprSingles,p.dupr_doubles as duprDoubles,p.player_status as playerStatus,
@@ -432,7 +444,7 @@ async function syncDerivedEntriesForCategory(env: Env, categoryId: string, userI
   const desired = new Map<string, Desired>();
   if (category.entryType === "individual") {
     for (const row of rows.results) {
-      if (row.playerStatus !== "confirmed" || !row.personId) continue;
+      if (row.playerStatus !== "confirmed" || !row.personId || onlinePersonIds.has(row.personId)) continue;
       desired.set(row.playerId, { sourceKind: "legacy_player", sourceKey: row.playerId, displayName: row.name, rating: Number(row.duprSingles || 0), members: [row.personId] });
     }
   } else {

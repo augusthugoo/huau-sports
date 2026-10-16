@@ -569,7 +569,7 @@ async function teamCandidateHardViolation(env: Env, category: CategoryRow, entry
   }
 }
 
-async function recalcCompetitiveEntry(env: Env, entryId: string) {
+export async function recalcCompetitiveEntry(env: Env, entryId: string) {
   const entry = await env.HUAU_DB.prepare(
     `SELECT id,category_id as categoryId,entry_type as entryType,status,waitlist_position as waitlistPosition,source_kind as sourceKind FROM tournament_entries WHERE id=?`,
   ).bind(entryId).first<{ id: string; categoryId: string; entryType: "individual" | "pair" | "team"; status: string; waitlistPosition: number | null; sourceKind: string | null }>();
@@ -639,6 +639,132 @@ async function recalcCompetitiveEntry(env: Env, entryId: string) {
   await env.HUAU_DB.prepare(
     `UPDATE tournament_entries SET status=?,display_name=COALESCE(?,display_name),updated_at=?,version=version+1 WHERE id=?`,
   ).bind(status, displayName, now(), entryId).run();
+}
+
+
+export async function repairOnlineIndividualCompetitiveEntries(env: Env, tournamentId: string) {
+  const rows = await env.HUAU_DB.prepare(
+    `SELECT tr.id as registrationId,tr.status as registrationStatus,
+            tr.final_amount_minor as finalAmountMinor,tr.paid_amount_minor as paidAmountMinor,
+            tr.refunded_amount_minor as refundedAmountMinor,
+            e.id as entryId,e.status as entryStatus,
+            (SELECT COUNT(*) FROM entry_members em
+              WHERE em.entry_id=e.id AND em.status IN ('accepted','manual')) as memberCount
+       FROM tournament_registrations tr
+       JOIN tournament_entries e ON e.id=tr.entry_id
+       JOIN tournament_categories tc ON tc.id=e.category_id
+      WHERE tr.tournament_id=?
+        AND tc.entry_type='individual'
+        AND tc.structure_locked=0
+        AND e.entry_type='individual'
+        AND e.source_kind='online_registration'
+        AND e.status NOT IN ('waitlisted','withdrawn','rejected')
+        AND tr.status NOT IN ('cancelled','rejected')`,
+  ).bind(tournamentId).all<{
+    registrationId: string;
+    registrationStatus: string;
+    finalAmountMinor: number;
+    paidAmountMinor: number;
+    refundedAmountMinor: number;
+    entryId: string;
+    entryStatus: string;
+    memberCount: number;
+  }>();
+
+  let registrationStatusesRepaired = 0;
+  const entryState = new Map<string, {
+    status: string;
+    memberCount: number;
+    registrations: Array<{ id: string; desiredStatus: string }>;
+  }>();
+
+  for (const row of rows.results) {
+    const netPaid = Math.max(0, Number(row.paidAmountMinor ?? 0) - Number(row.refundedAmountMinor ?? 0));
+    const desiredRegistrationStatus =
+      Number(row.finalAmountMinor ?? 0) === 0 || netPaid >= Number(row.finalAmountMinor ?? 0)
+        ? "confirmed"
+        : "awaiting_payment";
+
+    if (row.registrationStatus !== desiredRegistrationStatus) {
+      await env.HUAU_DB.prepare(
+        `UPDATE tournament_registrations
+            SET status=?,updated_at=?,version=version+1
+          WHERE id=?`,
+      ).bind(desiredRegistrationStatus, now(), row.registrationId).run();
+      registrationStatusesRepaired += 1;
+    }
+
+    const current = entryState.get(row.entryId) ?? {
+      status: row.entryStatus,
+      memberCount: Number(row.memberCount ?? 0),
+      registrations: [],
+    };
+    current.registrations.push({ id: row.registrationId, desiredStatus: desiredRegistrationStatus });
+    entryState.set(row.entryId, current);
+  }
+
+  let competitiveEntriesRepaired = 0;
+  for (const [entryId, state] of entryState) {
+    const ready = state.memberCount >= 1;
+    const paymentsReady = state.registrations.every((registration) => registration.desiredStatus === "confirmed");
+    const desiredEntryStatus = !ready ? "inviting" : paymentsReady ? "confirmed" : "pending_payment";
+    if (state.status === desiredEntryStatus) continue;
+    await recalcCompetitiveEntry(env, entryId);
+    competitiveEntriesRepaired += 1;
+  }
+
+  const duplicateRows = await env.HUAU_DB.prepare(
+    `SELECT DISTINCT legacy.id
+       FROM tournament_entries legacy
+       JOIN tournament_categories tc ON tc.id=legacy.category_id
+       JOIN entry_members legacy_member
+         ON legacy_member.entry_id=legacy.id
+        AND legacy_member.status IN ('accepted','manual')
+       JOIN tournament_entries online
+         ON online.category_id=legacy.category_id
+        AND online.entry_type='individual'
+        AND online.source_kind='online_registration'
+        AND online.status NOT IN ('withdrawn','rejected')
+       JOIN entry_members online_member
+         ON online_member.entry_id=online.id
+        AND online_member.status IN ('accepted','manual')
+        AND online_member.organization_person_id=legacy_member.organization_person_id
+      WHERE tc.tournament_id=?
+        AND tc.entry_type='individual'
+        AND tc.structure_locked=0
+        AND legacy.entry_type='individual'
+        AND legacy.source_kind='legacy_player'
+        AND NOT EXISTS (
+          SELECT 1 FROM tournament_registrations tr WHERE tr.entry_id=legacy.id
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM competition_group_entries ge WHERE ge.entry_id=legacy.id
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM competition_encounters ce
+           WHERE ce.entry_a_id=legacy.id OR ce.entry_b_id=legacy.id
+        )`,
+  ).bind(tournamentId).all<{ id: string }>();
+
+  const duplicateIds = [...new Set(duplicateRows.results.map((row) => row.id))];
+  for (let index = 0; index < duplicateIds.length; index += 40) {
+    const batch = duplicateIds.slice(index, index + 40);
+    const placeholders = batch.map(() => "?").join(",");
+    await env.HUAU_DB.batch([
+      env.HUAU_DB.prepare(
+        `DELETE FROM entry_members WHERE entry_id IN (${placeholders})`,
+      ).bind(...batch),
+      env.HUAU_DB.prepare(
+        `DELETE FROM tournament_entries WHERE id IN (${placeholders})`,
+      ).bind(...batch),
+    ]);
+  }
+
+  return {
+    registrationStatusesRepaired,
+    competitiveEntriesRepaired,
+    duplicatesRemoved: duplicateIds.length,
+  };
 }
 
 async function validateRegistrationCommon(env: Env, tournament: TournamentRow, category: CategoryRow, user: CurrentUser) {

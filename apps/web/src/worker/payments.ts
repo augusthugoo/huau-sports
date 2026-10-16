@@ -6,7 +6,7 @@ import {
   resolveTeamIndividualPrice,
   type TeamAdditionalParticipationMode,
 } from "@huau/core";
-import { cancelRegistrationForPaymentAdmin } from "./registration";
+import { cancelRegistrationForPaymentAdmin, recalcCompetitiveEntry, repairOnlineIndividualCompetitiveEntries } from "./registration";
 
 type CurrentUser = { id: string; name: string; email: string };
 type AccessHelpers = {
@@ -1016,6 +1016,7 @@ async function registrationFinancialRecalc(env: Env, registrationId: string) {
   const netPaid = Math.max(0, row.paidAmountMinor - row.refundedAmountMinor);
   const nextStatus = row.entryStatus === "waitlisted" ? "waitlisted" : row.finalAmountMinor === 0 || netPaid >= row.finalAmountMinor ? "confirmed" : "awaiting_payment";
   await env.HUAU_DB.prepare(`UPDATE tournament_registrations SET status=?,updated_at=?,version=version+1 WHERE id=?`).bind(nextStatus, now(), registrationId).run();
+  if (row.entryId) await recalcCompetitiveEntry(env, row.entryId);
 }
 
 async function applyOrderPaid(env: Env, orderId: string, attemptId: string, paidAmountMinor: number, actorUserId: string | null, externalStatus?: string | null) {
@@ -1095,7 +1096,13 @@ async function adminSync(tournamentId: string, request: Request, env: Env, acces
   const allowed = await requireAdmin(tournamentId, request, env, access);
   if ("response" in allowed) return allowed.response;
   await syncTournamentOrders(env, tournamentId);
-  return json({ ok: true });
+  const repair = await repairOnlineIndividualCompetitiveEntries(env, tournamentId);
+  if (repair.registrationStatusesRepaired || repair.competitiveEntriesRepaired || repair.duplicatesRemoved) {
+    await env.HUAU_DB.prepare(
+      `UPDATE tournaments SET working_revision=working_revision+1,updated_at=? WHERE id=?`,
+    ).bind(now(), tournamentId).run();
+  }
+  return json({ ok: true, repair });
 }
 
 async function updatePaymentSettings(tournamentId: string, request: Request, env: Env, access: AccessHelpers) {
