@@ -60,6 +60,30 @@ it("prevents overlapping matches for the same participant even with zero minimum
   expect(second.startAt).toBe(first.endAt);
 });
 
+it("reserves recovery time after dependencies for a provisional knockout round", () => {
+  const result = generateGlobalTournamentSchedule({
+    settings: { ...base, courtCount: 2 },
+    units: [
+      standard("g1", "A", ["p1", "p2"]),
+      standard("g2", "A", ["p3", "p4"]),
+      standard("semi", "A", [], {
+        stage: "playoff",
+        dependencyIds: ["g1", "g2"],
+        dependencyRestSlots: 1,
+      }),
+    ],
+  });
+
+  const groupsEnd = Math.max(
+    ...result.assignments
+      .filter((row) => row.unitId === "g1" || row.unitId === "g2")
+      .map((row) => row.endAt),
+  );
+  const semi = result.assignments.find((row) => row.unitId === "semi")!;
+
+  expect(semi.startAt - groupsEnd).toBeGreaterThanOrEqual(30 * 60_000);
+});
+
 it("enforces dailyEnd", () => {
   const result = generateGlobalTournamentSchedule({ settings: { ...base, dailyEnd: "09:30", courtCount: 1 }, units: [
     standard("a1", "A", ["p1", "p2"]),

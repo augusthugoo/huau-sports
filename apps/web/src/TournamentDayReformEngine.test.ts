@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { buildCompetitionFromGroups, generateFinalPhase } from "@huau/core";
+import { syncStandardCompetition } from "./TournamentDayEngine";
 import {
   buildPublicLive,
   buildPublicStructure,
@@ -6,6 +8,7 @@ import {
   ensureDayLocalMeta,
   previewAdminMerge,
   publicReadModelHasPrivateKeys,
+  regenerateGlobalSchedule,
   setParticipantNoShow,
   updateDayParticipant,
   type TournamentDayReformSnapshot,
@@ -99,6 +102,123 @@ describe("Tournament Day reform ownership", () => {
     const preview = previewAdminMerge(local, incoming);
     expect(preview.items.find((item) => item.id === "p1")?.conflict).toBe(true);
     expect(local.workspace.participants.players[0].duprSingles).toBe(3.7);
+  });
+});
+
+describe("provisional Standard playoff scheduling", () => {
+  it("reserves semifinals/final before groups finish and binds those slots when qualifiers resolve", () => {
+    const local = snapshot();
+    ensureDayLocalMeta(local);
+
+    const names = ["Ana", "Beatriz", "Cecilia", "Daniela", "Elena"];
+
+    local.workspace.participants.players = names.map((name, index) => ({
+      id: `p${index + 1}`,
+      organizationPersonId: `person${index + 1}`,
+      displayName: name,
+      sportGender: "female",
+      playerStatus: "confirmed",
+    }));
+
+    local.workspace.participants.playerCategories = names.map((_, index) => ({
+      playerProfileId: `p${index + 1}`,
+      categoryId: "c1",
+      partnerProfileId: null,
+    }));
+
+    local.workspace.standard.entries = names.map((name, index) => ({
+      id: `e${index + 1}`,
+      categoryId: "c1",
+      displayName: name,
+      sourceKey: `p${index + 1}`,
+      localProfileIds: [`p${index + 1}`],
+      status: "ready",
+    }));
+
+    const competition = buildCompetitionFromGroups({
+      id: "competition:c1",
+      categoryId: "c1",
+      groups: [
+        {
+          id: "g1",
+          name: "A",
+          entries: names.map((name, index) => ({
+            id: `e${index + 1}`,
+            name,
+            participantIds: [`p${index + 1}`],
+            rating: 0,
+          })),
+        },
+      ],
+      format: {
+        playoffMode: "top4_semis",
+        bronzeMatch: false,
+      },
+    });
+
+    local.workspace.standard.competitions = [competition];
+    syncStandardCompetition(local, competition);
+    regenerateGlobalSchedule(local);
+
+    const reserved = (local.workspace.schedule.schedule as any[]).filter(
+      (row) => row.provisional,
+    );
+
+    expect(
+      reserved.filter((row) => row.roundLabel === "Semifinal"),
+    ).toHaveLength(2);
+    expect(
+      reserved.filter((row) => row.roundLabel === "Final"),
+    ).toHaveLength(1);
+
+    const groupEnd = Math.max(
+      ...(local.workspace.schedule.schedule as any[])
+        .filter((row) => row.stage === "group")
+        .map((row) => Number(row.endAt)),
+    );
+    const semifinalStart = Math.min(
+      ...reserved
+        .filter((row) => row.roundLabel === "Semifinal")
+        .map((row) => Number(row.startAt)),
+    );
+
+    expect(semifinalStart - groupEnd).toBeGreaterThanOrEqual(30 * 60);
+
+    for (const encounter of competition.encounters) {
+      if (encounter.stage !== "group" || !encounter.entryA || !encounter.entryB) continue;
+      encounter.status = "finished";
+      encounter.scoreA = 15;
+      encounter.scoreB = 10;
+      encounter.winnerEntryId = encounter.entryA.id;
+      encounter.sets = [{ scoreA: 15, scoreB: 10 }];
+    }
+
+    const withFinals = generateFinalPhase(competition);
+    local.workspace.standard.competitions = [withFinals];
+    syncStandardCompetition(local, withFinals);
+
+    const semiRow = (local.workspace.schedule.schedule as any[]).find(
+      (row) => row.encounterId === "playoff:semi:1",
+    );
+    const semiMatch = (local.workspace.standard.matches as any[]).find(
+      (row) => row.encounterId === "playoff:semi:1",
+    );
+
+    expect(semiRow.provisional).toBe(false);
+    expect(semiRow.sideA).toBeTruthy();
+    expect(semiRow.sideB).toBeTruthy();
+    expect(semiMatch.scheduleStart).toBe(semiRow.startAt);
+    expect(semiMatch.courtLabel).toBe(semiRow.courtLabel);
+
+    regenerateGlobalSchedule(local);
+
+    const regeneratedFinal = (local.workspace.schedule.schedule as any[]).find(
+      (row) => row.encounterId === "playoff:final",
+    );
+
+    expect(regeneratedFinal).toBeTruthy();
+    expect(regeneratedFinal.roundLabel).toBe("Final");
+    expect(Number(regeneratedFinal.startAt)).toBeGreaterThan(0);
   });
 });
 

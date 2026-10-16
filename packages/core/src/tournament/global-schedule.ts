@@ -20,6 +20,7 @@ export type GlobalScheduleUnit = {
   barrierKey?: string | null;
   participants: string[];
   dependencyIds?: string[];
+  dependencyRestSlots?: number;
   durationMinutes: number;
   minimumRestSlots?: number;
   preferredRestSlots?: number;
@@ -203,6 +204,17 @@ function dependencyEnd(unit: GlobalScheduleUnit, assignmentsByUnit: Map<string, 
     0,
     ...(unit.dependencyIds ?? []).map((dependencyId) => assignmentsByUnit.get(dependencyId)?.endAt ?? 0),
   );
+}
+
+function dependencyReadyAt(
+  unit: GlobalScheduleUnit,
+  assignmentsByUnit: Map<string, GlobalScheduleAssignment>,
+  settings: GlobalScheduleSettings,
+) {
+  const endAt = dependencyEnd(unit, assignmentsByUnit);
+  if (!endAt) return 0;
+  const slots = Math.max(0, Number(unit.dependencyRestSlots ?? 0));
+  return endAt + slots * Math.max(1, settings.defaultMatchMinutes) * MINUTE;
 }
 
 function lowerBarrierUnits(unit: GlobalScheduleUnit, units: GlobalScheduleUnit[]) {
@@ -445,7 +457,7 @@ export function generateGlobalTournamentSchedule(input: {
     for (const unit of ready) {
       const durationMs = assignmentDuration(unit) * MINUTE;
       const earliestAt = Math.max(
-        dependencyEnd(unit, assignmentsByUnit),
+        dependencyReadyAt(unit, assignmentsByUnit, settings),
         barrierEnd(unit, units, assignmentsByUnit),
         policyPhaseEnd(unit, units, assignmentsByUnit),
         policySequenceEnd(unit, units, assignmentsByUnit),
@@ -496,11 +508,13 @@ export function generateGlobalTournamentSchedule(input: {
       const dependency = assignmentsByUnit.get(dependencyId);
       return !dependency || dependency.endAt > assignment.startAt;
     });
+    const dependencyRestViolation =
+      dependencyReadyAt(unit, assignmentsByUnit, settings) > assignment.startAt;
     const barrierViolation = lowerBarrierUnits(unit, units).some((candidate) => {
       const previous = assignmentsByUnit.get(candidate.id);
       return !previous || previous.endAt > assignment.startAt;
     });
-    if (dependencyViolation || barrierViolation) {
+    if (dependencyViolation || dependencyRestViolation || barrierViolation) {
       conflicts.push({
         unitId: unit.id,
         code: assignment.locked ? "SCHEDULE_LOCK_CONFLICT" : "SCHEDULE_DEPENDENCY_UNRESOLVED",

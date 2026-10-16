@@ -156,9 +156,19 @@ export function syncStandardCompetition(
     (match) => match.categoryId === competition.categoryId,
   );
   const oldByEncounter = new Map(oldMatches.map((match) => [match.encounterId, match] as const));
+  const scheduledByEncounter = new Map(
+    (snapshot.workspace.schedule.schedule as any[])
+      .filter(
+        (row) =>
+          String(row.categoryId) === String(competition.categoryId) &&
+          row.encounterId,
+      )
+      .map((row) => [String(row.encounterId), row] as const),
+  );
 
   const nextMatches = competition.encounters.map((encounter) => {
     const previous = oldByEncounter.get(encounter.id);
+    const scheduled = scheduledByEncounter.get(String(encounter.id));
     const sets = (encounter.sets ?? []).map((set, index) => ({
       setNumber: index + 1,
       scoreA: set.scoreA,
@@ -193,9 +203,9 @@ export function syncStandardCompetition(
             ? previous.resultStatus
             : "local"
           : null,
-      scheduleStart: previous?.scheduleStart ?? null,
-      scheduleEnd: previous?.scheduleEnd ?? null,
-      courtLabel: previous?.courtLabel ?? null,
+      scheduleStart: previous?.scheduleStart ?? scheduled?.startAt ?? null,
+      scheduleEnd: previous?.scheduleEnd ?? scheduled?.endAt ?? null,
+      courtLabel: previous?.courtLabel ?? scheduled?.courtLabel ?? null,
       sets,
     };
   });
@@ -311,17 +321,24 @@ export function syncStandardCompetition(
   if (progressIndex >= 0) progress[progressIndex] = progressRow;
   else progress.push(progressRow);
 
+  const nextMatchByEncounter = new Map(
+    nextMatches.map((match) => [String(match.encounterId), match] as const),
+  );
+
   snapshot.workspace.schedule.schedule = (snapshot.workspace.schedule.schedule as any[]).map((row) => {
     if (row.categoryId !== competition.categoryId || !row.encounterId) return row;
     const encounter = competition.encounters.find((candidate) => candidate.id === row.encounterId);
     if (!encounter) return row;
+    const match = nextMatchByEncounter.get(String(encounter.id));
     return {
       ...row,
+      matchId: match?.matchId ?? row.matchId ?? null,
       entryAId: encounter.entryA?.id ?? null,
       sideA: encounter.entryA?.name ?? null,
       entryBId: encounter.entryB?.id ?? null,
       sideB: encounter.entryB?.name ?? null,
-      status: encounter.status === "finished" ? "completed" : row.status,
+      status: encounter.status === "finished" ? "completed" : "bound",
+      provisional: false,
     };
   });
 

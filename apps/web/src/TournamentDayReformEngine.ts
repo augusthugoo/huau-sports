@@ -3,11 +3,15 @@ import {
   buildCompetitionFromGroups,
   generateGlobalTournamentSchedule,
   generateTeamRoundRobinEncounters,
+  knockoutRoundLabel,
+  nextPowerOfTwo,
+  standardSeedOrder,
   type GlobalScheduleBreak,
   type GlobalScheduleClosedCourt,
   type GlobalScheduleConflict,
   type GlobalScheduleLock,
   type GlobalScheduleUnit,
+  type Competition,
   type TeamFormat,
   type TeamRosterMember,
 } from "@huau/core";
@@ -696,6 +700,217 @@ function applySchedulePolicy(
   });
 }
 
+type ProvisionalStandardFinalSpec = {
+  encounterId: string;
+  stage: "playoff" | "bronze" | "final";
+  roundLabel: string;
+  roundNumber: number;
+  dependencyEncounterIds: string[];
+};
+
+function expectedStandardQualifierCount(competition: Competition) {
+  const format = competition.format;
+  const totalEntries = competition.groups.reduce(
+    (sum, group) => sum + group.entries.length,
+    0,
+  );
+
+  if (format.playoffMode === "league_only") return 0;
+  if (format.playoffMode === "top2_final") return Math.min(2, totalEntries);
+  if (format.playoffMode === "top4_semis") return Math.min(4, totalEntries);
+  if (format.playoffMode === "top3_step") return Math.min(3, totalEntries);
+
+  const qualifiersPerGroup = Math.max(
+    1,
+    Math.trunc(Number(format.qualifiersPerGroup ?? 1)),
+  );
+  const fixed = competition.groups.reduce(
+    (sum, group) => sum + Math.min(qualifiersPerGroup, group.entries.length),
+    0,
+  );
+  const availableWildcards = Math.max(0, totalEntries - fixed);
+  const wildcards = Math.min(
+    availableWildcards,
+    Math.max(0, Math.trunc(Number(format.wildcardQualifiers ?? 0))),
+  );
+
+  return Math.min(totalEntries, fixed + wildcards);
+}
+
+function provisionalStandardFinalSpecs(
+  competition: Competition,
+): ProvisionalStandardFinalSpec[] {
+  const format = competition.format;
+  if (format.playoffMode === "league_only") return [];
+
+  const groupDependencies = competition.encounters
+    .filter((encounter) => encounter.stage === "group")
+    .map((encounter) => encounter.id);
+
+  const specs: ProvisionalStandardFinalSpec[] = [];
+  const totalEntries = competition.groups.reduce(
+    (sum, group) => sum + group.entries.length,
+    0,
+  );
+
+  if (format.playoffMode === "top2_final") {
+    const hasBronze = Boolean(format.bronzeMatch && totalEntries >= 4);
+
+    if (hasBronze) {
+      specs.push({
+        encounterId: "playoff:bronze",
+        stage: "bronze",
+        roundLabel: "Third place",
+        roundNumber: 1,
+        dependencyEncounterIds: groupDependencies,
+      });
+    }
+
+    specs.push({
+      encounterId: "playoff:final",
+      stage: "final",
+      roundLabel: "Final",
+      roundNumber: 1,
+      dependencyEncounterIds:
+        hasBronze && format.medalSchedule === "sequential"
+          ? ["playoff:bronze"]
+          : groupDependencies,
+    });
+
+    return specs;
+  }
+
+  if (format.playoffMode === "top4_semis") {
+    const semifinalIds = ["playoff:semi:1", "playoff:semi:2"];
+
+    semifinalIds.forEach((encounterId) => {
+      specs.push({
+        encounterId,
+        stage: "playoff",
+        roundLabel: "Semifinal",
+        roundNumber: 1,
+        dependencyEncounterIds: groupDependencies,
+      });
+    });
+
+    if (format.bronzeMatch) {
+      specs.push({
+        encounterId: "playoff:bronze",
+        stage: "bronze",
+        roundLabel: "Third place",
+        roundNumber: 2,
+        dependencyEncounterIds: semifinalIds,
+      });
+    }
+
+    specs.push({
+      encounterId: "playoff:final",
+      stage: "final",
+      roundLabel: "Final",
+      roundNumber: 2,
+      dependencyEncounterIds:
+        format.bronzeMatch && format.medalSchedule === "sequential"
+          ? [...semifinalIds, "playoff:bronze"]
+          : semifinalIds,
+    });
+
+    return specs;
+  }
+
+  if (format.playoffMode === "top3_step") {
+    specs.push({
+      encounterId: "playoff:preliminary",
+      stage: "playoff",
+      roundLabel: "Preliminary round",
+      roundNumber: 1,
+      dependencyEncounterIds: groupDependencies,
+    });
+    specs.push({
+      encounterId: "playoff:final",
+      stage: "final",
+      roundLabel: "Final",
+      roundNumber: 2,
+      dependencyEncounterIds: ["playoff:preliminary"],
+    });
+    return specs;
+  }
+
+  const qualifierCount = expectedStandardQualifierCount(competition);
+  if (qualifierCount < 2) return [];
+
+  const bracketSize = nextPowerOfTwo(qualifierCount);
+  const totalRounds = Math.round(Math.log2(bracketSize));
+  const seedOrder = standardSeedOrder(bracketSize);
+  let previousRoundIds: string[] = [];
+
+  for (let roundIndex = 0; roundIndex < totalRounds; roundIndex += 1) {
+    const roundNumber = roundIndex + 1;
+    const matchCount = bracketSize / 2 ** roundNumber;
+    const allRoundIds = Array.from(
+      { length: matchCount },
+      (_, index) => `playoff:r${roundNumber}:m${index + 1}`,
+    );
+
+    const scheduledIds =
+      roundIndex === 0
+        ? allRoundIds.filter((_, index) => {
+            const leftSeed = seedOrder[index * 2] ?? Number.MAX_SAFE_INTEGER;
+            const rightSeed =
+              seedOrder[index * 2 + 1] ?? Number.MAX_SAFE_INTEGER;
+            return leftSeed <= qualifierCount && rightSeed <= qualifierCount;
+          })
+        : allRoundIds;
+
+    const dependencies =
+      roundIndex === 0 ? groupDependencies : previousRoundIds;
+    const finalRound = roundIndex === totalRounds - 1;
+
+    scheduledIds.forEach((encounterId) => {
+      specs.push({
+        encounterId,
+        stage: finalRound ? "final" : "playoff",
+        roundLabel: knockoutRoundLabel(totalRounds, roundIndex),
+        roundNumber,
+        dependencyEncounterIds: dependencies,
+      });
+    });
+
+    previousRoundIds = allRoundIds;
+  }
+
+  if (format.bronzeMatch && qualifierCount >= 4) {
+    const semifinalRound = totalRounds - 1;
+    const semifinalIds = [
+      `playoff:r${semifinalRound}:m1`,
+      `playoff:r${semifinalRound}:m2`,
+    ];
+
+    specs.push({
+      encounterId: "playoff:bronze",
+      stage: "bronze",
+      roundLabel: "Third place",
+      roundNumber: totalRounds,
+      dependencyEncounterIds: semifinalIds,
+    });
+
+    if (format.medalSchedule === "sequential") {
+      const final = specs.find(
+        (spec) => spec.stage === "final" && spec.roundNumber === totalRounds,
+      );
+      if (final) {
+        final.dependencyEncounterIds = [
+          ...new Set([
+            ...final.dependencyEncounterIds,
+            "playoff:bronze",
+          ]),
+        ];
+      }
+    }
+  }
+
+  return specs;
+}
+
 function globalUnits(snapshot: TournamentDayReformSnapshot): GlobalScheduleUnit[] {
   const settings = snapshot.workspace.core.settings as any;
   const categories = new Map((snapshot.workspace.core.categories as any[]).map((category) => [String(category.id), category] as const));
@@ -711,12 +926,23 @@ function globalUnits(snapshot: TournamentDayReformSnapshot): GlobalScheduleUnit[
   const standardByCategory = new Map((snapshot.workspace.standard.competitions as any[]).map((competition) => [String(competition.categoryId), competition] as const));
 
   for (const match of snapshot.workspace.standard.matches as any[]) {
-    if (!match.entryAId || !match.entryBId || ["bye", "skipped", "finished"].includes(String(match.status))) continue;
+    if (["bye", "skipped", "finished"].includes(String(match.status))) continue;
     const category = categories.get(String(match.categoryId));
     const competition = standardByCategory.get(String(match.categoryId));
     const encounter = competition?.encounters?.find((row: any) => String(row.id) === String(match.encounterId));
     const deps = [encounter?.sourceEncounterAId, encounter?.sourceEncounterBId, encounter?.sourceLoserAId, encounter?.sourceLoserBId].filter(Boolean).map((id) => `std:${match.categoryId}:${id}`);
-    const participants = [...standardEntryParticipantKeys(snapshot, match.entryAId), ...standardEntryParticipantKeys(snapshot, match.entryBId)];
+
+    const unresolvedFinalPhase =
+      String(match.stage) !== "group" &&
+      deps.length > 0 &&
+      (!match.entryAId || !match.entryBId);
+
+    if ((!match.entryAId || !match.entryBId) && !unresolvedFinalPhase) continue;
+
+    const participants = [
+      ...standardEntryParticipantKeys(snapshot, match.entryAId),
+      ...standardEntryParticipantKeys(snapshot, match.entryBId),
+    ];
     if (participants.some((participant) => tombstonedKeys.has(participant))) continue;
     units.push({
       id: `std:${match.categoryId}:${match.encounterId}`,
@@ -737,6 +963,59 @@ function globalUnits(snapshot: TournamentDayReformSnapshot): GlobalScheduleUnit[
       minimumRestSlots: Math.max(0, Number(settings.minimumRestSlots ?? 1)),
       preferredRestSlots: Math.max(0, Number(competition?.format?.preferredRestSlots ?? settings.preferredRestSlots ?? settings.minimumRestSlots ?? 1)),
     });
+  }
+
+  for (const competition of standardByCategory.values()) {
+    if (competition.finalGenerated) continue;
+
+    const category = categories.get(String(competition.categoryId));
+    const specs = provisionalStandardFinalSpecs(competition as Competition);
+
+    for (const spec of specs) {
+      const unitId = `std:${competition.categoryId}:${spec.encounterId}`;
+      if (units.some((unit) => unit.id === unitId)) continue;
+
+      units.push({
+        id: unitId,
+        categoryId: String(competition.categoryId),
+        categoryName: String(category?.name ?? ""),
+        kind: "standard",
+        date: dayDate(snapshot, category),
+        stage: spec.stage,
+        roundLabel: spec.roundLabel,
+        roundNumber: spec.roundNumber,
+        groupId: null,
+        groupName: null,
+        legNumber: 1,
+        barrierKey: null,
+        participants: [],
+        dependencyIds: spec.dependencyEncounterIds.map(
+          (encounterId) =>
+            `std:${competition.categoryId}:${encounterId}`,
+        ),
+        dependencyRestSlots: Math.max(
+          0,
+          Number(settings.minimumRestSlots ?? 1),
+        ),
+        durationMinutes: Math.max(
+          5,
+          Number(settings.defaultMatchMinutes ?? 30),
+        ),
+        minimumRestSlots: Math.max(
+          0,
+          Number(settings.minimumRestSlots ?? 1),
+        ),
+        preferredRestSlots: Math.max(
+          0,
+          Number(
+            competition.format?.preferredRestSlots ??
+              settings.preferredRestSlots ??
+              settings.minimumRestSlots ??
+              1,
+          ),
+        ),
+      });
+    }
   }
 
   for (const teamCategory of snapshot.team.categories as any[]) {
@@ -832,32 +1111,43 @@ export function regenerateGlobalSchedule(snapshot: TournamentDayReformSnapshot, 
     const courtLabel = `Cancha ${assignment.court}`;
     if (assignment.kind === "standard") {
       const encounterId = assignment.unitId.split(":").slice(2).join(":");
-      const match = (snapshot.workspace.standard.matches as any[]).find((row) => String(row.categoryId) === unit.categoryId && String(row.encounterId) === encounterId);
-      if (!match) continue;
-      match.scheduleStart = Math.floor(assignment.startAt / 1000);
-      match.scheduleEnd = Math.floor(assignment.endAt / 1000);
-      match.courtLabel = courtLabel;
+      const match = (snapshot.workspace.standard.matches as any[]).find(
+        (row) =>
+          String(row.categoryId) === unit.categoryId &&
+          String(row.encounterId) === encounterId,
+      );
+      const category = (snapshot.workspace.core.categories as any[]).find(
+        (row) => String(row.id) === unit.categoryId,
+      );
+
+      if (match) {
+        match.scheduleStart = Math.floor(assignment.startAt / 1000);
+        match.scheduleEnd = Math.floor(assignment.endAt / 1000);
+        match.courtLabel = courtLabel;
+      }
+
       generated.push({
         id: `local-global-schedule:${assignment.unitId}`,
         scheduleUnitId: assignment.unitId,
         categoryId: unit.categoryId,
-        categoryName: unit.categoryName ?? match.categoryName ?? "",
-        categoryEntryType: "individual",
+        categoryName: unit.categoryName ?? match?.categoryName ?? "",
+        categoryEntryType: String(category?.entryType ?? "individual"),
         encounterId,
-        matchId: match.matchId,
+        matchId: match?.matchId ?? null,
         stage: unit.stage,
         roundLabel: unit.roundLabel,
         courtLabel,
         startAt: Math.floor(assignment.startAt / 1000),
         endAt: Math.floor(assignment.endAt / 1000),
-        status: "bound",
-        groupId: match.groupId ?? null,
-        groupName: match.groupName ?? null,
-        legNumber: match.legNumber ?? 1,
-        entryAId: match.entryAId,
-        sideA: match.sideA,
-        entryBId: match.entryBId,
-        sideB: match.sideB,
+        status: match ? "bound" : "reserved",
+        groupId: match?.groupId ?? null,
+        groupName: match?.groupName ?? null,
+        legNumber: match?.legNumber ?? 1,
+        entryAId: match?.entryAId ?? null,
+        sideA: match?.sideA ?? null,
+        entryBId: match?.entryBId ?? null,
+        sideB: match?.sideB ?? null,
+        provisional: !match,
         locked: assignment.locked,
       });
     } else {
