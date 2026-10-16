@@ -40,3 +40,169 @@
 .td-schedule-math{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin:12px 0}.td-schedule-math>span{display:grid;gap:3px;padding:10px 12px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.025)}.td-schedule-math b{font-size:1rem}.td-schedule-math small{opacity:.58}
 @media(max-width:800px){.epic-team-rubber-edit{grid-template-columns:1fr 1fr}.epic-live-draw-reveal{grid-template-columns:1fr 1fr}.epic-tv-brand{align-items:flex-start}.epic-tv-brand img{width:64px}}
 @media(max-width:520px){.epic-team-rubber-edit{grid-template-columns:1fr}.epic-team-rubber-edit>header{grid-template-columns:auto 1fr}.epic-team-rubber-edit>header>div:last-child{grid-column:1/-1;justify-content:flex-start}.epic-live-draw-reveal{grid-template-columns:1fr}.epic-group-members>span{grid-template-columns:auto 1fr!important}.epic-group-members select{grid-column:1/-1;max-width:none;width:100%}}
+
+
+/* HUAU TV bracket hierarchy 20261016 */
+.epic-tv-brackets{
+  display:grid;
+  gap:14px;
+  margin-top:22px;
+  padding-top:4px;
+}
+
+.epic-tv-bracket-category{
+  border:1px solid rgba(255,255,255,.10);
+  border-radius:18px;
+  padding:14px;
+  background:rgba(255,255,255,.025);
+  overflow:hidden;
+}
+
+.epic-tv-bracket-category>header{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:12px;
+  margin-bottom:12px;
+}
+
+.epic-tv-bracket-category>header strong{
+  font-size:1rem;
+}
+
+.epic-tv-bracket-category>header span{
+  font-size:.62rem;
+  letter-spacing:.12em;
+  opacity:.48;
+}
+
+.epic-tv-bracket-grid{
+  display:grid;
+  grid-auto-flow:column;
+  grid-auto-columns:minmax(190px,1fr);
+  gap:28px;
+  overflow-x:auto;
+  padding:6px 16px 10px 0;
+}
+
+.epic-tv-bracket-round{
+  position:relative;
+  display:grid;
+  grid-template-rows:auto 1fr;
+  min-width:190px;
+}
+
+.epic-tv-bracket-round>h4{
+  margin:0 0 8px;
+  font-size:.67rem;
+  letter-spacing:.09em;
+  text-transform:uppercase;
+  opacity:.5;
+}
+
+.epic-tv-bracket-round>div{
+  display:flex;
+  min-height:190px;
+  flex-direction:column;
+  justify-content:space-around;
+  gap:12px;
+}
+
+.epic-tv-bracket-match{
+  position:relative;
+  border:1px solid rgba(255,255,255,.11);
+  border-radius:13px;
+  padding:10px;
+  background:#0d0d0d;
+}
+
+.epic-tv-bracket-round:not(:last-child)::after{
+  content:"";
+  position:absolute;
+  top:25%;
+  bottom:25%;
+  right:-15px;
+  border-right:1px solid rgba(255,255,255,.18);
+}
+
+.epic-tv-bracket-round:not(:last-child) .epic-tv-bracket-match::after{
+  content:"";
+  position:absolute;
+  right:-15px;
+  top:50%;
+  width:15px;
+  border-top:1px solid rgba(255,255,255,.18);
+}
+
+.epic-tv-bracket-round:not(:first-child) .epic-tv-bracket-match::before{
+  content:"";
+  position:absolute;
+  left:-14px;
+  top:50%;
+  width:14px;
+  border-top:1px solid rgba(255,255,255,.18);
+}
+
+.epic-tv-bracket-match>small{
+  display:block;
+  margin-bottom:5px;
+  font-size:.61rem;
+  opacity:.45;
+}
+
+.epic-tv-bracket-player{
+  padding:6px 0;
+  border-top:1px solid rgba(255,255,255,.06);
+}
+
+.epic-tv-bracket-player strong{
+  font-size:.82rem;
+}
+
+.epic-tv-bracket-score{
+  display:block;
+  margin-top:6px;
+  font-size:.82rem;
+}
+
+.epic-tv-bracket-match>span{
+  display:block;
+  margin-top:6px;
+  font-size:.62rem;
+  opacity:.48;
+}
+
+.epic-tv-bracket-match.status-finished{
+  opacity:.72;
+}
+
+.epic-tv-history{
+  margin-top:26px;
+  padding-top:16px;
+  border-top:1px solid rgba(255,255,255,.07);
+  opacity:.72;
+}
+
+.epic-tv-history .epic-tv-section-title{
+  opacity:.7;
+}
+
+.epic-tv-history-cards{
+  grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+}
+
+.epic-tv-history-cards .epic-tv-standard-card{
+  padding:11px 12px;
+  background:rgba(255,255,255,.018);
+  border-color:rgba(255,255,255,.065);
+}
+
+.epic-tv-history-cards .epic-tv-standard-card strong{
+  font-size:.84rem;
+}
+
+@media(max-width:700px){
+  .epic-tv-bracket-grid{
+    grid-auto-columns:minmax(175px,78vw);
+  }
+}

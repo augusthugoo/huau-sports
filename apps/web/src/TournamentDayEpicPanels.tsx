@@ -1105,10 +1105,16 @@ export function EpicTournamentDayTV({ snapshot, locale, embedded = false }: { sn
   );
 
   const visibleStandings=[...standardStandings,...teamStandings].filter(
-    (standing:any)=>
-      mode!=="category" ||
-      !categoryId ||
-      String(standing.categoryId)===categoryId
+    (standing:any)=>{
+      const categoryMatches =
+        mode!=="category" ||
+        !categoryId ||
+        String(standing.categoryId)===categoryId;
+      const started=(standing.rows??[]).some(
+        (row:any)=>Number(row.played??0)>0
+      );
+      return categoryMatches && started;
+    }
   );
 
   const standardFinished=(snapshot.workspace.standard.matches as any[])
@@ -1187,6 +1193,91 @@ export function EpicTournamentDayTV({ snapshot, locale, embedded = false }: { sn
   finishedResults=finishedResults
     .sort((a,b)=>Number(b.startAt)-Number(a.startAt))
     .slice(0,6);
+
+  const standardBrackets=(snapshot.workspace.standard.competitions as any[])
+    .map((competition:any)=>{
+      const category=categories.find(
+        (row:any)=>String(row.id)===String(competition.categoryId)
+      );
+      const encounters=(competition.encounters??[])
+        .filter((encounter:any)=>String(encounter.stage)!=="group")
+        .map((encounter:any)=>{
+          const scheduled=schedule.find(
+            (row:any)=>
+              String(row.categoryId)===String(competition.categoryId) &&
+              String(row.encounterId)===String(encounter.id)
+          );
+          const sets=(encounter.sets??[]).filter(
+            (set:any)=>
+              set?.scoreA!==null &&
+              set?.scoreA!==undefined &&
+              set?.scoreB!==null &&
+              set?.scoreB!==undefined
+          );
+          return {
+            id:String(encounter.id),
+            roundNumber:Math.max(1,Number(encounter.roundNumber??1)),
+            roundLabel:String(encounter.roundLabel??encounter.stage??""),
+            sideA:String(encounter.entryA?.name??"TBD"),
+            sideB:String(encounter.entryB?.name??"TBD"),
+            status:String(encounter.status??"pending"),
+            score:String(encounter.status)==="finished"
+              ? (
+                  sets.length
+                    ? sets.map((set:any)=>`${set.scoreA}-${set.scoreB}`).join(" · ")
+                    : `${encounter.scoreA??"—"} — ${encounter.scoreB??"—"}`
+                )
+              : null,
+            schedule:scheduled??null,
+          };
+        });
+      return {
+        kind:"standard",
+        categoryId:String(competition.categoryId),
+        categoryName:String(category?.name??""),
+        encounters,
+      };
+    });
+
+  const teamBrackets=teamCategories.map((category:any)=>{
+    const encounters=(category.encounters??[])
+      .filter((encounter:any)=>String(encounter.stage)!=="group")
+      .map((encounter:any)=>{
+        const score=teamEncounterScore(category,encounter);
+        const scheduled=schedule.find(
+          (row:any)=>
+            String(row.categoryId)===String(category.id) &&
+            String(row.encounterId)===String(encounter.id)
+        );
+        return {
+          id:String(encounter.id),
+          roundNumber:Math.max(1,Number(encounter.roundNumber??1)),
+          roundLabel:String(encounter.roundLabel??encounter.stage??""),
+          sideA:String(encounter.sideA??"TBD"),
+          sideB:String(encounter.sideB??"TBD"),
+          status:String(encounter.status??"pending"),
+          score:String(encounter.status)==="finished"
+            ? `${score.a} — ${score.b}`
+            : null,
+          schedule:scheduled??null,
+        };
+      });
+    return {
+      kind:"team",
+      categoryId:String(category.id),
+      categoryName:String(category.name??""),
+      encounters,
+    };
+  });
+
+  let finalBrackets=[...standardBrackets,...teamBrackets]
+    .filter((bracket:any)=>bracket.encounters.length>0);
+
+  if(mode==="category"&&categoryId){
+    finalBrackets=finalBrackets.filter(
+      (bracket:any)=>String(bracket.categoryId)===categoryId
+    );
+  }
 
   return (
     <section className={`epic-tv ${embedded?"embedded":""}`}>
@@ -1287,14 +1378,107 @@ export function EpicTournamentDayTV({ snapshot, locale, embedded = false }: { sn
             })}
           </div>
 
+          {finalBrackets.length ? (
+            <section className="epic-tv-brackets">
+              <div className="epic-tv-section-title">
+                <span>{tr(locale,"FASE FINAL","FINAL BRACKET")}</span>
+                <b>{finalBrackets.length}</b>
+              </div>
+
+              {finalBrackets.map((bracket:any)=>{
+                const rounds=[
+                  ...new Set<number>(
+                    bracket.encounters.map(
+                      (encounter:any)=>Number(encounter.roundNumber??1)
+                    )
+                  )
+                ].sort((a,b)=>a-b);
+
+                return (
+                  <article
+                    className="epic-tv-bracket-category"
+                    key={`${bracket.kind}:${bracket.categoryId}`}
+                  >
+                    <header>
+                      <strong>{bracket.categoryName}</strong>
+                      <span>
+                        {bracket.kind==="team"
+                          ? "TEAM"
+                          : tr(locale,"CUADRO","BRACKET")}
+                      </span>
+                    </header>
+
+                    <div className="epic-tv-bracket-grid">
+                      {rounds.map((round:number)=>{
+                        const matches=bracket.encounters.filter(
+                          (encounter:any)=>
+                            Number(encounter.roundNumber??1)===round
+                        );
+
+                        return (
+                          <section
+                            className="epic-tv-bracket-round"
+                            key={`${bracket.categoryId}:round:${round}`}
+                          >
+                            <h4>
+                              {matches.length===1
+                                ? matches[0]?.roundLabel
+                                : `${tr(locale,"Ronda","Round")} ${round}`}
+                            </h4>
+
+                            <div>
+                              {matches.map((encounter:any)=>(
+                                <article
+                                  className={`epic-tv-bracket-match status-${encounter.status}`}
+                                  key={encounter.id}
+                                >
+                                  <small>{encounter.roundLabel}</small>
+
+                                  <div className="epic-tv-bracket-player">
+                                    <strong>{encounter.sideA}</strong>
+                                  </div>
+
+                                  <div className="epic-tv-bracket-player">
+                                    <strong>{encounter.sideB}</strong>
+                                  </div>
+
+                                  {encounter.score ? (
+                                    <b className="epic-tv-bracket-score">
+                                      {encounter.score}
+                                    </b>
+                                  ) : null}
+
+                                  <span>
+                                    {encounter.schedule
+                                      ? `${new Date(
+                                          toMs(Number(encounter.schedule.startAt))
+                                        ).toLocaleTimeString(
+                                          [],
+                                          {hour:"2-digit",minute:"2-digit"}
+                                        )} · ${encounter.schedule.courtLabel??""}`
+                                      : tr(locale,"Sin horario","Unscheduled")}
+                                  </span>
+                                </article>
+                              ))}
+                            </div>
+                          </section>
+                        );
+                      })}
+                    </div>
+                  </article>
+                );
+              })}
+            </section>
+          ):null}
+
           {finishedResults.length ? (
-            <>
+            <section className="epic-tv-history">
               <div className="epic-tv-section-title">
                 <span>{tr(locale,"ÚLTIMOS RESULTADOS","LATEST RESULTS")}</span>
                 <b>{finishedResults.length}</b>
               </div>
 
-              <div className="epic-tv-cards">
+              <div className="epic-tv-cards epic-tv-history-cards">
                 {finishedResults.map((result)=>(
                   <article className="epic-tv-standard-card" key={result.id}>
                     <header>
@@ -1319,7 +1503,7 @@ export function EpicTournamentDayTV({ snapshot, locale, embedded = false }: { sn
                   </article>
                 ))}
               </div>
-            </>
+            </section>
           ):null}
         </main>
 
