@@ -1884,7 +1884,7 @@ function StandardResultCard({
   };
   return (
     <form className={`td-result-card ${match.status === "finished" ? "done" : ""}`} onSubmit={save}>
-      <div><span>{match.categoryName} · {match.roundLabel ?? match.stage}</span><strong>{match.sideA} <em>vs</em> {match.sideB}</strong></div>
+      <div><span>{match.categoryName} · {match.roundLabel ?? match.stage}</span><strong>{match.sideA} <em>vs</em> {match.sideB}</strong>{match.scheduleStart ? <small>{dt(Number(match.scheduleStart))} · {match.courtLabel ?? "—"}</small> : null}</div>
       <ScoreInputs
         prefix="score"
         bestOf={Number(match.bestOf)}
@@ -1929,7 +1929,7 @@ function TeamResultCard({
   };
   return (
     <form className={`td-result-card ${match.status === "finished" ? "done" : ""}`} onSubmit={save}>
-      <div><span>{category.name} · {match.rubberKey} · {match.status}</span><strong>{encounter.sideA} <em>vs</em> {encounter.sideB}</strong><small>{ready ? tr(locale, "Lineups bloqueadas", "Lineups locked") : tr(locale, "Faltan lineups bloqueadas", "Locked lineups required")}</small></div>
+      <div><span>{category.name} · {match.rubberKey} · {match.status}</span><strong>{encounter.sideA} <em>vs</em> {encounter.sideB}</strong>{match.scheduleStart ? <small>{dt(Number(match.scheduleStart))} · {match.courtLabel ?? "—"}</small> : null}<small>{ready ? tr(locale, "Lineups bloqueadas", "Lineups locked") : tr(locale, "Faltan lineups bloqueadas", "Locked lineups required")}</small></div>
       <ScoreInputs prefix="score" bestOf={Number(match.bestOf)} sets={match.sets} />
       <button className={match.status === "finished" ? "ghost small" : "light small"} disabled={!ready || match.status === "skipped" || match.status === "pending"}>{match.status === "finished" ? tr(locale, "Corregir local", "Correct locally") : tr(locale, "Guardar local", "Save locally")}</button>
     </form>
