@@ -157,7 +157,6 @@ function participantRestOk(
     ? Math.max(unit.preferredRestSlots ?? settings.preferredRestSlots ?? unit.minimumRestSlots ?? settings.minimumRestSlots, unit.minimumRestSlots ?? settings.minimumRestSlots)
     : Math.max(0, unit.minimumRestSlots ?? settings.minimumRestSlots);
   const restMs = slots * Math.max(1, settings.defaultMatchMinutes) * MINUTE;
-  if (restMs <= 0) return true;
 
   return assignments.every((assignment) => {
     const other = unitsById.get(assignment.unitId);

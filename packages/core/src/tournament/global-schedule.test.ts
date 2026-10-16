@@ -35,6 +35,31 @@ it("treats minimum rest as hard", () => {
   expect(second.startAt - first.endAt).toBeGreaterThanOrEqual(30 * 60_000);
 });
 
+it("prevents overlapping matches for the same participant even with zero minimum rest", () => {
+  const result = generateGlobalTournamentSchedule({
+    settings: {
+      ...base,
+      courtCount: 2,
+      minimumRestSlots: 0,
+      preferredRestSlots: 0,
+    },
+    units: [
+      standard("a1", "A", ["p1", "p2"]),
+      standard("a2", "A", ["p1", "p3"]),
+    ],
+  });
+
+  const first = result.assignments.find((row) => row.unitId === "a1")!;
+  const second = result.assignments.find((row) => row.unitId === "a2")!;
+
+  expect(
+    first.startAt < second.endAt &&
+    second.startAt < first.endAt,
+  ).toBe(false);
+
+  expect(second.startAt).toBe(first.endAt);
+});
+
 it("enforces dailyEnd", () => {
   const result = generateGlobalTournamentSchedule({ settings: { ...base, dailyEnd: "09:30", courtCount: 1 }, units: [
     standard("a1", "A", ["p1", "p2"]),
