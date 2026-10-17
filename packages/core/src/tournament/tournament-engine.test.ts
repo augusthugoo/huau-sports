@@ -83,6 +83,51 @@ describe("Phase 2 tournament engine parity fixtures", () => {
     expect(standings.map((row) => row.played)).toEqual([3, 3, 3, 3]);
   });
 
+  it("single-group-5: creates five balanced round-robin rounds with one bye per round", () => {
+    const value = competition([
+      group("A", ["A1", "A2", "A3", "A4", "A5"]),
+    ]);
+
+    expect(value.encounters).toHaveLength(10);
+
+    const rounds = new Map<number, typeof value.encounters>();
+
+    for (const match of value.encounters) {
+      const round = Number(match.roundNumber);
+      const list = rounds.get(round) ?? [];
+      list.push(match);
+      rounds.set(round, list);
+    }
+
+    expect([...rounds.keys()].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5]);
+
+    for (const matches of rounds.values()) {
+      expect(matches).toHaveLength(2);
+
+      const players = new Set(
+        matches.flatMap((match) => [
+          match.entryA?.id,
+          match.entryB?.id,
+        ]).filter(Boolean),
+      );
+
+      expect(players.size).toBe(4);
+    }
+
+    for (const player of ["A1", "A2", "A3", "A4", "A5"]) {
+      const playedRounds = value.encounters
+        .filter(
+          (match) =>
+            match.entryA?.id === player ||
+            match.entryB?.id === player,
+        )
+        .map((match) => match.roundNumber);
+
+      expect(playedRounds).toHaveLength(4);
+      expect(new Set(playedRounds).size).toBe(4);
+    }
+  });
+
   it("unequal-3-4-4-normalized: compares cross-group performance using rates and per-match values", () => {
     let value = competition(
       [group("A", ["A1", "A2", "A3"]), group("B", ["B1", "B2", "B3", "B4"]), group("C", ["C1", "C2", "C3", "C4"])],

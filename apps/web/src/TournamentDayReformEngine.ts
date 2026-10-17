@@ -916,6 +916,67 @@ function provisionalStandardFinalSpecs(
   return specs;
 }
 
+function standardRoundPairKey(
+  groupId: string | null | undefined,
+  entryAId: string | null | undefined,
+  entryBId: string | null | undefined,
+) {
+  if (!groupId || !entryAId || !entryBId) return null;
+  const entries = [String(entryAId), String(entryBId)].sort();
+  return JSON.stringify([String(groupId), entries[0], entries[1]]);
+}
+
+function standardRoundMap(competition: any) {
+  const result = new Map<string, number>();
+
+  for (const group of competition?.groups ?? []) {
+    const entries = (group.entries ?? []).map((entry: any) => String(entry.id));
+    if (entries.length < 2) continue;
+
+    const slots: Array<string | null> = [...entries];
+    if (slots.length % 2 === 1) slots.push(null);
+
+    const fixed = slots[0] ?? null;
+    let rotating = slots.slice(1);
+
+    for (let roundIndex = 0; roundIndex < slots.length - 1; roundIndex += 1) {
+      const layout = [fixed, ...rotating];
+
+      for (let index = 0; index < layout.length / 2; index += 1) {
+        const left = layout[index];
+        const right = layout[layout.length - 1 - index];
+        if (!left || !right) continue;
+
+        const key = standardRoundPairKey(String(group.id), left, right);
+        if (key) result.set(key, roundIndex + 1);
+      }
+
+      rotating = [
+        rotating[rotating.length - 1] ?? null,
+        ...rotating.slice(0, -1),
+      ];
+    }
+  }
+
+  return result;
+}
+
+function inferredStandardGroupRound(
+  row: any,
+  roundMap: Map<string, number>,
+) {
+  const explicit = Number(row?.roundNumber ?? 0);
+  if (Number.isInteger(explicit) && explicit > 0) return explicit;
+
+  const key = standardRoundPairKey(
+    row?.groupId,
+    row?.entryAId ?? row?.entryA?.id,
+    row?.entryBId ?? row?.entryB?.id,
+  );
+
+  return key ? roundMap.get(key) ?? null : null;
+}
+
 function globalUnits(snapshot: TournamentDayReformSnapshot): GlobalScheduleUnit[] {
   const settings = snapshot.workspace.core.settings as any;
   const categories = new Map((snapshot.workspace.core.categories as any[]).map((category) => [String(category.id), category] as const));
@@ -935,7 +996,43 @@ function globalUnits(snapshot: TournamentDayReformSnapshot): GlobalScheduleUnit[
     const category = categories.get(String(match.categoryId));
     const competition = standardByCategory.get(String(match.categoryId));
     const encounter = competition?.encounters?.find((row: any) => String(row.id) === String(match.encounterId));
-    const deps = [encounter?.sourceEncounterAId, encounter?.sourceEncounterBId, encounter?.sourceLoserAId, encounter?.sourceLoserBId].filter(Boolean).map((id) => `std:${match.categoryId}:${id}`);
+    const roundMap = standardRoundMap(competition);
+    const roundNumber =
+      inferredStandardGroupRound(encounter ?? match, roundMap) ??
+      match.roundNumber ??
+      encounter?.roundNumber ??
+      null;
+
+    const deps = [
+      encounter?.sourceEncounterAId,
+      encounter?.sourceEncounterBId,
+      encounter?.sourceLoserAId,
+      encounter?.sourceLoserBId,
+    ].filter(Boolean).map((id) => `std:${match.categoryId}:${id}`);
+
+    if (
+      String(match.stage ?? encounter?.stage) === "group" &&
+      match.groupId &&
+      Number(roundNumber ?? 0) > 1
+    ) {
+      const previousRound = Number(roundNumber) - 1;
+
+      for (const candidate of competition?.encounters ?? []) {
+        if (String(candidate.stage) !== "group") continue;
+        if (String(candidate.groupId) !== String(match.groupId)) continue;
+        if (
+          Number(candidate.legNumber ?? 1) !==
+          Number(match.legNumber ?? encounter?.legNumber ?? 1)
+        ) continue;
+
+        const candidateRound = inferredStandardGroupRound(candidate, roundMap);
+        if (candidateRound !== previousRound) continue;
+
+        deps.push(`std:${match.categoryId}:${candidate.id}`);
+      }
+    }
+
+    const uniqueDeps = [...new Set(deps)];
 
     const unresolvedFinalPhase =
       String(match.stage) !== "group" &&
@@ -957,13 +1054,13 @@ function globalUnits(snapshot: TournamentDayReformSnapshot): GlobalScheduleUnit[
       date: dayDate(snapshot, category),
       stage: String(match.stage ?? "group"),
       roundLabel: match.roundLabel ?? null,
-      roundNumber: match.roundNumber ?? encounter?.roundNumber ?? null,
+      roundNumber,
       groupId: match.groupId ? String(match.groupId) : null,
       groupName: match.groupName ? String(match.groupName) : null,
       legNumber: match.legNumber ?? encounter?.legNumber ?? 1,
       barrierKey: match.groupId ? `${match.categoryId}:${match.groupId}` : null,
       participants,
-      dependencyIds: deps,
+      dependencyIds: uniqueDeps,
       durationMinutes: Math.max(5, Number(settings.defaultMatchMinutes ?? 30)),
       minimumRestSlots: Math.max(0, Number(settings.minimumRestSlots ?? 1)),
       preferredRestSlots: Math.max(0, Number(competition?.format?.preferredRestSlots ?? settings.preferredRestSlots ?? settings.minimumRestSlots ?? 1)),

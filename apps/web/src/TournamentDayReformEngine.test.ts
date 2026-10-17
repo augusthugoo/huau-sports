@@ -222,6 +222,10 @@ describe("provisional Standard playoff scheduling", () => {
       (row) => row.encounterId === "playoff:semi:1",
     );
 
+    if (!semiRow || !semiMatch) {
+      throw new Error("EXPECTED_SCHEDULED_SEMIFINAL");
+    }
+
     expect(semiRow.provisional).toBe(false);
     expect(semiRow.sideA).toBeTruthy();
     expect(semiRow.sideB).toBeTruthy();
@@ -233,6 +237,10 @@ describe("provisional Standard playoff scheduling", () => {
     const regeneratedFinal = (local.workspace.schedule.schedule as QaScheduleRow[]).find(
       (row) => row.encounterId === "playoff:final",
     );
+
+    if (!regeneratedFinal) {
+      throw new Error("EXPECTED_REGENERATED_FINAL");
+    }
 
     expect(regeneratedFinal).toBeTruthy();
     expect(regeneratedFinal.roundLabel).toBe("Final");
