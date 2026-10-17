@@ -21,6 +21,7 @@ export type GlobalScheduleUnit = {
   participants: string[];
   dependencyIds?: string[];
   dependencyRestSlots?: number;
+  notBefore?: string | null;
   durationMinutes: number;
   minimumRestSlots?: number;
   preferredRestSlots?: number;
@@ -371,12 +372,14 @@ function unitOrderScore(unit: GlobalScheduleUnit, categoryCounts: Map<string, nu
   return (unit.priority ?? 0) * -1000 + stageWeight + (categoryCounts.get(unit.categoryId) ?? 0) * 3 + Number(unit.roundNumber ?? 0) + Number(unit.legNumber ?? 0) * 2;
 }
 
-function candidateTimes(date: string, settings: GlobalScheduleSettings, earliestAt: number) {
-  const startMinute = parseClock(settings.dailyStart);
+function candidateTimes(unit: GlobalScheduleUnit, settings: GlobalScheduleSettings, earliestAt: number) {
+  const dayStartMinute = parseClock(settings.dailyStart);
+  const unitStartMinute = unit.notBefore ? parseClock(unit.notBefore) : dayStartMinute;
+  const startMinute = Math.max(dayStartMinute, unitStartMinute);
   const endMinute = parseClock(settings.dailyEnd);
   if (endMinute <= startMinute) return [];
-  const startAt = Math.max(localDateMinute(date, startMinute), earliestAt);
-  const endAt = localDateMinute(date, endMinute);
+  const startAt = Math.max(localDateMinute(unit.date, startMinute), earliestAt);
+  const endAt = localDateMinute(unit.date, endMinute);
   const step = Math.max(1, settings.stepMinutes ?? 5) * MINUTE;
   const rounded = Math.ceil(startAt / step) * step;
   const values: number[] = [];
@@ -406,11 +409,14 @@ export function generateGlobalTournamentSchedule(input: {
     const unit = unitsById.get(lock.unitId);
     if (!unit) continue;
     const dayStart = localDateMinute(unit.date, parseClock(settings.dailyStart));
+    const unitStart = unit.notBefore
+      ? localDateMinute(unit.date, parseClock(unit.notBefore))
+      : dayStart;
     const dayEnd = localDateMinute(unit.date, parseClock(settings.dailyEnd));
     const invalid =
       lock.court < 1 ||
       lock.court > courtCount ||
-      lock.startAt < dayStart ||
+      lock.startAt < Math.max(dayStart, unitStart) ||
       lock.endAt > dayEnd ||
       lock.endAt <= lock.startAt ||
       !courtOrder(unit, courtCount, exclusiveOwners).includes(lock.court) ||
@@ -466,7 +472,7 @@ export function generateGlobalTournamentSchedule(input: {
       let best: { court: number; startAt: number; preferred: boolean } | null = null;
 
       for (const preferred of [true, false]) {
-        for (const startAt of candidateTimes(unit.date, settings, earliestAt)) {
+        for (const startAt of candidateTimes(unit, settings, earliestAt)) {
           const endAt = startAt + durationMs;
           if (endAt > dayEnd) break;
           if (!categoryConcurrencyOk(unit, startAt, endAt, assignments)) continue;

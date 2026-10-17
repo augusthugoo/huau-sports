@@ -674,6 +674,10 @@ function applySchedulePolicy(
         ? Math.max(1, Number(rule.phase ?? 1))
         : 0;
     const sequence = String(rule.sequence ?? "free");
+    const notBeforeCandidate = String(rule.notBefore ?? "").trim();
+    const notBefore = /^\d{2}:\d{2}$/.test(notBeforeCandidate)
+      ? notBeforeCandidate
+      : null;
     let sequenceKey: string | null = null;
     let sequenceIndex: number | null = null;
     if (sequence === "rounds") {
@@ -688,6 +692,7 @@ function applySchedulePolicy(
       ...unit,
       policyPhase: phase || null,
       policySequenceKey: sequenceKey,
+      notBefore,
       policySequenceIndex: sequenceIndex,
       priority: mode === "priority" || mode === "blocks" ? -order : (unit.priority ?? 0),
       allowedCourts: Array.isArray(rule.allowedCourts) ? rule.allowedCourts.map(Number) : [],
@@ -1093,7 +1098,7 @@ export function regenerateGlobalSchedule(snapshot: TournamentDayReformSnapshot, 
       defaultMatchMinutes: Math.max(5, Number(settings.defaultMatchMinutes ?? 30)),
       minimumRestSlots: Math.max(0, Number(settings.minimumRestSlots ?? 1)),
       preferredRestSlots: Math.max(0, Number(settings.preferredRestSlots ?? settings.minimumRestSlots ?? 1)),
-      stepMinutes: 5,
+      stepMinutes: 1,
       regenerateOnlyUnlocked: Boolean(options.onlyUnlocked),
     },
     units,
@@ -1246,7 +1251,7 @@ export function validateGlobalSchedule(snapshot: TournamentDayReformSnapshot) {
   const tournament = snapshot.workspace.core.tournament as any;
   const meta = ensureDayLocalMeta(snapshot);
   return generateGlobalTournamentSchedule({
-    settings: { dailyStart: String(settings.dailyStart ?? "09:00"), dailyEnd: String(settings.dailyEnd ?? "20:00"), courtCount: Math.max(1, Number(tournament.courtCount ?? 1)), defaultMatchMinutes: Math.max(5, Number(settings.defaultMatchMinutes ?? 30)), minimumRestSlots: Math.max(0, Number(settings.minimumRestSlots ?? 1)), preferredRestSlots: Math.max(0, Number(settings.preferredRestSlots ?? settings.minimumRestSlots ?? 1)), stepMinutes: 5 },
+    settings: { dailyStart: String(settings.dailyStart ?? "09:00"), dailyEnd: String(settings.dailyEnd ?? "20:00"), courtCount: Math.max(1, Number(tournament.courtCount ?? 1)), defaultMatchMinutes: Math.max(5, Number(settings.defaultMatchMinutes ?? 30)), minimumRestSlots: Math.max(0, Number(settings.minimumRestSlots ?? 1)), preferredRestSlots: Math.max(0, Number(settings.preferredRestSlots ?? settings.minimumRestSlots ?? 1)), stepMinutes: 1 },
     units,
     locks: currentScheduleLocks(snapshot, units),
     closedCourts: meta.schedule.closedCourts,

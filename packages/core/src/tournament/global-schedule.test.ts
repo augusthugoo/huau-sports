@@ -84,6 +84,44 @@ it("reserves recovery time after dependencies for a provisional knockout round",
   expect(semi.startAt - groupsEnd).toBeGreaterThanOrEqual(30 * 60_000);
 });
 
+it("honors category start times and one-minute scheduling precision", () => {
+  const result = generateGlobalTournamentSchedule({
+    settings: {
+      ...base,
+      dailyStart: "18:00",
+      dailyEnd: "20:00",
+      courtCount: 2,
+      defaultMatchMinutes: 13,
+      minimumRestSlots: 0,
+      preferredRestSlots: 0,
+      stepMinutes: 1,
+    },
+    units: [
+      standard("male-1", "M50", [], {
+        notBefore: "18:15",
+        durationMinutes: 13,
+      }),
+      standard("male-2", "M50", [], {
+        notBefore: "18:15",
+        durationMinutes: 13,
+        dependencyIds: ["male-1"],
+      }),
+      standard("female-1", "F50", [], {
+        notBefore: "18:40",
+        durationMinutes: 13,
+      }),
+    ],
+  });
+
+  const male1 = result.assignments.find((row) => row.unitId === "male-1")!;
+  const male2 = result.assignments.find((row) => row.unitId === "male-2")!;
+  const female1 = result.assignments.find((row) => row.unitId === "female-1")!;
+
+  expect(male1.startAt).toBe(new Date("2026-11-15T18:15:00").getTime());
+  expect(male2.startAt).toBe(new Date("2026-11-15T18:28:00").getTime());
+  expect(female1.startAt).toBe(new Date("2026-11-15T18:40:00").getTime());
+});
+
 it("enforces dailyEnd", () => {
   const result = generateGlobalTournamentSchedule({ settings: { ...base, dailyEnd: "09:30", courtCount: 1 }, units: [
     standard("a1", "A", ["p1", "p2"]),

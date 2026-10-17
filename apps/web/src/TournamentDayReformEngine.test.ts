@@ -37,6 +37,24 @@ type QaTeamCategory = {
   encounters: QaEncounter[];
 };
 
+type QaScheduleRow = {
+  provisional?: boolean;
+  roundLabel?: string | null;
+  stage?: string;
+  encounterId?: string | null;
+  startAt?: number | null;
+  endAt?: number | null;
+  sideA?: string | null;
+  sideB?: string | null;
+  courtLabel?: string | null;
+};
+
+type QaStandardMatchRow = {
+  encounterId?: string | null;
+  scheduleStart?: number | null;
+  courtLabel?: string | null;
+};
+
 function snapshot(): TournamentDayReformSnapshot {
   return {
     schemaVersion: 1,
@@ -160,7 +178,7 @@ describe("provisional Standard playoff scheduling", () => {
     syncStandardCompetition(local, competition);
     regenerateGlobalSchedule(local);
 
-    const reserved = (local.workspace.schedule.schedule as any[]).filter(
+    const reserved = (local.workspace.schedule.schedule as QaScheduleRow[]).filter(
       (row) => row.provisional,
     );
 
@@ -172,7 +190,7 @@ describe("provisional Standard playoff scheduling", () => {
     ).toHaveLength(1);
 
     const groupEnd = Math.max(
-      ...(local.workspace.schedule.schedule as any[])
+      ...(local.workspace.schedule.schedule as QaScheduleRow[])
         .filter((row) => row.stage === "group")
         .map((row) => Number(row.endAt)),
     );
@@ -197,10 +215,10 @@ describe("provisional Standard playoff scheduling", () => {
     local.workspace.standard.competitions = [withFinals];
     syncStandardCompetition(local, withFinals);
 
-    const semiRow = (local.workspace.schedule.schedule as any[]).find(
+    const semiRow = (local.workspace.schedule.schedule as QaScheduleRow[]).find(
       (row) => row.encounterId === "playoff:semi:1",
     );
-    const semiMatch = (local.workspace.standard.matches as any[]).find(
+    const semiMatch = (local.workspace.standard.matches as QaStandardMatchRow[]).find(
       (row) => row.encounterId === "playoff:semi:1",
     );
 
@@ -212,7 +230,7 @@ describe("provisional Standard playoff scheduling", () => {
 
     regenerateGlobalSchedule(local);
 
-    const regeneratedFinal = (local.workspace.schedule.schedule as any[]).find(
+    const regeneratedFinal = (local.workspace.schedule.schedule as QaScheduleRow[]).find(
       (row) => row.encounterId === "playoff:final",
     );
 
