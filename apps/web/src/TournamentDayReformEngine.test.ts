@@ -14,6 +14,7 @@ import {
   previewAdminMerge,
   publicReadModelHasPrivateKeys,
   regenerateGlobalSchedule,
+  removeParticipantFromCategory,
   setParticipantNoShow,
   updateDayParticipant,
   type TournamentDayReformSnapshot,
@@ -58,6 +59,15 @@ type QaStandardMatchRow = {
   encounterId?: string | null;
   scheduleStart?: number | null;
   courtLabel?: string | null;
+};
+
+type QaPlayerCategoryRow = {
+  playerProfileId?: string | null;
+  categoryId?: string | null;
+};
+
+type QaStandardEntryRow = {
+  categoryId?: string | null;
 };
 
 function snapshot(): TournamentDayReformSnapshot {
@@ -125,6 +135,41 @@ describe("Tournament Day reform ownership", () => {
     const preview = previewAdminMerge(local, incoming);
     expect(preview.items.find((item) => item.id === "p1")?.conflict).toBe(true);
     expect(local.workspace.participants.players[0].duprSingles).toBe(3.7);
+  });
+});
+
+describe("Standard participant withdrawal", () => {
+  it("removes an imported entry identified by organization person id", () => {
+    const local = snapshot();
+    ensureDayLocalMeta(local);
+
+    local.workspace.standard.entries = [
+      {
+        id: "imported-entry-1",
+        categoryId: "c1",
+        displayName: "Ana",
+        status: "confirmed",
+        sourceKind: "registration",
+        sourceKey: "registration-1",
+        participantIds: "person1",
+      },
+    ];
+
+    removeParticipantFromCategory(local, "p1", "c1");
+
+    expect(
+      (local.workspace.participants.playerCategories as QaPlayerCategoryRow[]).some(
+        (row) =>
+          String(row.playerProfileId) === "p1" &&
+          String(row.categoryId) === "c1",
+      ),
+    ).toBe(false);
+
+    expect(
+      (local.workspace.standard.entries as QaStandardEntryRow[]).some(
+        (entry) => String(entry.categoryId) === "c1",
+      ),
+    ).toBe(false);
   });
 });
 

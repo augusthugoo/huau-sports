@@ -329,11 +329,54 @@ export function participantImpact(snapshot: TournamentDayReformSnapshot, profile
 }
 
 function standardEntryContainsProfile(snapshot: TournamentDayReformSnapshot, entryId: string, profileId: string) {
-  const entry = (snapshot.workspace.standard.entries as any[]).find((row) => String(row.id) === entryId);
+  const entry = (snapshot.workspace.standard.entries as any[]).find(
+    (row) => String(row.id) === entryId,
+  );
   if (!entry) return false;
-  if (Array.isArray(entry.localProfileIds) && entry.localProfileIds.map(String).includes(profileId)) return true;
-  if (String(entry.sourceKey ?? "") === profileId) return true;
-  return String(entry.participantIds ?? "").split("|").includes(profileId);
+
+  const player = (snapshot.workspace.participants.players as any[]).find(
+    (row) => String(row.id) === profileId,
+  );
+
+  const personKeys = new Set(
+    [
+      profileId,
+      player?.organizationPersonId,
+      player?.userId,
+    ]
+      .filter(Boolean)
+      .map(String),
+  );
+
+  if (
+    Array.isArray(entry.localProfileIds) &&
+    entry.localProfileIds.some((value: unknown) => personKeys.has(String(value)))
+  ) {
+    return true;
+  }
+
+  const sourceKey = String(entry.sourceKey ?? "");
+  if (sourceKey && personKeys.has(sourceKey)) return true;
+
+  if (entry.sourceKind === "legacy_pair" && sourceKey) {
+    if (
+      sourceKey
+        .split(":")
+        .filter(Boolean)
+        .some((value: string) => personKeys.has(value))
+    ) {
+      return true;
+    }
+  }
+
+  const participantIds = Array.isArray(entry.participantIds)
+    ? entry.participantIds.map(String)
+    : String(entry.participantIds ?? "")
+        .split("|")
+        .map((value) => value.trim())
+        .filter(Boolean);
+
+  return participantIds.some((value: string) => personKeys.has(value));
 }
 
 export function addDayParticipant(snapshot: TournamentDayReformSnapshot, input: {
