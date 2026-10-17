@@ -2014,6 +2014,21 @@ export function resetDayCategoryCompetition(snapshot: TournamentDayReformSnapsho
   markLiveDirty(snapshot);
 }
 
+function replaceAndSyncStandardCompetition(
+  snapshot: TournamentDayReformSnapshot,
+  competition: Competition,
+) {
+  const competitions = snapshot.workspace.standard.competitions as Competition[];
+  const index = competitions.findIndex(
+    (candidate) => String(candidate.categoryId) === String(competition.categoryId),
+  );
+
+  if (index >= 0) competitions[index] = competition;
+  else competitions.push(competition);
+
+  syncStandardCompetition(snapshot, competition);
+}
+
 export function clearDayCategoryResults(snapshot: TournamentDayReformSnapshot, categoryId: string) {
   const competition = (snapshot.workspace.standard.competitions as any[]).find(
     (candidate) => String(candidate.categoryId) === categoryId,
@@ -2025,7 +2040,7 @@ export function clearDayCategoryResults(snapshot: TournamentDayReformSnapshot, c
       groups: cloneDay(competition.groups),
       format: competition.format,
     });
-    syncStandardCompetition(snapshot, rebuilt);
+    replaceAndSyncStandardCompetition(snapshot, rebuilt);
   }
   const teamCategory = (snapshot.team.categories as any[]).find(
     (category) => String(category.id) === categoryId,
@@ -2111,7 +2126,7 @@ export function moveLocalStandardEntryToGroup(snapshot: TournamentDayReformSnaps
   if (!moved || !target) throw new Error("STANDARD_GROUP_MOVE_TARGET_NOT_FOUND");
   target.entries.push(moved);
   const rebuilt = buildCompetitionFromGroups({ id: competition.id, categoryId, groups, format: competition.format });
-  syncStandardCompetition(snapshot, rebuilt);
+  replaceAndSyncStandardCompetition(snapshot, rebuilt);
   snapshot.workspace.schedule.schedule = (snapshot.workspace.schedule.schedule as any[]).filter((row) => String(row.categoryId) !== categoryId);
   markStructureDirty(snapshot);
 }

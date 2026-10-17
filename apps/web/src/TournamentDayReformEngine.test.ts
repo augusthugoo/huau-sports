@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { buildCompetitionFromGroups, generateFinalPhase } from "@huau/core";
+import {
+  buildCompetitionFromGroups,
+  generateFinalPhase,
+  type Competition,
+} from "@huau/core";
 import { syncStandardCompetition } from "./TournamentDayEngine";
 import {
   buildPublicLive,
   buildPublicStructure,
+  clearDayCategoryResults,
   createQaFixture,
   ensureDayLocalMeta,
   previewAdminMerge,
@@ -245,6 +250,68 @@ describe("provisional Standard playoff scheduling", () => {
     expect(regeneratedFinal).toBeTruthy();
     expect(regeneratedFinal.roundLabel).toBe("Final");
     expect(Number(regeneratedFinal.startAt)).toBeGreaterThan(0);
+  });
+});
+
+describe("clearing Standard results", () => {
+  it("removes a generated final phase from the stored competition", () => {
+    const local = snapshot();
+    ensureDayLocalMeta(local);
+
+    const base = buildCompetitionFromGroups({
+      id: "competition:c1",
+      categoryId: "c1",
+      groups: [
+        {
+          id: "g1",
+          name: "A",
+          entries: ["Ana", "Beatriz", "Cecilia", "Daniela"].map(
+            (name, index) => ({
+              id: `e${index + 1}`,
+              name,
+              participantIds: [`p${index + 1}`],
+              rating: 0,
+            }),
+          ),
+        },
+      ],
+      format: {
+        playoffMode: "top4_semis",
+        bronzeMatch: false,
+      },
+    });
+
+    for (const encounter of base.encounters) {
+      if (!encounter.entryA || !encounter.entryB) continue;
+      encounter.status = "finished";
+      encounter.scoreA = 15;
+      encounter.scoreB = 8;
+      encounter.winnerEntryId = encounter.entryA.id;
+      encounter.sets = [{ scoreA: 15, scoreB: 8 }];
+    }
+
+    const withFinals = generateFinalPhase(base);
+
+    local.workspace.standard.competitions = [withFinals];
+    syncStandardCompetition(local, withFinals);
+
+    clearDayCategoryResults(local, "c1");
+
+    const rebuilt = (
+      local.workspace.standard.competitions as Competition[]
+    ).find((competition) => competition.categoryId === "c1");
+
+    if (!rebuilt) {
+      throw new Error("EXPECTED_REBUILT_STANDARD_COMPETITION");
+    }
+
+    expect(rebuilt.finalGenerated).toBe(false);
+    expect(
+      rebuilt.encounters.every((encounter) => encounter.stage === "group"),
+    ).toBe(true);
+    expect(
+      rebuilt.encounters.every((encounter) => encounter.status !== "finished"),
+    ).toBe(true);
   });
 });
 
