@@ -11,8 +11,10 @@ import {
   buildPublicLive,
   buildPublicStructure,
   clearDayCategoryResults,
+  createNationalCircuitQaFixture,
   createQaFixture,
   ensureDayLocalMeta,
+  isDayQaFixture,
   previewAdminMerge,
   publicReadModelHasPrivateKeys,
   regenerateGlobalSchedule,
@@ -804,5 +806,251 @@ describe("private QA fixture", () => {
     }
     const c50Rounds = new Set(c50.encounters.map((encounter) => encounter.roundNumber));
     expect(c50Rounds.size).toBe(7);
+  });
+});
+
+describe("national circuit QA fixture", () => {
+  it("loads 105 registered players across 13 real-world Standard categories without prebuilding competition", () => {
+    const qa = createNationalCircuitQaFixture(
+      snapshot(),
+    );
+
+    expect(
+      qa.workspace.participants.players,
+    ).toHaveLength(105);
+
+    expect(
+      qa.workspace.participants.players
+        .filter(
+          (player: any) =>
+            player.sportGender === "male",
+        ),
+    ).toHaveLength(66);
+
+    expect(
+      qa.workspace.participants.players
+        .filter(
+          (player: any) =>
+            player.sportGender === "female",
+        ),
+    ).toHaveLength(39);
+
+    expect(
+      new Set(
+        qa.workspace.participants.players
+          .map(
+            (player: any) =>
+              player.displayName,
+          ),
+      ).size,
+    ).toBe(105);
+
+    expect(
+      qa.workspace.core.tournament.courtCount,
+    ).toBe(4);
+
+    expect(
+      qa.workspace.core.categories,
+    ).toHaveLength(13);
+
+    expect(
+      qa.team.categories,
+    ).toHaveLength(0);
+
+    expect(
+      qa.workspace.standard.competitions,
+    ).toHaveLength(0);
+
+    expect(
+      qa.workspace.standard.groups,
+    ).toHaveLength(0);
+
+    expect(
+      qa.workspace.standard.matches,
+    ).toHaveLength(0);
+
+    expect(
+      qa.workspace.schedule.schedule,
+    ).toHaveLength(0);
+
+    expect(
+      isDayQaFixture(qa),
+    ).toBe(true);
+
+    expect(
+      new Set(
+        Object.values(
+          ensureDayLocalMeta(qa)
+            .schedule.categoryDates,
+        ),
+      ).size,
+    ).toBe(3);
+  });
+
+  it("matches the reference registration counts and never exceeds three categories per player", () => {
+    const qa = createNationalCircuitQaFixture(
+      snapshot(),
+    );
+
+    const entries =
+      qa.workspace.standard.entries as any[];
+
+    const entryCount = (
+      categoryId: string,
+    ) =>
+      entries.filter(
+        (entry) =>
+          String(entry.categoryId) ===
+          categoryId,
+      ).length;
+
+    expect({
+      singleMA: entryCount("qa-single-m-a"),
+      singleMB: entryCount("qa-single-m-b"),
+      singleF: entryCount("qa-single-f"),
+      singleM50: entryCount("qa-single-m-50"),
+
+      doubleFA: entryCount("qa-double-f-a"),
+      doubleFB: entryCount("qa-double-f-b"),
+      doubleMB: entryCount("qa-double-m-b"),
+      doubleMA: entryCount("qa-double-m-a"),
+      doubleM50: entryCount("qa-double-m-50"),
+      doubleF50: entryCount("qa-double-f-50"),
+
+      mixedA: entryCount("qa-mixed-a"),
+      mixedB: entryCount("qa-mixed-b"),
+      mixed50: entryCount("qa-mixed-50"),
+    }).toEqual({
+      singleMA: 10,
+      singleMB: 12,
+      singleF: 8,
+      singleM50: 9,
+
+      // Cantidad de PAREJAS.
+      doubleFA: 7,
+      doubleFB: 8,
+      doubleMB: 18,
+      doubleMA: 14,
+      doubleM50: 8,
+      doubleF50: 6,
+
+      mixedA: 9,
+      mixedB: 20,
+      mixed50: 7,
+    });
+
+    expect(entries).toHaveLength(136);
+
+    const assignments =
+      qa.workspace.participants
+        .playerCategories as any[];
+
+    expect(assignments).toHaveLength(233);
+
+    const counts = new Map<string, number>();
+
+    for (const assignment of assignments) {
+      const id = String(
+        assignment.playerProfileId,
+      );
+
+      counts.set(
+        id,
+        (counts.get(id) ?? 0) + 1,
+      );
+    }
+
+    expect(counts.size).toBe(105);
+
+    expect(
+      [...counts.values()].every(
+        (count) =>
+          count >= 1 &&
+          count <= 3,
+      ),
+    ).toBe(true);
+
+    expect(
+      [...counts.values()].some(
+        (count) => count === 3,
+      ),
+    ).toBe(true);
+
+    // Mixto B es la categoría de parejas más grande.
+    expect(
+      entryCount("qa-mixed-b"),
+    ).toBeGreaterThan(
+      entryCount("qa-double-m-b"),
+    );
+  });
+
+  it("stays comfortably inside checkpoint and public R2 payload limits", () => {
+    const qa = createNationalCircuitQaFixture(
+      snapshot(),
+    );
+
+    const structure =
+      buildPublicStructure(qa);
+
+    const live =
+      buildPublicLive(qa);
+
+    expect(
+      publicReadModelHasPrivateKeys(
+        structure,
+      ),
+    ).toBe(false);
+
+    expect(
+      publicReadModelHasPrivateKeys(
+        live,
+      ),
+    ).toBe(false);
+
+    const snapshotBytes =
+      new TextEncoder()
+        .encode(JSON.stringify(qa))
+        .byteLength;
+
+    const structureBytes =
+      new TextEncoder()
+        .encode(JSON.stringify(structure))
+        .byteLength;
+
+    const liveBytes =
+      new TextEncoder()
+        .encode(JSON.stringify(live))
+        .byteLength;
+
+    expect(snapshotBytes)
+      .toBeLessThan(20_000_000);
+
+    expect(structureBytes)
+      .toBeLessThan(1_500_000);
+
+    expect(liveBytes)
+      .toBeLessThan(1_500_000);
+  });
+
+  it("removes withdrawn players from the public participant model", () => {
+    const qa = createNationalCircuitQaFixture(
+      snapshot(),
+    );
+
+    const withdrawn =
+      qa.workspace.participants.players[0] as any;
+
+    withdrawn.playerStatus =
+      "withdrawn";
+
+    const structure =
+      buildPublicStructure(qa) as any;
+
+    expect(
+      structure.players.some(
+        (player: any) =>
+          player.id === withdrawn.id,
+      ),
+    ).toBe(false);
   });
 });

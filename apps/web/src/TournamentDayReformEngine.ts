@@ -66,6 +66,10 @@ export type DayLocalMeta = {
   teamTombstones: Record<string, { at: number; reason: string }>;
   localParticipantIds: string[];
   localTeamIds: string[];
+  qaFixture?: {
+    kind: "national_circuit_105";
+    createdAt: number;
+  } | null;
   schedule: {
     categoryDates: Record<string, string>;
     lockedUnitIds: string[];
@@ -203,6 +207,7 @@ export function ensureDayLocalMeta(snapshot: TournamentDayReformSnapshot): DayLo
       teamTombstones: {},
       localParticipantIds: [],
       localTeamIds: [],
+      qaFixture: null,
       schedule: { categoryDates: {}, lockedUnitIds: [], closedCourts: [], breaks: [], lastConflicts: [] },
       publicDirty: {
         structure: 0,
@@ -224,6 +229,7 @@ export function ensureDayLocalMeta(snapshot: TournamentDayReformSnapshot): DayLo
   snapshot.localMeta.teamTombstones ??= {};
   snapshot.localMeta.localParticipantIds ??= [];
   snapshot.localMeta.localTeamIds ??= [];
+  snapshot.localMeta.qaFixture ??= null;
   snapshot.localMeta.schedule ??= { categoryDates: {}, lockedUnitIds: [], closedCourts: [], breaks: [], lastConflicts: [] };
   snapshot.localMeta.schedule.categoryDates ??= {};
   snapshot.localMeta.publicDirty ??= {
@@ -282,6 +288,12 @@ export function activeDayParticipantCount(
       ].includes(status);
     },
   ).length;
+}
+
+export function isDayQaFixture(
+  snapshot: TournamentDayReformSnapshot,
+) {
+  return Boolean(ensureDayLocalMeta(snapshot).qaFixture);
 }
 
 export function markStructurePublished(snapshot: TournamentDayReformSnapshot, at = Date.now()) {
@@ -1812,7 +1824,19 @@ export function buildPublicStructure(snapshot: TournamentDayReformSnapshot) {
     categories: (snapshot.workspace.core.categories as any[]).map((category) => ({
       id: String(category.id), name: String(category.name ?? ""), entryType: String(category.entryType ?? "individual"), competitionGender: String(category.competitionGender ?? "open"), scheduledDate: meta.schedule.categoryDates[String(category.id)] ?? category.scheduledDate ?? null,
     })),
-    players: (snapshot.workspace.participants.players as any[]).filter((player) => !meta.participantTombstones[String(player.id)] && !["no_show", "withdrawn_local"].includes(String(player.playerStatus))).map(publicPlayer),
+    players: (snapshot.workspace.participants.players as any[])
+      .filter(
+        (player) =>
+          !meta.participantTombstones[String(player.id)] &&
+          ![
+            "no_show",
+            "withdrawn",
+            "withdrawn_local",
+            "withdrawn_admin",
+            "rejected",
+          ].includes(String(player.playerStatus)),
+      )
+      .map(publicPlayer),
     teams: (snapshot.team.categories as any[]).flatMap((category) => (category.entries ?? []).filter((entry: any) => !meta.teamTombstones[String(entry.id)]).map((entry: any) => publicTeam(category, entry))),
     standard: (snapshot.workspace.standard.competitions as any[]).map((competition) => ({ categoryId: String(competition.categoryId), format: cloneDay(competition.format), groups: publicStandardGroups(competition.groups ?? []), bracket: cloneDay((competition.encounters ?? []).filter((encounter: any) => encounter.stage !== "group").map((encounter: any) => ({ id: encounter.id, stage: encounter.stage, roundLabel: encounter.roundLabel, entryA: encounter.entryA?.name ?? null, entryB: encounter.entryB?.name ?? null, status: encounter.status }))) })),
     team: (snapshot.team.categories as any[]).map((category) => ({ categoryId: String(category.id), format: cloneDay(category.format), groups: cloneDay(category.groups ?? []).map((row: any) => ({ id: row.id, name: row.name, entryId: row.entryId, entryName: row.entryName })), bracket: cloneDay((category.encounters ?? []).filter((encounter: any) => encounter.stage !== "group").map((encounter: any) => ({ id: encounter.id, stage: encounter.stage, roundLabel: encounter.roundLabel, sideA: encounter.sideA, sideB: encounter.sideB, status: encounter.status }))) })),
@@ -2057,6 +2081,667 @@ export function createQaFixture(base: TournamentDayReformSnapshot) {
   return snapshot;
 }
 
+
+
+
+export function createNationalCircuitQaFixture(
+  base: TournamentDayReformSnapshot,
+) {
+  const snapshot = cloneDay(base) as TournamentDayReformSnapshot;
+  initializeReformSnapshot(snapshot);
+
+  // Isla QA: jamás mezcla entidades del torneo real.
+  snapshot.workspace.core.categories = [];
+  snapshot.workspace.participants.players = [];
+  snapshot.workspace.participants.playerCategories = [];
+
+  snapshot.workspace.standard.entries = [];
+  snapshot.workspace.standard.groups = [];
+  snapshot.workspace.standard.matches = [];
+  snapshot.workspace.standard.drawSessions = [];
+  snapshot.workspace.standard.standings = [];
+  snapshot.workspace.standard.crossGroup = [];
+  snapshot.workspace.standard.categoryProgress = [];
+  snapshot.workspace.standard.competitions = [];
+
+  snapshot.workspace.schedule.schedule = [];
+
+  snapshot.team.profiles = [];
+  snapshot.team.categories = [];
+
+  snapshot.workspace.core.summary = {
+    ...(snapshot.workspace.core.summary ?? {}),
+    completedStandardMatches: 0,
+  };
+
+  const tournament =
+    snapshot.workspace.core.tournament as any;
+  const settings =
+    snapshot.workspace.core.settings as any;
+
+  tournament.courtCount = 4;
+
+  // Ventana global amplia.
+  // Viernes 18:00 se configura luego a nivel operativo,
+  // junto con el formato real elegido para cada categoría.
+  settings.dailyStart = "08:00";
+  settings.dailyEnd = "23:00";
+
+  delete snapshot.localMeta;
+  initializeReformSnapshot(snapshot);
+
+  const meta = ensureDayLocalMeta(snapshot);
+
+  meta.qaFixture = {
+    kind: "national_circuit_105",
+    createdAt: Date.now(),
+  };
+
+  const rawStart = Number(
+    tournament.startAt ?? Date.now(),
+  );
+
+  const startMs =
+    rawStart < 10_000_000_000
+      ? rawStart * 1000
+      : rawStart;
+
+  const day1 = new Date(startMs)
+    .toISOString()
+    .slice(0, 10);
+
+  const day2 = new Date(startMs + 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+
+  const day3 = new Date(startMs + 172_800_000)
+    .toISOString()
+    .slice(0, 10);
+
+  const categories =
+    snapshot.workspace.core.categories as any[];
+
+  const addCategory = (input: {
+    id: string;
+    name: string;
+    entryType: "individual" | "pair";
+    competitionGender: "male" | "female" | "mixed";
+    scheduledDate: string;
+  }) => {
+    const category = {
+      id: input.id,
+      name: input.name,
+      entryType: input.entryType,
+      competitionGender: input.competitionGender,
+      registrationStatus: "closed",
+      scheduledDate: input.scheduledDate,
+      sortOrder: categories.length,
+      entryCount: 0,
+    };
+
+    categories.push(category);
+
+    meta.schedule.categoryDates[input.id] =
+      input.scheduledDate;
+
+    return category;
+  };
+
+  // VIERNES · singles
+  const singleMA = addCategory({
+    id: "qa-single-m-a",
+    name: "Single Masculino A",
+    entryType: "individual",
+    competitionGender: "male",
+    scheduledDate: day1,
+  });
+
+  const singleMB = addCategory({
+    id: "qa-single-m-b",
+    name: "Single Masculino B",
+    entryType: "individual",
+    competitionGender: "male",
+    scheduledDate: day1,
+  });
+
+  const singleF = addCategory({
+    id: "qa-single-f",
+    name: "Single Femenino",
+    entryType: "individual",
+    competitionGender: "female",
+    scheduledDate: day1,
+  });
+
+  const singleM50 = addCategory({
+    id: "qa-single-m-50",
+    name: "Single Masculino +50",
+    entryType: "individual",
+    competitionGender: "male",
+    scheduledDate: day1,
+  });
+
+  // SÁBADO · categorías grandes A/B
+  const doubleFA = addCategory({
+    id: "qa-double-f-a",
+    name: "Dobles Femenino A",
+    entryType: "pair",
+    competitionGender: "female",
+    scheduledDate: day2,
+  });
+
+  const doubleFB = addCategory({
+    id: "qa-double-f-b",
+    name: "Dobles Femenino B",
+    entryType: "pair",
+    competitionGender: "female",
+    scheduledDate: day2,
+  });
+
+  const doubleMB = addCategory({
+    id: "qa-double-m-b",
+    name: "Dobles Masculino B",
+    entryType: "pair",
+    competitionGender: "male",
+    scheduledDate: day2,
+  });
+
+  const doubleMA = addCategory({
+    id: "qa-double-m-a",
+    name: "Dobles Masculino A",
+    entryType: "pair",
+    competitionGender: "male",
+    scheduledDate: day2,
+  });
+
+  const mixedB = addCategory({
+    id: "qa-mixed-b",
+    name: "Dobles Mixto B",
+    entryType: "pair",
+    competitionGender: "mixed",
+    scheduledDate: day2,
+  });
+
+  // DOMINGO · +50 y mixtos restantes
+  const doubleM50 = addCategory({
+    id: "qa-double-m-50",
+    name: "Dobles Masculino +50",
+    entryType: "pair",
+    competitionGender: "male",
+    scheduledDate: day3,
+  });
+
+  const doubleF50 = addCategory({
+    id: "qa-double-f-50",
+    name: "Dobles Femenino +50",
+    entryType: "pair",
+    competitionGender: "female",
+    scheduledDate: day3,
+  });
+
+  const mixedA = addCategory({
+    id: "qa-mixed-a",
+    name: "Dobles Mixto A",
+    entryType: "pair",
+    competitionGender: "mixed",
+    scheduledDate: day3,
+  });
+
+  const mixed50 = addCategory({
+    id: "qa-mixed-50",
+    name: "Dobles Mixto +50",
+    entryType: "pair",
+    competitionGender: "mixed",
+    scheduledDate: day3,
+  });
+
+  const surnames = [
+    "Silva",
+    "Pereira",
+    "Rodríguez",
+  ] as const;
+
+  const maleFirstNames = [
+    "Nicolás",
+    "Martín",
+    "Joaquín",
+    "Mateo",
+    "Santiago",
+    "Federico",
+    "Ignacio",
+    "Bruno",
+    "Facundo",
+    "Tomás",
+    "Sebastián",
+    "Gonzalo",
+    "Rodrigo",
+    "Andrés",
+    "Leandro",
+    "Franco",
+    "Diego",
+    "Pablo",
+    "Álvaro",
+    "Emiliano",
+    "Mauricio",
+    "Ramiro",
+  ] as const;
+
+  const femaleFirstNames = [
+    "Camila",
+    "Sofía",
+    "Lucía",
+    "Valentina",
+    "Martina",
+    "Julieta",
+    "Florencia",
+    "Agustina",
+    "Manuela",
+    "Catalina",
+    "Josefina",
+    "Paula",
+    "Emilia",
+  ] as const;
+
+  const maleNames = maleFirstNames.flatMap(
+    (firstName) =>
+      surnames.map(
+        (surname) => `${firstName} ${surname}`,
+      ),
+  );
+
+  const femaleNames = femaleFirstNames.flatMap(
+    (firstName) =>
+      surnames.map(
+        (surname) => `${firstName} ${surname}`,
+      ),
+  );
+
+  if (
+    maleNames.length !== 66 ||
+    femaleNames.length !== 39
+  ) {
+    throw new Error("QA_NATIONAL_NAMES_INVALID");
+  }
+
+  const players =
+    snapshot.workspace.participants.players as any[];
+
+  const createPlayers = (
+    names: string[],
+    gender: "male" | "female",
+  ) => {
+    return names.map((displayName, index) => {
+      const tierA =
+        gender === "male"
+          ? index < 30
+          : index < 18;
+
+      const id =
+        `local-player:national-${gender}-${index + 1}`;
+
+      const personId =
+        `local-person:national-${gender}-${index + 1}`;
+
+      const duprSingles = Number(
+        (
+          tierA
+            ? 4.05 + (index % 9) * 0.07
+            : 3.15 + (index % 10) * 0.065
+        ).toFixed(3),
+      );
+
+      const duprDoubles = Number(
+        (
+          tierA
+            ? 4.10 + (index % 9) * 0.07
+            : 3.20 + (index % 10) * 0.065
+        ).toFixed(3),
+      );
+
+      const player = {
+        id,
+        organizationPersonId: personId,
+        displayName,
+        sportGender: gender,
+        club:
+          index % 4 === 0
+            ? "Club Atlántico"
+            : index % 4 === 1
+              ? "Costa Pickle"
+              : index % 4 === 2
+                ? "Rambla Sports"
+                : "Punta Pickle",
+        contact: "",
+        duprSingles,
+        duprDoubles,
+        paymentStatus: "paid",
+        playerStatus: "confirmed",
+        source: "qa-national-circuit",
+      };
+
+      players.push(player);
+      meta.localParticipantIds.push(id);
+
+      return player;
+    });
+  };
+
+  const malePlayers =
+    createPlayers(maleNames, "male");
+
+  const femalePlayers =
+    createPlayers(femaleNames, "female");
+
+  if (players.length !== 105) {
+    throw new Error("QA_NATIONAL_PLAYER_COUNT_INVALID");
+  }
+
+  // Cohortes A/B deliberadamente separadas.
+  // Así un jugador A no termina artificialmente anotado
+  // en la misma disciplina B.
+  const maleA = malePlayers.slice(0, 30);
+  const maleB = malePlayers.slice(30);
+
+  const femaleA = femalePlayers.slice(0, 18);
+  const femaleB = femalePlayers.slice(18);
+
+  // Pool +50 distribuido entre A y B.
+  const seniorMale = [
+    ...maleA.slice(0, 12),
+    ...maleB.slice(0, 12),
+  ];
+
+  const seniorFemale = [
+    ...femaleA.slice(0, 8),
+    ...femaleB.slice(0, 8),
+  ];
+
+  const allPlayers = [
+    ...malePlayers,
+    ...femalePlayers,
+  ];
+
+  const order = new Map(
+    allPlayers.map(
+      (player, index) => [
+        String(player.id),
+        index,
+      ],
+    ),
+  );
+
+  const categoryLoad = new Map(
+    allPlayers.map(
+      (player) => [
+        String(player.id),
+        0,
+      ],
+    ),
+  );
+
+  const loadFor = (player: any) =>
+    Number(
+      categoryLoad.get(String(player.id)) ?? 0,
+    );
+
+  const take = (
+    pool: any[],
+    count: number,
+    label: string,
+  ) => {
+    const eligible = pool
+      .filter(
+        (player) => loadFor(player) < 3,
+      )
+      .sort(
+        (a, b) =>
+          loadFor(a) - loadFor(b) ||
+          Number(order.get(String(a.id)) ?? 0) -
+            Number(order.get(String(b.id)) ?? 0),
+      );
+
+    if (eligible.length < count) {
+      throw new Error(
+        `QA_NATIONAL_MAX_THREE_FAILED:${label}`,
+      );
+    }
+
+    const selected =
+      eligible.slice(0, count);
+
+    for (const player of selected) {
+      categoryLoad.set(
+        String(player.id),
+        loadFor(player) + 1,
+      );
+    }
+
+    return selected;
+  };
+
+  const addSingles = (
+    category: any,
+    pool: any[],
+    count: number,
+  ) => {
+    const selected = take(
+      pool,
+      count,
+      String(category.id),
+    );
+
+    for (const player of selected) {
+      addLocalStandardEntry(snapshot, {
+        categoryId: String(category.id),
+        profileIds: [String(player.id)],
+        rating: Number(
+          player.duprSingles ?? 0,
+        ),
+      });
+    }
+  };
+
+  const addSameGenderPairs = (
+    category: any,
+    pool: any[],
+    personCount: number,
+  ) => {
+    if (personCount % 2 !== 0) {
+      throw new Error(
+        `QA_NATIONAL_PAIR_COUNT_INVALID:${category.id}`,
+      );
+    }
+
+    const selected = take(
+      pool,
+      personCount,
+      String(category.id),
+    );
+
+    for (
+      let index = 0;
+      index < selected.length;
+      index += 2
+    ) {
+      const first = selected[index]!;
+      const second = selected[index + 1]!;
+
+      addLocalStandardEntry(snapshot, {
+        categoryId: String(category.id),
+        profileIds: [
+          String(first.id),
+          String(second.id),
+        ],
+        rating: Number(
+          (
+            (
+              Number(first.duprDoubles ?? 0) +
+              Number(second.duprDoubles ?? 0)
+            ) / 2
+          ).toFixed(3),
+        ),
+      });
+    }
+  };
+
+  const addMixedPairs = (
+    category: any,
+    malePool: any[],
+    femalePool: any[],
+    pairCount: number,
+  ) => {
+    const males = take(
+      malePool,
+      pairCount,
+      `${category.id}:male`,
+    );
+
+    const females = take(
+      femalePool,
+      pairCount,
+      `${category.id}:female`,
+    );
+
+    for (
+      let index = 0;
+      index < pairCount;
+      index += 1
+    ) {
+      const male = males[index]!;
+      const female = females[index]!;
+
+      addLocalStandardEntry(snapshot, {
+        categoryId: String(category.id),
+        profileIds: [
+          String(male.id),
+          String(female.id),
+        ],
+        rating: Number(
+          (
+            (
+              Number(male.duprDoubles ?? 0) +
+              Number(female.duprDoubles ?? 0)
+            ) / 2
+          ).toFixed(3),
+        ),
+      });
+    }
+  };
+
+  // Primero reservamos capacidad de los +50.
+  addSingles(
+    singleM50,
+    seniorMale,
+    9,
+  );
+
+  addSameGenderPairs(
+    doubleM50,
+    seniorMale,
+    16,
+  );
+
+  addSameGenderPairs(
+    doubleF50,
+    seniorFemale,
+    12,
+  );
+
+  addMixedPairs(
+    mixed50,
+    seniorMale,
+    seniorFemale,
+    7,
+  );
+
+  // Singles generales.
+  addSingles(
+    singleMA,
+    maleA,
+    10,
+  );
+
+  addSingles(
+    singleMB,
+    maleB,
+    12,
+  );
+
+  addSingles(
+    singleF,
+    femalePlayers,
+    8,
+  );
+
+  // Dobles A/B.
+  addSameGenderPairs(
+    doubleMA,
+    maleA,
+    28,
+  );
+
+  addSameGenderPairs(
+    doubleMB,
+    maleB,
+    36,
+  );
+
+  addSameGenderPairs(
+    doubleFA,
+    femaleA,
+    14,
+  );
+
+  addSameGenderPairs(
+    doubleFB,
+    femaleB,
+    16,
+  );
+
+  // Mixtos.
+  addMixedPairs(
+    mixedA,
+    maleA,
+    femaleA,
+    9,
+  );
+
+  addMixedPairs(
+    mixedB,
+    maleB,
+    femaleB,
+    20,
+  );
+
+  const loads = [
+    ...categoryLoad.values(),
+  ];
+
+  if (
+    loads.some(
+      (count) => count < 1 || count > 3,
+    )
+  ) {
+    throw new Error(
+      "QA_NATIONAL_CATEGORY_LIMIT_INVALID",
+    );
+  }
+
+  if (
+    snapshot.workspace.standard.competitions.length ||
+    snapshot.workspace.standard.groups.length ||
+    snapshot.workspace.standard.matches.length ||
+    snapshot.workspace.schedule.schedule.length ||
+    snapshot.team.categories.length
+  ) {
+    throw new Error(
+      "QA_NATIONAL_MUST_START_UNCONFIGURED",
+    );
+  }
+
+  markStructureDirty(snapshot, 105);
+
+  return snapshot;
+}
 
 
 export function clearDaySchedule(snapshot: TournamentDayReformSnapshot) {
