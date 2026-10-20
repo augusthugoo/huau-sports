@@ -20,6 +20,14 @@ export type ConsolationMode = "none" | "knockout";
 export type MedalSchedule = "sequential" | "simultaneous";
 export type FinalDrawMethod = "performance" | "pots";
 
+export type StandardStandingCriterion =
+  | "head_to_head"
+  | "mini_wins"
+  | "mini_diff"
+  | "point_diff"
+  | "points_for"
+  | "rating";
+
 export type MatchRule = {
   bestOf: 1 | 3;
   pointTarget: number;
@@ -30,6 +38,7 @@ export type StandardCompetitionFormat = {
   qualifiersPerGroup: number;
   wildcardQualifiers: number;
   crossGroupMethod: CrossGroupMethod;
+  standingsCriteria?: StandardStandingCriterion[];
   playoffMode: PlayoffMode;
   consolationMode: ConsolationMode;
   avoidGroupRematches: boolean;

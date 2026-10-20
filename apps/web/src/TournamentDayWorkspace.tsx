@@ -38,6 +38,7 @@ import {
 } from "./TournamentDayStorage";
 import type { TeamFormat, TeamLineupAssignment, TeamRosterMember } from "@huau/core";
 import {
+  activeDayParticipantCount,
   applySafeAdminMerge,
   buildPublicLive,
   buildPublicStructure,
@@ -742,8 +743,8 @@ export function TournamentDayWorkspace(props: Props) {
           <span>{tr(locale, "pendientes", "pending")}</span>
         </div>
         <div>
-          <strong>{snapshot.workspace.participants.players.length}</strong>
-          <span>{tr(locale, "jugadores locales", "local players")}</span>
+          <strong>{activeDayParticipantCount(snapshot)}</strong>
+          <span>{tr(locale, "jugadores activos", "active players")}</span>
         </div>
         <div>
           <strong>{session.publishedRevision}</strong>

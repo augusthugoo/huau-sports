@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, expect, it } from "vitest";
 import {
   buildCompetitionFromGroups,
@@ -6,6 +7,7 @@ import {
 } from "@huau/core";
 import { syncStandardCompetition } from "./TournamentDayEngine";
 import {
+  activeDayParticipantCount,
   buildPublicLive,
   buildPublicStructure,
   clearDayCategoryResults,
@@ -17,6 +19,7 @@ import {
   rebuildDayStandardFinalPhase,
   removeParticipantFromCategory,
   setParticipantNoShow,
+  swapDayStandardFirstRoundEntry,
   updateDayParticipant,
   type TournamentDayReformSnapshot,
 } from "./TournamentDayReformEngine";
@@ -174,6 +177,96 @@ describe("Standard participant withdrawal", () => {
   });
 });
 
+describe("Tournament Day participant hardening", () => {
+  it("counts only active players in the operational header", () => {
+    const local = snapshot();
+    ensureDayLocalMeta(local);
+
+    expect(activeDayParticipantCount(local)).toBe(1);
+
+    setParticipantNoShow(local, "p1");
+
+    expect(activeDayParticipantCount(local)).toBe(0);
+  });
+
+  it("invalidates a stale Standard structure when membership changes before results", () => {
+    const local = snapshot();
+    ensureDayLocalMeta(local);
+
+    local.workspace.participants.players.push({
+      id: "p2",
+      organizationPersonId: "person2",
+      displayName: "Beatriz",
+      sportGender: "female",
+      playerStatus: "confirmed",
+    } as any);
+
+    local.workspace.participants.playerCategories.push({
+      playerProfileId: "p2",
+      categoryId: "c1",
+      partnerProfileId: null,
+    } as any);
+
+    local.workspace.standard.entries.push({
+      id: "e2",
+      categoryId: "c1",
+      displayName: "Beatriz",
+      sourceKey: "p2",
+      localProfileIds: ["p2"],
+      status: "ready",
+    } as any);
+
+    const competition = buildCompetitionFromGroups({
+      id: "competition:c1",
+      categoryId: "c1",
+      groups: [{
+        id: "g1",
+        name: "A",
+        entries: [
+          {
+            id: "e1",
+            name: "Ana",
+            participantIds: ["p1"],
+            rating: 0,
+          },
+          {
+            id: "e2",
+            name: "Beatriz",
+            participantIds: ["p2"],
+            rating: 0,
+          },
+        ],
+      }],
+      format: {
+        playoffMode: "league_only",
+      },
+    });
+
+    local.workspace.standard.competitions = [competition];
+    syncStandardCompetition(local, competition);
+
+    local.workspace.schedule.schedule = [{
+      id: "schedule:e1-e2",
+      categoryId: "c1",
+      encounterId: competition.encounters[0]?.id,
+      entryAId: "e1",
+      entryBId: "e2",
+    }] as any[];
+
+    removeParticipantFromCategory(local, "p1", "c1");
+
+    expect(
+      (local.workspace.standard.competitions as Competition[])
+        .some((row) => row.categoryId === "c1"),
+    ).toBe(false);
+
+    expect(
+      (local.workspace.schedule.schedule as any[])
+        .some((row) => String(row.categoryId) === "c1"),
+    ).toBe(false);
+  });
+});
+
 describe("provisional Standard playoff scheduling", () => {
   it("reserves semifinals/final before groups finish and binds those slots when qualifiers resolve", () => {
     const local = snapshot();
@@ -300,7 +393,7 @@ describe("provisional Standard playoff scheduling", () => {
 });
 
 describe("rebuilding Standard final phase", () => {
-  it("preserves group results and replaces a stale playoff with crossed quarterfinals", () => {
+  it("preserves group results and rebuilds the playoff without immediate group rematches", () => {
     const local = snapshot();
     ensureDayLocalMeta(local);
 
@@ -422,23 +515,192 @@ describe("rebuilding Standard final phase", () => {
         encounter.roundNumber === 1,
     );
 
-    expect(
-      rebuiltQuarterfinals.map((encounter) => [
-        encounter.entryA?.id,
-        encounter.entryB?.id,
-      ]),
-    ).toEqual([
-      ["A1", "B4"],
-      ["A3", "B2"],
-      ["A2", "B3"],
-      ["A4", "B1"],
+    const rebuiltPairs = rebuiltQuarterfinals.map((encounter) => [
+      encounter.entryA?.id,
+      encounter.entryB?.id,
     ]);
+
+    expect(rebuiltPairs).toHaveLength(4);
+
+    expect(
+      rebuiltPairs.every(
+        ([left, right]) =>
+          Boolean(left) &&
+          Boolean(right) &&
+          String(left).charAt(0) !== String(right).charAt(0),
+      ),
+    ).toBe(true);
+
+    expect(
+      new Set(rebuiltPairs.flat().filter(Boolean)),
+    ).toHaveLength(8);
 
     expect(
       rebuilt.encounters
         .filter((encounter) => encounter.stage !== "group")
         .every((encounter) => encounter.status !== "finished"),
     ).toBe(true);
+  });
+});
+
+describe("manual Standard first-round override", () => {
+  it("swaps qualifiers without touching completed group results", () => {
+    const local = snapshot();
+    ensureDayLocalMeta(local);
+
+    const base = buildCompetitionFromGroups({
+      id: "competition:c1",
+      categoryId: "c1",
+      groups: [
+        {
+          id: "group-A",
+          name: "A",
+          entries: ["A1", "A2", "A3", "A4"].map(
+            (id, index) => ({
+              id,
+              name: id,
+              participantIds: [`pa${index + 1}`],
+              rating: 10 - index,
+            }),
+          ),
+        },
+        {
+          id: "group-B",
+          name: "B",
+          entries: ["B1", "B2", "B3", "B4"].map(
+            (id, index) => ({
+              id,
+              name: id,
+              participantIds: [`pb${index + 1}`],
+              rating: 10 - index,
+            }),
+          ),
+        },
+      ],
+      format: {
+        qualifiersPerGroup: 2,
+        wildcardQualifiers: 0,
+        playoffMode: "standard",
+        avoidGroupRematches: true,
+        bronzeMatch: false,
+      },
+    });
+
+    for (const encounter of base.encounters) {
+      if (
+        encounter.stage !== "group" ||
+        !encounter.entryA ||
+        !encounter.entryB
+      ) {
+        continue;
+      }
+
+      const rankA = Number(encounter.entryA.id.slice(1));
+      const rankB = Number(encounter.entryB.id.slice(1));
+      const aWins = rankA < rankB;
+
+      encounter.status = "finished";
+      encounter.scoreA = aWins ? 15 : 7;
+      encounter.scoreB = aWins ? 7 : 15;
+      encounter.winnerEntryId =
+        aWins ? encounter.entryA.id : encounter.entryB.id;
+      encounter.sets = [{
+        scoreA: encounter.scoreA,
+        scoreB: encounter.scoreB,
+      }];
+    }
+
+    const generated = generateFinalPhase(base);
+    local.workspace.standard.competitions = [generated];
+    syncStandardCompetition(local, generated);
+
+    const groupBefore = generated.encounters
+      .filter((encounter) => encounter.stage === "group")
+      .map((encounter) => ({
+        id: encounter.id,
+        status: encounter.status,
+        scoreA: encounter.scoreA,
+        scoreB: encounter.scoreB,
+        winnerEntryId: encounter.winnerEntryId,
+      }));
+
+    const firstBefore = generated.encounters.filter(
+      (encounter) =>
+        encounter.stage !== "group" &&
+        encounter.stage !== "consolation" &&
+        encounter.roundNumber === 1,
+    );
+
+    const target = firstBefore[0];
+    const source = firstBefore[1];
+
+    if (
+      !target?.entryA ||
+      !source?.entryA
+    ) {
+      throw new Error("EXPECTED_EDITABLE_FIRST_ROUND");
+    }
+
+    const originalTargetId = target.entryA.id;
+    const replacementId = source.entryA.id;
+
+    swapDayStandardFirstRoundEntry(
+      local,
+      "c1",
+      target.id,
+      "A",
+      replacementId,
+    );
+
+    const rebuilt = (
+      local.workspace.standard.competitions as Competition[]
+    ).find((competition) => competition.categoryId === "c1");
+
+    if (!rebuilt) {
+      throw new Error("EXPECTED_REBUILT_COMPETITION");
+    }
+
+    const firstAfter = rebuilt.encounters.filter(
+      (encounter) =>
+        encounter.stage !== "group" &&
+        encounter.stage !== "consolation" &&
+        encounter.roundNumber === 1,
+    );
+
+    expect(
+      firstAfter.find((encounter) => encounter.id === target.id)
+        ?.entryA?.id,
+    ).toBe(replacementId);
+
+    expect(
+      firstAfter.some(
+        (encounter) =>
+          encounter.id === source.id &&
+          (
+            encounter.entryA?.id === originalTargetId ||
+            encounter.entryB?.id === originalTargetId
+          ),
+      ),
+    ).toBe(true);
+
+    const ids = firstAfter.flatMap((encounter) =>
+      [encounter.entryA?.id, encounter.entryB?.id]
+        .filter(Boolean),
+    );
+
+    expect(new Set(ids).size).toBe(ids.length);
+
+    expect(
+      rebuilt.encounters
+        .filter((encounter) => encounter.stage === "group")
+        .map((encounter) => ({
+          id: encounter.id,
+          status: encounter.status,
+          scoreA: encounter.scoreA,
+          scoreB: encounter.scoreB,
+          winnerEntryId: encounter.winnerEntryId,
+        })),
+    ).toEqual(groupBefore);
   });
 });
 

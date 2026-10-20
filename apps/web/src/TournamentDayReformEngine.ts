@@ -3,6 +3,7 @@ import {
   buildCompetitionFromGroups,
   generateFinalPhase,
   generateGlobalTournamentSchedule,
+  progressEncounterSources,
   generateTeamRoundRobinEncounters,
   knockoutRoundLabel,
   nextPowerOfTwo,
@@ -13,6 +14,7 @@ import {
   type GlobalScheduleLock,
   type GlobalScheduleUnit,
   type Competition,
+  type CompetitionEncounter,
   type TeamFormat,
   type TeamRosterMember,
 } from "@huau/core";
@@ -257,6 +259,31 @@ export function markLiveDirty(snapshot: TournamentDayReformSnapshot, amount = 1)
   ensureDayLocalMeta(snapshot).publicDirty.live += Math.max(1, amount);
 }
 
+export function activeDayParticipantCount(
+  snapshot: TournamentDayReformSnapshot,
+) {
+  const meta = ensureDayLocalMeta(snapshot);
+
+  return (snapshot.workspace.participants.players as any[]).filter(
+    (player) => {
+      const id = String(player.id);
+      const status = String(
+        player.playerStatus ?? "confirmed",
+      );
+
+      if (meta.participantTombstones[id]) return false;
+
+      return ![
+        "no_show",
+        "withdrawn",
+        "withdrawn_local",
+        "withdrawn_admin",
+        "rejected",
+      ].includes(status);
+    },
+  ).length;
+}
+
 export function markStructurePublished(snapshot: TournamentDayReformSnapshot, at = Date.now()) {
   const dirty = ensureDayLocalMeta(snapshot).publicDirty;
   dirty.structure = 0;
@@ -490,6 +517,31 @@ export function restoreParticipant(snapshot: TournamentDayReformSnapshot, profil
 export function assignParticipantToCategory(snapshot: TournamentDayReformSnapshot, profileId: string, categoryId: string) {
   const category = (snapshot.workspace.core.categories as any[]).find((row) => String(row.id) === categoryId);
   if (!category) throw new Error("DAY_CATEGORY_NOT_FOUND");
+
+  const competition = (snapshot.workspace.standard.competitions as any[]).find(
+    (row) => String(row.categoryId) === categoryId,
+  );
+  const teamCategory = (snapshot.team.categories as any[]).find(
+    (row) => String(row.id) === categoryId,
+  );
+
+  const hasResults = Boolean(
+    competition?.encounters?.some((encounter: any) =>
+      ["finished", "in_progress"].includes(String(encounter.status)),
+    ) ||
+    teamCategory?.encounters?.some((encounter: any) =>
+      (encounter.matches ?? []).some(
+        (match: any) =>
+          match.resultStatus ||
+          ["finished", "in_progress"].includes(String(match.status)),
+      ),
+    ),
+  );
+
+  if (hasResults) {
+    throw new Error("DAY_CATEGORY_ASSIGN_HAS_RESULTS");
+  }
+
   const assignments = snapshot.workspace.participants.playerCategories as any[];
   if (!assignments.some((row) => String(row.playerProfileId) === profileId && String(row.categoryId) === categoryId)) {
     assignments.push({ playerProfileId: profileId, categoryId, partnerProfileId: null, source: "day" });
@@ -505,6 +557,10 @@ export function assignParticipantToCategory(snapshot: TournamentDayReformSnapsho
       });
     }
   }
+
+  // Si ya existía una estructura previa, reconcile detecta que el set
+  // de entries cambió y la invalida antes de que quede un cuadro viejo.
+  reconcileTournamentDaySnapshot(snapshot);
   markStructureDirty(snapshot);
 }
 
@@ -521,8 +577,21 @@ export function removeParticipantFromCategory(snapshot: TournamentDayReformSnaps
   if (teamCategory) {
     const player = (snapshot.workspace.participants.players as any[]).find((row) => String(row.id) === profileId);
     const personId = String(player?.organizationPersonId ?? profileId);
-    for (const entry of teamCategory.entries ?? []) entry.roster = (entry.roster ?? []).filter((member: any) => String(member.personId) !== personId);
+    for (const entry of teamCategory.entries ?? []) {
+      entry.roster = (entry.roster ?? []).filter(
+        (member: any) => String(member.personId) !== personId,
+      );
+    }
   }
+
+  // Un cambio de nómina pre-start invalida el cronograma de esa
+  // categoría. En Standard, reconcile también elimina una estructura
+  // que todavía referencia una entry retirada.
+  snapshot.workspace.schedule.schedule = (
+    snapshot.workspace.schedule.schedule as any[]
+  ).filter((row) => String(row.categoryId) !== categoryId);
+
+  reconcileTournamentDaySnapshot(snapshot);
   markStructureDirty(snapshot);
 }
 
@@ -2106,6 +2175,188 @@ export function rebuildDayStandardFinalPhase(
   markLiveDirty(snapshot);
 
   return rebuilt;
+}
+
+export function swapDayStandardFirstRoundEntry(
+  snapshot: TournamentDayReformSnapshot,
+  categoryId: string,
+  encounterId: string,
+  side: "A" | "B",
+  replacementEntryId: string,
+) {
+  const current = (
+    snapshot.workspace.standard.competitions as Competition[]
+  ).find(
+    (candidate) =>
+      String(candidate.categoryId) === String(categoryId),
+  );
+
+  if (!current) {
+    throw new Error("STANDARD_COMPETITION_NOT_FOUND");
+  }
+
+  if (
+    current.format.playoffMode !== "standard" ||
+    !current.finalGenerated
+  ) {
+    throw new Error("STANDARD_FIRST_ROUND_NOT_READY");
+  }
+
+  const postGroupStarted = current.encounters.some(
+    (encounter) =>
+      encounter.stage !== "group" &&
+      ["finished", "in_progress"].includes(
+        String(encounter.status),
+      ),
+  );
+
+  if (postGroupStarted) {
+    throw new Error("STANDARD_FIRST_ROUND_EDIT_AFTER_RESULTS");
+  }
+
+  const next = cloneDay(current) as Competition;
+
+  const firstRound = next.encounters.filter(
+    (encounter) =>
+      encounter.stage !== "group" &&
+      encounter.stage !== "consolation" &&
+      Number(encounter.roundNumber) === 1,
+  );
+
+  const target = firstRound.find(
+    (encounter) => String(encounter.id) === encounterId,
+  );
+
+  if (!target) {
+    throw new Error("STANDARD_FIRST_ROUND_MATCH_NOT_FOUND");
+  }
+
+  const currentEntry =
+    side === "A" ? target.entryA : target.entryB;
+
+  if (!currentEntry) {
+    throw new Error("STANDARD_FIRST_ROUND_EMPTY_SIDE");
+  }
+
+  if (currentEntry.id === replacementEntryId) return current;
+
+  let source:
+    | { encounter: typeof target; side: "A" | "B" }
+    | null = null;
+
+  for (const encounter of firstRound) {
+    if (encounter.entryA?.id === replacementEntryId) {
+      source = { encounter, side: "A" };
+      break;
+    }
+    if (encounter.entryB?.id === replacementEntryId) {
+      source = { encounter, side: "B" };
+      break;
+    }
+  }
+
+  if (!source) {
+    throw new Error("STANDARD_FIRST_ROUND_ENTRY_NOT_FOUND");
+  }
+
+  const replacement =
+    source.side === "A"
+      ? source.encounter.entryA
+      : source.encounter.entryB;
+
+  if (!replacement) {
+    throw new Error("STANDARD_FIRST_ROUND_ENTRY_NOT_FOUND");
+  }
+
+  if (side === "A") target.entryA = cloneDay(replacement);
+  else target.entryB = cloneDay(replacement);
+
+  if (source.side === "A") {
+    source.encounter.entryA = cloneDay(currentEntry);
+  } else {
+    source.encounter.entryB = cloneDay(currentEntry);
+  }
+
+  const firstRoundIds = new Set(
+    firstRound.map((encounter) => encounter.id),
+  );
+
+  next.encounters = next.encounters.map((encounter) => {
+    if (
+      encounter.stage === "group" ||
+      encounter.stage === "consolation"
+    ) {
+      return encounter;
+    }
+
+    const isFirstRound = firstRoundIds.has(encounter.id);
+    const copy: CompetitionEncounter = {
+      ...encounter,
+      winnerEntryId: null,
+      scoreA: null,
+      scoreB: null,
+      sets: [],
+    };
+
+    if (isFirstRound) {
+      if (copy.entryA && copy.entryB) {
+        copy.status = "ready";
+      } else if (copy.entryA || copy.entryB) {
+        copy.status = "bye";
+        copy.winnerEntryId =
+          copy.entryA?.id ?? copy.entryB?.id ?? null;
+      } else {
+        copy.status = "pending";
+      }
+      return copy;
+    }
+
+    if (
+      copy.sourceEncounterAId ||
+      copy.sourceLoserAId
+    ) {
+      copy.entryA = null;
+    }
+
+    if (
+      copy.sourceEncounterBId ||
+      copy.sourceLoserBId
+    ) {
+      copy.entryB = null;
+    }
+
+    copy.status = "pending";
+    return copy;
+  });
+
+  const progressed = progressEncounterSources(next);
+
+  replaceAndSyncStandardCompetition(snapshot, progressed);
+
+  const encounterById = new Map(
+    progressed.encounters.map(
+      (encounter) => [String(encounter.id), encounter] as const,
+    ),
+  );
+
+  // Los bloques ya programados mantienen horario/cancha por ID,
+  // pero sus lados visibles se actualizan al nuevo cuadro.
+  for (const row of snapshot.workspace.schedule.schedule as any[]) {
+    if (String(row.categoryId) !== String(categoryId)) continue;
+
+    const encounter = encounterById.get(
+      String(row.encounterId ?? ""),
+    );
+    if (!encounter) continue;
+
+    row.entryAId = encounter.entryA?.id ?? null;
+    row.sideA = encounter.entryA?.name ?? null;
+    row.entryBId = encounter.entryB?.id ?? null;
+    row.sideB = encounter.entryB?.name ?? null;
+  }
+
+  markStructureDirty(snapshot);
+  return progressed;
 }
 
 export function clearDayCategoryResults(snapshot: TournamentDayReformSnapshot, categoryId: string) {
