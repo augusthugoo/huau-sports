@@ -205,8 +205,8 @@ describe("Phase 2 tournament engine parity fixtures", () => {
       ]),
     ).toEqual([
       ["A1", "B4"],
-      ["A2", "B3"],
       ["A3", "B2"],
+      ["A2", "B3"],
       ["A4", "B1"],
     ]);
 
@@ -226,8 +226,8 @@ describe("Phase 2 tournament engine parity fixtures", () => {
       ]),
     ).toEqual([
       ["A1", "B4"],
-      ["A2", "B3"],
       ["A3", "B2"],
+      ["A2", "B3"],
       ["A4", "B1"],
     ]);
   });

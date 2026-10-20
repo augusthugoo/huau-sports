@@ -131,13 +131,27 @@ function crossedTwoGroupSlots(
     }
   }
 
+  const crossedPairs = left.map((entry, index) => [
+    entry,
+    right[right.length - 1 - index] ?? null,
+  ] as const);
+
+  // With four qualifiers per group, place 1st/2nd from each group
+  // in opposite halves of the bracket:
+  // A1-B4, A3-B2 | A2-B3, A4-B1.
+  // This preserves the cross-group quarterfinals while ensuring
+  // A1/A2 and B1/B2 cannot meet again before the final.
+  const pairOrder =
+    crossedPairs.length === 4
+      ? [0, 2, 1, 3]
+      : crossedPairs.map((_, index) => index);
+
   const slots: Array<QualifiedEntry | null> = [];
 
-  for (let index = 0; index < left.length; index += 1) {
-    slots.push(
-      left[index] ?? null,
-      right[right.length - 1 - index] ?? null,
-    );
+  for (const pairIndex of pairOrder) {
+    const pair = crossedPairs[pairIndex];
+    if (!pair) continue;
+    slots.push(pair[0], pair[1]);
   }
 
   return {
