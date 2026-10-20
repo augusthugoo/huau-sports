@@ -102,108 +102,87 @@ function assignPoolToSeedNumbers(input: {
   return { bySeed, fallback: input.avoidRematches && !avoided };
 }
 
-function crossedTwoGroupSlots(
-  qualifiers: QualifiedEntry[],
-  bracketSize: number,
-  avoidGroupRematches: boolean,
-): BracketBuildResult | null {
-  if (!avoidGroupRematches || qualifiers.length !== bracketSize) return null;
-
-  const groupIds = [...new Set(qualifiers.map((entry) => entry.groupId))];
-  if (groupIds.length !== 2) return null;
-
-  const left = qualifiers
-    .filter((entry) => entry.groupId === groupIds[0])
-    .sort((a, b) => a.position - b.position);
-
-  const right = qualifiers
-    .filter((entry) => entry.groupId === groupIds[1])
-    .sort((a, b) => a.position - b.position);
-
-  if (!left.length || left.length !== right.length) return null;
-
-  for (let index = 0; index < left.length; index += 1) {
-    if (
-      left[index]?.position !== index + 1 ||
-      right[index]?.position !== index + 1
-    ) {
-      return null;
-    }
-  }
-
-  const crossedPairs = left.map((entry, index) => [
-    entry,
-    right[right.length - 1 - index] ?? null,
-  ] as const);
-
-  // With four qualifiers per group, place 1st/2nd from each group
-  // in opposite halves of the bracket:
-  // A1-B4, A3-B2 | A2-B3, A4-B1.
-  // This preserves the cross-group quarterfinals while ensuring
-  // A1/A2 and B1/B2 cannot meet again before the final.
-  const pairOrder =
-    crossedPairs.length === 4
-      ? [0, 2, 1, 3]
-      : crossedPairs.map((_, index) => index);
-
-  const slots: Array<QualifiedEntry | null> = [];
-
-  for (const pairIndex of pairOrder) {
-    const pair = crossedPairs[pairIndex];
-    if (!pair) continue;
-    slots.push(pair[0], pair[1]);
-  }
-
-  return {
-    slots,
-    rematchFallback: false,
-  };
-}
-
 export function buildBracketSlots(
   qualifiers: QualifiedEntry[],
   bracketSize: number,
   format: StandardCompetitionFormat,
 ): BracketBuildResult {
-  const crossed = crossedTwoGroupSlots(
-    qualifiers,
-    bracketSize,
-    format.avoidGroupRematches,
-  );
-  if (crossed) return crossed;
+  const firsts = qualifiers
+    .filter((entry) => entry.position === 1)
+    .sort(compareSeedPerformance);
 
-  const firsts = qualifiers.filter((entry) => entry.position === 1).sort(compareSeedPerformance);
-  let seconds = qualifiers.filter((entry) => entry.position === 2).sort(compareSeedPerformance);
-  const rest = qualifiers.filter((entry) => entry.position > 2).sort(compareSeedPerformance);
+  let seconds = qualifiers
+    .filter((entry) => entry.position === 2)
+    .sort(compareSeedPerformance);
+
+  if (format.finalDrawMethod === "pots") {
+    seconds = deterministicPotsOrder(seconds);
+  }
+
+  const rest = qualifiers
+    .filter((entry) => entry.position > 2)
+    .sort(compareSeedPerformance);
+
+  // Mantiene la jerarquía histórica de HUAU:
+  // primeros -> segundos -> resto por rendimiento cruzado.
+  const ranked = [...firsts, ...seconds, ...rest];
   const seedOrder = standardSeedOrder(bracketSize);
-  const seeded: Array<QualifiedEntry | null> = Array.from({ length: bracketSize + 1 }, () => null);
 
-  firsts.forEach((entry, index) => {
+  const seeded: Array<QualifiedEntry | null> = Array.from(
+    { length: bracketSize + 1 },
+    () => null,
+  );
+
+  ranked.forEach((entry, index) => {
     seeded[index + 1] = entry;
   });
-  if (format.finalDrawMethod === "pots") seconds = deterministicPotsOrder(seconds);
 
-  const secondSeedNumbers = seconds.map((_, index) => firsts.length + index + 1);
-  const assignment = assignPoolToSeedNumbers({
-    seedNumbers: secondSeedNumbers,
-    pool: seconds,
-    seeded,
-    seedOrder,
-    avoidRematches: format.avoidGroupRematches,
-  });
-  secondSeedNumbers.forEach((seedNumber) => {
-    seeded[seedNumber] = assignment.bySeed.get(seedNumber) ?? null;
-  });
+  let rematchFallback = false;
 
-  let nextSeed = firsts.length + seconds.length + 1;
-  for (const entry of rest) {
-    seeded[nextSeed] = entry;
-    nextSeed += 1;
+  if (format.avoidGroupRematches && ranked.length > 1) {
+    // En un cuadro estándar cada cruce de primera ronda enfrenta
+    // una semilla de la mitad superior con una de la inferior.
+    //
+    // La mitad superior queda fija. Sólo permutamos participantes
+    // reales de la mitad inferior; los bye slots no se mueven.
+    // Así evitamos revancha inmediata con la menor alteración
+    // posible de la siembra.
+    const upperHalf = Math.floor(bracketSize / 2);
+
+    const movableSeedNumbers = ranked
+      .map((_, index) => index + 1)
+      .filter((seedNumber) => seedNumber > upperHalf);
+
+    if (movableSeedNumbers.length) {
+      const pool = movableSeedNumbers
+        .map((seedNumber) => seeded[seedNumber])
+        .filter(
+          (entry): entry is QualifiedEntry =>
+            entry !== null,
+        );
+
+      const assignment = assignPoolToSeedNumbers({
+        seedNumbers: movableSeedNumbers,
+        pool,
+        seeded,
+        seedOrder,
+        avoidRematches: true,
+      });
+
+      movableSeedNumbers.forEach((seedNumber) => {
+        seeded[seedNumber] =
+          assignment.bySeed.get(seedNumber) ?? null;
+      });
+
+      rematchFallback = assignment.fallback;
+    }
   }
 
   return {
-    slots: seedOrder.map((seedNumber) => seeded[seedNumber] ?? null),
-    rematchFallback: assignment.fallback,
+    slots: seedOrder.map(
+      (seedNumber) => seeded[seedNumber] ?? null,
+    ),
+    rematchFallback,
   };
 }
 

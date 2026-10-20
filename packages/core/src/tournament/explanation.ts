@@ -1,9 +1,13 @@
-import { normalizeStandardFormat } from "./defaults";
+import {
+  normalizeStandardFormat,
+  normalizeStandardStandingCriteria,
+} from "./defaults";
 import type {
   CrossGroupMethod,
   FinalDrawMethod,
   PlayoffMode,
   StandardCompetitionFormat,
+  StandardStandingCriterion,
 } from "./types";
 import type {
   TeamCompetitionGender,
@@ -151,26 +155,78 @@ function matchRuleCopy(locale: ExplanationLocale, bestOf: 1 | 3, pointTarget: nu
   return tr(locale, `${label} se juegan al mejor de 3, con cada set a ${pointTarget} puntos.`, `${label} are best-of-3, with each set played to ${pointTarget} points.`);
 }
 
-function groupRankingItems(locale: ExplanationLocale): string[] {
-  return locale === "es"
-    ? [
-        "Partidos ganados.",
-        "Si exactamente dos quedan empatados en victorias, resultado entre ellos (head-to-head).",
-        "Si empatan tres o más en victorias, victorias dentro de la mini-tabla de los empatados.",
-        "Diferencia de puntos dentro de esa mini-tabla.",
+function standardStandingCriterionCopy(
+  criterion: StandardStandingCriterion,
+  locale: ExplanationLocale,
+): string {
+  switch (criterion) {
+    case "head_to_head":
+      return tr(
+        locale,
+        "En empate exacto de 2: resultado entre ellos (head-to-head).",
+        "For an exact 2-way tie: head-to-head result.",
+      );
+
+    case "mini_wins":
+      return tr(
+        locale,
+        "En empate de 3 o más: victorias dentro de la mini-tabla de los empatados.",
+        "For a 3+ way tie: wins inside the tied mini-table.",
+      );
+
+    case "mini_diff":
+      return tr(
+        locale,
+        "En empate de 3 o más: diferencia de puntos dentro de la mini-tabla.",
+        "For a 3+ way tie: point differential inside the mini-table.",
+      );
+
+    case "point_diff":
+      return tr(
+        locale,
         "Diferencia total de puntos.",
-        "Puntos anotados.",
-        "Rating y, como último desempate determinista, nombre.",
-      ]
-    : [
-        "Matches won.",
-        "If exactly two entries are tied on wins, their head-to-head result.",
-        "If three or more are tied on wins, wins inside the tied mini-table.",
-        "Point differential inside that mini-table.",
         "Overall point differential.",
+      );
+
+    case "points_for":
+      return tr(
+        locale,
+        "Puntos anotados.",
         "Points scored.",
-        "Rating and, as the final deterministic fallback, name.",
-      ];
+      );
+
+    case "rating":
+      return tr(
+        locale,
+        "Rating.",
+        "Rating.",
+      );
+  }
+}
+
+function groupRankingItems(
+  format: StandardCompetitionFormat,
+  locale: ExplanationLocale,
+): string[] {
+  const criteria = normalizeStandardStandingCriteria(
+    format.standingsCriteria,
+  );
+
+  return [
+    tr(
+      locale,
+      "Partidos ganados (siempre es el primer criterio).",
+      "Matches won (always the first criterion).",
+    ),
+    ...criteria.map((criterion) =>
+      standardStandingCriterionCopy(criterion, locale),
+    ),
+    tr(
+      locale,
+      "Nombre e ID sólo como fallback técnico determinista si todo lo anterior sigue empatado.",
+      "Name and ID are used only as a deterministic technical fallback if everything above remains tied.",
+    ),
+  ];
 }
 
 function crossGroupSection(method: CrossGroupMethod, locale: ExplanationLocale): FormatExplanationSection {
@@ -242,7 +298,7 @@ function finalDrawCopy(method: FinalDrawMethod, avoidRematches: boolean, locale:
   ];
   result.push(
     avoidRematches
-      ? tr(locale, "HUAU intenta evitar una revancha inmediata entre participantes del mismo grupo; si no existe una asignación válida, completa el cuadro de forma determinista.", "HUAU tries to avoid an immediate rematch between entries from the same group; if no valid allocation exists, it completes the bracket deterministically.")
+      ? tr(locale, "En la primera ronda eliminatoria después de los grupos, HUAU intenta que ningún participante vuelva a enfrentar a alguien de su mismo grupo. Desde la ronda siguiente no aplica esa restricción. Si matemáticamente no existe una asignación válida, completa el cuadro de forma determinista.", "In the first knockout round after groups, HUAU tries to prevent any participant from immediately facing someone from the same group. The restriction no longer applies from the next round onward. If no valid allocation exists mathematically, the bracket is completed deterministically.")
       : tr(locale, "La configuración permite cruces inmediatos entre participantes que ya compartieron grupo.", "The configuration allows immediate rematches between entries from the same group."),
   );
   return result;
@@ -255,11 +311,16 @@ export function standardExplanationInputFromConfig(value: unknown): StandardForm
   const playoffMode = enumValue<PlayoffMode>(config.playoffMode, ["standard", "top2_final", "top3_step", "top4_semis", "league_only"], "standard");
   const crossGroupMethod = enumValue<CrossGroupMethod>(config.crossGroupMethod, ["normalized", "equalized"], "normalized");
   const finalDrawMethod = enumValue<FinalDrawMethod>(config.finalDrawMethod, ["performance", "pots"], "performance");
+  const standingsCriteria = Array.isArray(config.standingsCriteria)
+    ? (config.standingsCriteria as StandardStandingCriterion[])
+    : null;
+
   const format = normalizeStandardFormat({
     groupRounds: integer(config.groupRounds, 1) === 2 ? 2 : 1,
     qualifiersPerGroup: Math.max(1, integer(config.qualifiersPerGroup, 2)),
     wildcardQualifiers: Math.max(0, integer(config.wildcardQualifiers, 0)),
     crossGroupMethod,
+    ...(standingsCriteria ? { standingsCriteria } : {}),
     playoffMode,
     consolationMode: enumValue(config.consolationMode, ["none", "knockout"] as const, "none"),
     avoidGroupRematches: boolean(config.avoidGroupRematches, true),
@@ -307,7 +368,7 @@ export function explainStandardFormat(input: StandardFormatExplanationInput, loc
           "The group table uses every valid group match and applies tiebreakers in this order:",
         ),
       ],
-      items: groupRankingItems(locale),
+      items: groupRankingItems(format, locale),
     },
   ];
 

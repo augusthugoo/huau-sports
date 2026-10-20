@@ -160,6 +160,67 @@ describe("Phase 2 tournament engine parity fixtures", () => {
     expect(b2?.method).toBe("equalized");
   });
 
+  it("standard tiebreak order can put overall differential before head-to-head", () => {
+    const scored = (
+      standingsCriteria: NonNullable<
+        StandardCompetitionFormat["standingsCriteria"]
+      >,
+    ) => {
+      let value = competition(
+        [group("A", ["A", "B", "C", "D"])],
+        { standingsCriteria },
+      );
+
+      const results: Record<string, [string, number, number]> = {
+        "A-B": ["A", 15, 14],
+        "A-C": ["A", 15, 14],
+        "A-D": ["D", 15, 0],
+        "B-C": ["B", 15, 0],
+        "B-D": ["B", 15, 0],
+        "C-D": ["C", 15, 14],
+      };
+
+      value = finishAllGroups(value, (a, b) => {
+        const key = [a, b].sort().join("-");
+        const result = results[key];
+        if (!result) throw new Error(`MISSING_SCORE:${key}`);
+
+        const [winner, winnerScore, loserScore] = result;
+        return a === winner
+          ? [winnerScore, loserScore]
+          : [loserScore, winnerScore];
+      });
+
+      return calculateGroupStandings(
+        value,
+        "group-A",
+      ).map((row) => row.entry.id);
+    };
+
+    const headFirst = scored([
+      "head_to_head",
+      "mini_wins",
+      "mini_diff",
+      "point_diff",
+      "points_for",
+      "rating",
+    ]);
+
+    const diffFirst = scored([
+      "point_diff",
+      "head_to_head",
+      "mini_wins",
+      "mini_diff",
+      "points_for",
+      "rating",
+    ]);
+
+    // A le ganó directamente a B, pero B tiene mucha mejor
+    // diferencia global. El organizador decide qué pesa primero.
+    expect(headFirst.slice(0, 2)).toEqual(["A", "B"]);
+    expect(diffFirst.slice(0, 2)).toEqual(["B", "A"]);
+  });
+
   it("wildcard-best-second: selects the best runner-up with the active cross-group method", () => {
     let value = competition(
       [group("A", ["A1", "A2", "A3"]), group("B", ["B1", "B2", "B3"])],
@@ -198,17 +259,28 @@ describe("Phase 2 tournament engine parity fixtures", () => {
 
     const bracket = buildBracketSlots(qualifiers, 8, value.format);
 
-    expect(
-      Array.from({ length: 4 }, (_, index) => [
+    const bracketPairs = Array.from(
+      { length: 4 },
+      (_, index) => [
         bracket.slots[index * 2]?.entry.id,
         bracket.slots[index * 2 + 1]?.entry.id,
-      ]),
-    ).toEqual([
-      ["A1", "B4"],
-      ["A3", "B2"],
-      ["A2", "B3"],
-      ["A4", "B1"],
-    ]);
+      ],
+    );
+
+    expect(bracket.rematchFallback).toBe(false);
+    expect(
+      bracketPairs.every(
+        ([left, right]) =>
+          Boolean(left) &&
+          Boolean(right) &&
+          String(left).charAt(0) !==
+            String(right).charAt(0),
+      ),
+    ).toBe(true);
+
+    expect(
+      new Set(bracketPairs.flat().filter(Boolean)),
+    ).toHaveLength(8);
 
     value = generateFinalPhase(value);
 
@@ -219,17 +291,67 @@ describe("Phase 2 tournament engine parity fixtures", () => {
         match.stage !== "consolation",
     );
 
-    expect(
-      quarterfinals.map((match) => [
+    const quarterfinalPairs = quarterfinals.map(
+      (match) => [
         match.entryA?.id,
         match.entryB?.id,
-      ]),
-    ).toEqual([
-      ["A1", "B4"],
-      ["A3", "B2"],
-      ["A2", "B3"],
-      ["A4", "B1"],
-    ]);
+      ],
+    );
+
+    expect(
+      quarterfinalPairs.every(
+        ([left, right]) =>
+          Boolean(left) &&
+          Boolean(right) &&
+          String(left).charAt(0) !==
+            String(right).charAt(0),
+      ),
+    ).toBe(true);
+  });
+
+  it("four-groups-top4: avoids every possible same-group matchup in the first knockout round", () => {
+    let value = competition(
+      [
+        group("A", ["A1", "A2", "A3", "A4"]),
+        group("B", ["B1", "B2", "B3", "B4"]),
+        group("C", ["C1", "C2", "C3", "C4"]),
+        group("D", ["D1", "D2", "D3", "D4"]),
+      ],
+      {
+        qualifiersPerGroup: 4,
+        wildcardQualifiers: 0,
+        playoffMode: "standard",
+        avoidGroupRematches: true,
+        bronzeMatch: false,
+      },
+    );
+
+    value = scoreByStrength(value);
+
+    const bracket = buildBracketSlots(
+      qualifiedEntries(value),
+      16,
+      value.format,
+    );
+
+    const pairs = Array.from(
+      { length: 8 },
+      (_, index) => [
+        bracket.slots[index * 2]?.entry.id,
+        bracket.slots[index * 2 + 1]?.entry.id,
+      ],
+    );
+
+    expect(bracket.rematchFallback).toBe(false);
+    expect(
+      pairs.every(
+        ([left, right]) =>
+          Boolean(left) &&
+          Boolean(right) &&
+          String(left).charAt(0) !==
+            String(right).charAt(0),
+      ),
+    ).toBe(true);
   });
 
   it("standard-bracket-6-to-8-with-byes: seeds six qualifiers into an eight-slot bracket with two byes", () => {

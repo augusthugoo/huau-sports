@@ -13,12 +13,17 @@ import {
   setLocalTeamFormat,
   startLocalLiveDraw,
 } from "./TournamentDayEngine";
-import type { TeamFormat, TeamLineupAssignment } from "@huau/core";
+import type {
+  StandardStandingCriterion,
+  TeamFormat,
+  TeamLineupAssignment,
+} from "@huau/core";
 import {
   ensureDayLocalMeta,
   markStructureDirty,
   moveLocalStandardEntryToGroup,
   moveLocalTeamEntryToGroup,
+  swapDayStandardFirstRoundEntry,
   teamEntryRating,
   type TournamentDayReformSnapshot,
 } from "./TournamentDayReformEngine";
@@ -32,6 +37,46 @@ export type EpicDayMutate = (
 
 const tr = (locale: Locale, es: string, en: string) => (locale === "es" ? es : en);
 const round2 = (value: number) => Math.round(value * 100) / 100;
+
+const STANDARD_STANDING_CRITERIA: Array<{
+  id: StandardStandingCriterion;
+  es: string;
+  en: string;
+}> = [
+  { id: "head_to_head", es: "Enfrentamiento directo", en: "Head-to-head" },
+  { id: "mini_wins", es: "Victorias mini-tabla (3+)", en: "Mini-table wins (3+)" },
+  { id: "mini_diff", es: "Diferencia mini-tabla (3+)", en: "Mini-table differential (3+)" },
+  { id: "point_diff", es: "Diferencia total de puntos", en: "Overall point differential" },
+  { id: "points_for", es: "Puntos anotados", en: "Points scored" },
+  { id: "rating", es: "Rating", en: "Rating" },
+];
+
+const DEFAULT_STANDARD_CRITERIA =
+  STANDARD_STANDING_CRITERIA.map((criterion) => criterion.id);
+
+function standardCriterionLabel(
+  locale: Locale,
+  id: StandardStandingCriterion,
+) {
+  const row = STANDARD_STANDING_CRITERIA.find(
+    (criterion) => criterion.id === id,
+  );
+  return row ? tr(locale, row.es, row.en) : id;
+}
+
+function standardCriteriaSummary(locale: Locale, format: any) {
+  const criteria = Array.isArray(format?.standingsCriteria) &&
+    format.standingsCriteria.length
+    ? format.standingsCriteria as StandardStandingCriterion[]
+    : DEFAULT_STANDARD_CRITERIA;
+
+  return [
+    tr(locale, "Victorias", "Wins"),
+    ...criteria.map((criterion) =>
+      standardCriterionLabel(locale, criterion),
+    ),
+  ].join(" → ");
+}
 
 
 function rubberDisplayCode(rubber: any) {
@@ -351,12 +396,36 @@ export function EpicFormatStudio({
           });
           generateLocalTeamStructure(next, String(category.id), groups);
         } else {
+          const standingCriteria = STANDARD_STANDING_CRITERIA
+            .map((criterion, fallbackIndex) => ({
+              id: criterion.id,
+              order: Math.max(
+                0,
+                Number(
+                  data.get(
+                    `standardCriterionOrder:${criterion.id}`,
+                  ) ?? 0,
+                ),
+              ),
+              fallbackIndex,
+            }))
+            .filter((criterion) => criterion.order > 0)
+            .sort(
+              (a, b) =>
+                a.order - b.order ||
+                a.fallbackIndex - b.fallbackIndex,
+            )
+            .map((criterion) => criterion.id);
+
           saveLocalStandardFormat(next, String(category.id), {
             groupRounds: nextRounds,
             qualifiersPerGroup: nextQualifiers,
             wildcardQualifiers: nextWildcards,
             playoffMode: nextPlayoff as any,
             crossGroupMethod: String(data.get("crossGroupMethod") ?? format?.crossGroupMethod ?? "normalized") as any,
+            standingsCriteria: standingCriteria.length
+              ? standingCriteria
+              : DEFAULT_STANDARD_CRITERIA,
             consolationMode: String(data.get("consolationMode") ?? format?.consolationMode ?? "none") as any,
             avoidGroupRematches: data.get("avoidGroupRematches") === "on",
             bronzeMatch: nextBronze,
@@ -519,6 +588,47 @@ export function EpicFormatStudio({
                 <label><span>{tr(locale,"Puntos final","Final target")}</span><input name="medalTarget" type="number" min="1" defaultValue={Number(format?.medal?.pointTarget ?? 11)} /></label>
                 <label><span>{tr(locale,"Descanso preferido","Preferred rest")}</span><input name="preferredRestSlots" type="number" min="0" defaultValue={Number(format?.preferredRestSlots ?? settings.preferredRestSlots ?? 1)} /></label>
                 <label className="check epic-check"><input name="avoidGroupRematches" type="checkbox" defaultChecked={Boolean(format?.avoidGroupRematches ?? true)} /><span>{tr(locale,"Evitar revancha inmediata de grupo","Avoid immediate group rematch")}</span></label>
+              </div>
+
+              <div className="epic-team-advanced-block">
+                <h4>{tr(locale,"Desempates de grupo","Group tiebreaks")}</h4>
+                <p className="muted">
+                  {tr(
+                    locale,
+                    "Victorias siempre es el primer criterio. Elegí el orden de los desempates siguientes; 0 desactiva un criterio.",
+                    "Wins are always the first criterion. Choose the order of the following tiebreaks; 0 disables a criterion.",
+                  )}
+                </p>
+                <div className="epic-format-controls">
+                  {STANDARD_STANDING_CRITERIA.map((criterion) => {
+                    const currentCriteria =
+                      Array.isArray(format?.standingsCriteria) &&
+                      format.standingsCriteria.length
+                        ? format.standingsCriteria
+                        : DEFAULT_STANDARD_CRITERIA;
+                    const index = currentCriteria.indexOf(criterion.id);
+
+                    return (
+                      <label key={criterion.id}>
+                        <span>{standardCriterionLabel(locale, criterion.id)}</span>
+                        <select
+                          name={`standardCriterionOrder:${criterion.id}`}
+                          defaultValue={String(index >= 0 ? index + 1 : 0)}
+                        >
+                          <option value="0">{tr(locale,"No usar","Off")}</option>
+                          {Array.from({ length: 6 }, (_, optionIndex) => (
+                            <option
+                              key={optionIndex + 1}
+                              value={optionIndex + 1}
+                            >
+                              {optionIndex + 1}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    );
+                  })}
+                </div>
               </div>
             </details>
           ) : (
@@ -885,6 +995,72 @@ export function EpicCompetitionStudio({
       )
     : [];
 
+  const standardFirstRound = !isTeam && competition
+    ? (competition.encounters ?? []).filter(
+        (encounter: any) =>
+          encounter.stage !== "group" &&
+          encounter.stage !== "consolation" &&
+          Number(encounter.roundNumber) === 1,
+      )
+    : [];
+
+  const standardPostGroupStarted = !isTeam && competition
+    ? (competition.encounters ?? []).some(
+        (encounter: any) =>
+          encounter.stage !== "group" &&
+          ["finished", "in_progress"].includes(
+            String(encounter.status),
+          ),
+      )
+    : false;
+
+  const standardFirstRoundEntryMap = new Map<string, any>();
+  for (const encounter of standardFirstRound) {
+    if (encounter.entryA) {
+      standardFirstRoundEntryMap.set(
+        String(encounter.entryA.id),
+        encounter.entryA,
+      );
+    }
+    if (encounter.entryB) {
+      standardFirstRoundEntryMap.set(
+        String(encounter.entryB.id),
+        encounter.entryB,
+      );
+    }
+  }
+  const standardFirstRoundEntries = [
+    ...standardFirstRoundEntryMap.values(),
+  ];
+
+  const canEditStandardFirstRound = Boolean(
+    !isTeam &&
+    competition?.format?.playoffMode === "standard" &&
+    competition?.finalGenerated &&
+    !standardPostGroupStarted &&
+    standardFirstRoundEntries.length >= 2,
+  );
+
+  const groupByStandardEntry = new Map<string, string>();
+  if (competition) {
+    for (const group of competition.groups ?? []) {
+      for (const entry of group.entries ?? []) {
+        groupByStandardEntry.set(
+          String(entry.id),
+          String(group.id),
+        );
+      }
+    }
+  }
+
+  const immediateRematches = standardFirstRound.filter(
+    (encounter: any) =>
+      encounter.entryA &&
+      encounter.entryB &&
+      groupByStandardEntry.get(String(encounter.entryA.id)) ===
+        groupByStandardEntry.get(String(encounter.entryB.id)),
+  );
+
   return (
     <section className="td-stack epic-competition-studio">
       <article className="panel epic-competition-hero">
@@ -894,7 +1070,16 @@ export function EpicCompetitionStudio({
       <article className="panel"><div className="td-category-tabs epic-category-tabs">{available.map((row) => <button key={row.id} className={String(row.id)===String(core.id)?"light small":"ghost small"} onClick={() => setCategoryId(String(row.id))}>{row.name}</button>)}</div></article>
 
       <article className="panel epic-sport-criteria">
-        <div><strong>{tr(locale,"Criterio deportivo","Sport logic")}</strong><p>{stageDescription(locale, format)}</p></div>
+        <div>
+          <strong>{tr(locale,"Criterio deportivo","Sport logic")}</strong>
+          <p>{stageDescription(locale, format)}</p>
+          {!isTeam ? (
+            <small>
+              {tr(locale,"Desempate","Tiebreak")}:{" "}
+              {standardCriteriaSummary(locale, format)}
+            </small>
+          ) : null}
+        </div>
         <span>{seedingMethodLabel(locale,seedingMethodFor(snapshot,core))} · {formatModeLabel(locale, String(format?.competition?.playoffMode ?? format?.playoffMode ?? "standard"))}</span>
       </article>
 
@@ -914,7 +1099,123 @@ export function EpicCompetitionStudio({
             ))}
           </div>
           {(competition.encounters ?? []).some((row: any) => row.stage !== "group") ? (
-            <article className="panel"><div className="eyebrow">{tr(locale,"FASE POSTERIOR","POST-GROUP PHASE")}</div><div className="epic-bracket-grid">{(competition.encounters ?? []).filter((row:any)=>row.stage!=="group").map((row:any)=><div key={row.id}><span>{row.roundLabel ?? row.stage}</span><strong>{row.entryA?.name ?? "TBD"}</strong><em>vs</em><strong>{row.entryB?.name ?? "TBD"}</strong><small>{row.status}</small></div>)}</div></article>
+            <article className="panel">
+              <div className="panel-title">
+                <div>
+                  <div className="eyebrow">{tr(locale,"FASE POSTERIOR","POST-GROUP PHASE")}</div>
+                  <h3>{tr(locale,"Cuadro eliminatorio","Knockout bracket")}</h3>
+                </div>
+              </div>
+
+              {canEditStandardFirstRound ? (
+                <p className="muted">
+                  {tr(
+                    locale,
+                    "Antes de cargar resultados podés corregir manualmente cualquier participante de la primera ronda. HUAU intercambia posiciones: nadie se duplica ni desaparece del cuadro.",
+                    "Before entering results you may manually correct any first-round participant. HUAU swaps positions so nobody is duplicated or removed from the bracket.",
+                  )}
+                </p>
+              ) : null}
+
+              {immediateRematches.length > 0 &&
+              Boolean(competition.format?.avoidGroupRematches) ? (
+                <p className="warning-line">
+                  ⚠{" "}
+                  {tr(
+                    locale,
+                    `${immediateRematches.length} cruce(s) de la primera ronda repiten grupo. La asignación automática no pudo evitarlos o el cuadro fue editado manualmente.`,
+                    `${immediateRematches.length} first-round matchup(s) repeat a group. Automatic allocation could not avoid them or the bracket was edited manually.`,
+                  )}
+                </p>
+              ) : null}
+
+              <div className="epic-bracket-grid">
+                {(competition.encounters ?? [])
+                  .filter((row:any)=>row.stage!=="group")
+                  .map((row:any)=>{
+                    const editable =
+                      canEditStandardFirstRound &&
+                      row.stage !== "consolation" &&
+                      Number(row.roundNumber) === 1;
+
+                    return (
+                      <div key={row.id}>
+                        <span>{row.roundLabel ?? row.stage}</span>
+
+                        {editable && row.entryA ? (
+                          <select
+                            value={String(row.entryA.id)}
+                            onChange={(event) =>
+                              void mutate(
+                                (next) => {
+                                  swapDayStandardFirstRoundEntry(
+                                    next,
+                                    String(competition.categoryId),
+                                    String(row.id),
+                                    "A",
+                                    event.target.value,
+                                  );
+                                },
+                                tr(
+                                  locale,
+                                  "Cuadro Standard corregido manualmente.",
+                                  "Standard bracket corrected manually.",
+                                ),
+                                "structure",
+                              )
+                            }
+                          >
+                            {standardFirstRoundEntries.map((entry:any) => (
+                              <option key={entry.id} value={entry.id}>
+                                {entry.name}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <strong>{row.entryA?.name ?? "TBD"}</strong>
+                        )}
+
+                        <em>vs</em>
+
+                        {editable && row.entryB ? (
+                          <select
+                            value={String(row.entryB.id)}
+                            onChange={(event) =>
+                              void mutate(
+                                (next) => {
+                                  swapDayStandardFirstRoundEntry(
+                                    next,
+                                    String(competition.categoryId),
+                                    String(row.id),
+                                    "B",
+                                    event.target.value,
+                                  );
+                                },
+                                tr(
+                                  locale,
+                                  "Cuadro Standard corregido manualmente.",
+                                  "Standard bracket corrected manually.",
+                                ),
+                                "structure",
+                              )
+                            }
+                          >
+                            {standardFirstRoundEntries.map((entry:any) => (
+                              <option key={entry.id} value={entry.id}>
+                                {entry.name}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <strong>{row.entryB?.name ?? "TBD"}</strong>
+                        )}
+
+                        <small>{row.status}</small>
+                      </div>
+                    );
+                  })}
+              </div>
+            </article>
           ) : null}
 
           {standardStandings.length ? (
@@ -1574,7 +1875,8 @@ function humanError(locale: Locale, raw: string): HumanError {
   if (text.includes("TEAM_ROSTER_INVALID")) return {title:tr(locale,"Roster inválido","Invalid roster"),lines:[tr(locale,"Revisá cantidad de jugadores, composición M/F y capitán requerido.","Check roster size, M/F composition and required captain.")]};
   if (text.includes("SCHEDULE_MANUAL_MOVE_CONFLICT")||text.includes("SCHEDULE_LOCK_CONFLICT")) return {title:tr(locale,"Ese movimiento genera un conflicto","That move creates a conflict"),lines:[tr(locale,"Revisá cancha, horario, descanso mínimo o una restricción bloqueada.","Check court, time, minimum rest or a locked restriction.")]};
   if (text.includes("STANDARD_FORMAT_AFTER_RESULTS")||text.includes("TEAM_FORMAT_AFTER_RESULTS")||text.includes("STRUCTURE_AFTER_RESULTS")) return {title:tr(locale,"La competencia ya comenzó","Competition already started"),lines:[tr(locale,"El formato estructural no se puede reconstruir después de cargar resultados. Corregí resultados o usá recuperación si realmente necesitás volver atrás.","The structural format cannot be rebuilt after results have been entered. Correct results or use recovery if you truly need to roll back.")]};
-  if (text.includes("DAY_CATEGORY_REMOVE_HAS_RESULTS")||text.includes("DAY_TEAM_DELETE_HAS_RESULTS")) return {title:tr(locale,"Cambio protegido","Protected change"),lines:[tr(locale,"Ese cambio afectaría resultados existentes y HUAU no los borra silenciosamente.","That change would affect existing results and HUAU never deletes them silently.")]};
+  if (text.includes("DAY_CATEGORY_REMOVE_HAS_RESULTS")||text.includes("DAY_CATEGORY_ASSIGN_HAS_RESULTS")||text.includes("DAY_TEAM_DELETE_HAS_RESULTS")||text.includes("STANDARD_FIRST_ROUND_EDIT_AFTER_RESULTS")) return {title:tr(locale,"Cambio protegido","Protected change"),lines:[tr(locale,"Ese cambio afectaría una competencia que ya tiene resultados y HUAU no los reescribe ni los borra silenciosamente.","That change would affect a competition with existing results and HUAU never silently rewrites or deletes them.")]};
+  if (text.includes("QA_FIXTURE_PUBLISH_BLOCKED")) return {title:tr(locale,"QA protegido","Protected QA"),lines:[tr(locale,"Esta fecha ficticia vive únicamente en la copia local y no puede publicarse ni sincronizarse con el torneo real. Restaurá una copia real cuando termines el QA.","This simulated event lives only in the local copy and cannot be published or synced with the real tournament. Restore a real copy when QA is complete.")]};
   if (text.includes("PUBLIC_MODEL")) return {title:tr(locale,"No se pudo publicar","Could not publish"),lines:[tr(locale,"La información pública no pasó la validación de seguridad. La copia local sigue intacta.","Public information failed the safety validation. The local copy remains intact.")]};
   return {title:tr(locale,"No se pudo completar la acción","Action could not be completed"),lines:[text.replaceAll("_"," ").toLowerCase().replace(/^./,(letter)=>letter.toUpperCase())]};
 }

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, expect, it } from "vitest";
 import {
   buildCompetitionFromGroups,
@@ -6,17 +7,21 @@ import {
 } from "@huau/core";
 import { syncStandardCompetition } from "./TournamentDayEngine";
 import {
+  activeDayParticipantCount,
   buildPublicLive,
   buildPublicStructure,
   clearDayCategoryResults,
+  createNationalCircuitQaFixture,
   createQaFixture,
   ensureDayLocalMeta,
+  isDayQaFixture,
   previewAdminMerge,
   publicReadModelHasPrivateKeys,
   regenerateGlobalSchedule,
   rebuildDayStandardFinalPhase,
   removeParticipantFromCategory,
   setParticipantNoShow,
+  swapDayStandardFirstRoundEntry,
   updateDayParticipant,
   type TournamentDayReformSnapshot,
 } from "./TournamentDayReformEngine";
@@ -174,6 +179,96 @@ describe("Standard participant withdrawal", () => {
   });
 });
 
+describe("Tournament Day participant hardening", () => {
+  it("counts only active players in the operational header", () => {
+    const local = snapshot();
+    ensureDayLocalMeta(local);
+
+    expect(activeDayParticipantCount(local)).toBe(1);
+
+    setParticipantNoShow(local, "p1");
+
+    expect(activeDayParticipantCount(local)).toBe(0);
+  });
+
+  it("invalidates a stale Standard structure when membership changes before results", () => {
+    const local = snapshot();
+    ensureDayLocalMeta(local);
+
+    local.workspace.participants.players.push({
+      id: "p2",
+      organizationPersonId: "person2",
+      displayName: "Beatriz",
+      sportGender: "female",
+      playerStatus: "confirmed",
+    } as any);
+
+    local.workspace.participants.playerCategories.push({
+      playerProfileId: "p2",
+      categoryId: "c1",
+      partnerProfileId: null,
+    } as any);
+
+    local.workspace.standard.entries.push({
+      id: "e2",
+      categoryId: "c1",
+      displayName: "Beatriz",
+      sourceKey: "p2",
+      localProfileIds: ["p2"],
+      status: "ready",
+    } as any);
+
+    const competition = buildCompetitionFromGroups({
+      id: "competition:c1",
+      categoryId: "c1",
+      groups: [{
+        id: "g1",
+        name: "A",
+        entries: [
+          {
+            id: "e1",
+            name: "Ana",
+            participantIds: ["p1"],
+            rating: 0,
+          },
+          {
+            id: "e2",
+            name: "Beatriz",
+            participantIds: ["p2"],
+            rating: 0,
+          },
+        ],
+      }],
+      format: {
+        playoffMode: "league_only",
+      },
+    });
+
+    local.workspace.standard.competitions = [competition];
+    syncStandardCompetition(local, competition);
+
+    local.workspace.schedule.schedule = [{
+      id: "schedule:e1-e2",
+      categoryId: "c1",
+      encounterId: competition.encounters[0]?.id,
+      entryAId: "e1",
+      entryBId: "e2",
+    }] as any[];
+
+    removeParticipantFromCategory(local, "p1", "c1");
+
+    expect(
+      (local.workspace.standard.competitions as Competition[])
+        .some((row) => row.categoryId === "c1"),
+    ).toBe(false);
+
+    expect(
+      (local.workspace.schedule.schedule as any[])
+        .some((row) => String(row.categoryId) === "c1"),
+    ).toBe(false);
+  });
+});
+
 describe("provisional Standard playoff scheduling", () => {
   it("reserves semifinals/final before groups finish and binds those slots when qualifiers resolve", () => {
     const local = snapshot();
@@ -300,7 +395,7 @@ describe("provisional Standard playoff scheduling", () => {
 });
 
 describe("rebuilding Standard final phase", () => {
-  it("preserves group results and replaces a stale playoff with crossed quarterfinals", () => {
+  it("preserves group results and rebuilds the playoff without immediate group rematches", () => {
     const local = snapshot();
     ensureDayLocalMeta(local);
 
@@ -422,23 +517,192 @@ describe("rebuilding Standard final phase", () => {
         encounter.roundNumber === 1,
     );
 
-    expect(
-      rebuiltQuarterfinals.map((encounter) => [
-        encounter.entryA?.id,
-        encounter.entryB?.id,
-      ]),
-    ).toEqual([
-      ["A1", "B4"],
-      ["A3", "B2"],
-      ["A2", "B3"],
-      ["A4", "B1"],
+    const rebuiltPairs = rebuiltQuarterfinals.map((encounter) => [
+      encounter.entryA?.id,
+      encounter.entryB?.id,
     ]);
+
+    expect(rebuiltPairs).toHaveLength(4);
+
+    expect(
+      rebuiltPairs.every(
+        ([left, right]) =>
+          Boolean(left) &&
+          Boolean(right) &&
+          String(left).charAt(0) !== String(right).charAt(0),
+      ),
+    ).toBe(true);
+
+    expect(
+      new Set(rebuiltPairs.flat().filter(Boolean)),
+    ).toHaveLength(8);
 
     expect(
       rebuilt.encounters
         .filter((encounter) => encounter.stage !== "group")
         .every((encounter) => encounter.status !== "finished"),
     ).toBe(true);
+  });
+});
+
+describe("manual Standard first-round override", () => {
+  it("swaps qualifiers without touching completed group results", () => {
+    const local = snapshot();
+    ensureDayLocalMeta(local);
+
+    const base = buildCompetitionFromGroups({
+      id: "competition:c1",
+      categoryId: "c1",
+      groups: [
+        {
+          id: "group-A",
+          name: "A",
+          entries: ["A1", "A2", "A3", "A4"].map(
+            (id, index) => ({
+              id,
+              name: id,
+              participantIds: [`pa${index + 1}`],
+              rating: 10 - index,
+            }),
+          ),
+        },
+        {
+          id: "group-B",
+          name: "B",
+          entries: ["B1", "B2", "B3", "B4"].map(
+            (id, index) => ({
+              id,
+              name: id,
+              participantIds: [`pb${index + 1}`],
+              rating: 10 - index,
+            }),
+          ),
+        },
+      ],
+      format: {
+        qualifiersPerGroup: 2,
+        wildcardQualifiers: 0,
+        playoffMode: "standard",
+        avoidGroupRematches: true,
+        bronzeMatch: false,
+      },
+    });
+
+    for (const encounter of base.encounters) {
+      if (
+        encounter.stage !== "group" ||
+        !encounter.entryA ||
+        !encounter.entryB
+      ) {
+        continue;
+      }
+
+      const rankA = Number(encounter.entryA.id.slice(1));
+      const rankB = Number(encounter.entryB.id.slice(1));
+      const aWins = rankA < rankB;
+
+      encounter.status = "finished";
+      encounter.scoreA = aWins ? 15 : 7;
+      encounter.scoreB = aWins ? 7 : 15;
+      encounter.winnerEntryId =
+        aWins ? encounter.entryA.id : encounter.entryB.id;
+      encounter.sets = [{
+        scoreA: encounter.scoreA,
+        scoreB: encounter.scoreB,
+      }];
+    }
+
+    const generated = generateFinalPhase(base);
+    local.workspace.standard.competitions = [generated];
+    syncStandardCompetition(local, generated);
+
+    const groupBefore = generated.encounters
+      .filter((encounter) => encounter.stage === "group")
+      .map((encounter) => ({
+        id: encounter.id,
+        status: encounter.status,
+        scoreA: encounter.scoreA,
+        scoreB: encounter.scoreB,
+        winnerEntryId: encounter.winnerEntryId,
+      }));
+
+    const firstBefore = generated.encounters.filter(
+      (encounter) =>
+        encounter.stage !== "group" &&
+        encounter.stage !== "consolation" &&
+        encounter.roundNumber === 1,
+    );
+
+    const target = firstBefore[0];
+    const source = firstBefore[1];
+
+    if (
+      !target?.entryA ||
+      !source?.entryA
+    ) {
+      throw new Error("EXPECTED_EDITABLE_FIRST_ROUND");
+    }
+
+    const originalTargetId = target.entryA.id;
+    const replacementId = source.entryA.id;
+
+    swapDayStandardFirstRoundEntry(
+      local,
+      "c1",
+      target.id,
+      "A",
+      replacementId,
+    );
+
+    const rebuilt = (
+      local.workspace.standard.competitions as Competition[]
+    ).find((competition) => competition.categoryId === "c1");
+
+    if (!rebuilt) {
+      throw new Error("EXPECTED_REBUILT_COMPETITION");
+    }
+
+    const firstAfter = rebuilt.encounters.filter(
+      (encounter) =>
+        encounter.stage !== "group" &&
+        encounter.stage !== "consolation" &&
+        encounter.roundNumber === 1,
+    );
+
+    expect(
+      firstAfter.find((encounter) => encounter.id === target.id)
+        ?.entryA?.id,
+    ).toBe(replacementId);
+
+    expect(
+      firstAfter.some(
+        (encounter) =>
+          encounter.id === source.id &&
+          (
+            encounter.entryA?.id === originalTargetId ||
+            encounter.entryB?.id === originalTargetId
+          ),
+      ),
+    ).toBe(true);
+
+    const ids = firstAfter.flatMap((encounter) =>
+      [encounter.entryA?.id, encounter.entryB?.id]
+        .filter(Boolean),
+    );
+
+    expect(new Set(ids).size).toBe(ids.length);
+
+    expect(
+      rebuilt.encounters
+        .filter((encounter) => encounter.stage === "group")
+        .map((encounter) => ({
+          id: encounter.id,
+          status: encounter.status,
+          scoreA: encounter.scoreA,
+          scoreB: encounter.scoreB,
+          winnerEntryId: encounter.winnerEntryId,
+        })),
+    ).toEqual(groupBefore);
   });
 });
 
@@ -542,5 +806,251 @@ describe("private QA fixture", () => {
     }
     const c50Rounds = new Set(c50.encounters.map((encounter) => encounter.roundNumber));
     expect(c50Rounds.size).toBe(7);
+  });
+});
+
+describe("national circuit QA fixture", () => {
+  it("loads 105 registered players across 13 real-world Standard categories without prebuilding competition", () => {
+    const qa = createNationalCircuitQaFixture(
+      snapshot(),
+    );
+
+    expect(
+      qa.workspace.participants.players,
+    ).toHaveLength(105);
+
+    expect(
+      qa.workspace.participants.players
+        .filter(
+          (player: any) =>
+            player.sportGender === "male",
+        ),
+    ).toHaveLength(66);
+
+    expect(
+      qa.workspace.participants.players
+        .filter(
+          (player: any) =>
+            player.sportGender === "female",
+        ),
+    ).toHaveLength(39);
+
+    expect(
+      new Set(
+        qa.workspace.participants.players
+          .map(
+            (player: any) =>
+              player.displayName,
+          ),
+      ).size,
+    ).toBe(105);
+
+    expect(
+      qa.workspace.core.tournament.courtCount,
+    ).toBe(4);
+
+    expect(
+      qa.workspace.core.categories,
+    ).toHaveLength(13);
+
+    expect(
+      qa.team.categories,
+    ).toHaveLength(0);
+
+    expect(
+      qa.workspace.standard.competitions,
+    ).toHaveLength(0);
+
+    expect(
+      qa.workspace.standard.groups,
+    ).toHaveLength(0);
+
+    expect(
+      qa.workspace.standard.matches,
+    ).toHaveLength(0);
+
+    expect(
+      qa.workspace.schedule.schedule,
+    ).toHaveLength(0);
+
+    expect(
+      isDayQaFixture(qa),
+    ).toBe(true);
+
+    expect(
+      new Set(
+        Object.values(
+          ensureDayLocalMeta(qa)
+            .schedule.categoryDates,
+        ),
+      ).size,
+    ).toBe(3);
+  });
+
+  it("matches the reference registration counts and never exceeds three categories per player", () => {
+    const qa = createNationalCircuitQaFixture(
+      snapshot(),
+    );
+
+    const entries =
+      qa.workspace.standard.entries as any[];
+
+    const entryCount = (
+      categoryId: string,
+    ) =>
+      entries.filter(
+        (entry) =>
+          String(entry.categoryId) ===
+          categoryId,
+      ).length;
+
+    expect({
+      singleMA: entryCount("qa-single-m-a"),
+      singleMB: entryCount("qa-single-m-b"),
+      singleF: entryCount("qa-single-f"),
+      singleM50: entryCount("qa-single-m-50"),
+
+      doubleFA: entryCount("qa-double-f-a"),
+      doubleFB: entryCount("qa-double-f-b"),
+      doubleMB: entryCount("qa-double-m-b"),
+      doubleMA: entryCount("qa-double-m-a"),
+      doubleM50: entryCount("qa-double-m-50"),
+      doubleF50: entryCount("qa-double-f-50"),
+
+      mixedA: entryCount("qa-mixed-a"),
+      mixedB: entryCount("qa-mixed-b"),
+      mixed50: entryCount("qa-mixed-50"),
+    }).toEqual({
+      singleMA: 10,
+      singleMB: 12,
+      singleF: 8,
+      singleM50: 9,
+
+      // Cantidad de PAREJAS.
+      doubleFA: 7,
+      doubleFB: 8,
+      doubleMB: 18,
+      doubleMA: 14,
+      doubleM50: 8,
+      doubleF50: 6,
+
+      mixedA: 9,
+      mixedB: 20,
+      mixed50: 7,
+    });
+
+    expect(entries).toHaveLength(136);
+
+    const assignments =
+      qa.workspace.participants
+        .playerCategories as any[];
+
+    expect(assignments).toHaveLength(233);
+
+    const counts = new Map<string, number>();
+
+    for (const assignment of assignments) {
+      const id = String(
+        assignment.playerProfileId,
+      );
+
+      counts.set(
+        id,
+        (counts.get(id) ?? 0) + 1,
+      );
+    }
+
+    expect(counts.size).toBe(105);
+
+    expect(
+      [...counts.values()].every(
+        (count) =>
+          count >= 1 &&
+          count <= 3,
+      ),
+    ).toBe(true);
+
+    expect(
+      [...counts.values()].some(
+        (count) => count === 3,
+      ),
+    ).toBe(true);
+
+    // Mixto B es la categoría de parejas más grande.
+    expect(
+      entryCount("qa-mixed-b"),
+    ).toBeGreaterThan(
+      entryCount("qa-double-m-b"),
+    );
+  });
+
+  it("stays comfortably inside checkpoint and public R2 payload limits", () => {
+    const qa = createNationalCircuitQaFixture(
+      snapshot(),
+    );
+
+    const structure =
+      buildPublicStructure(qa);
+
+    const live =
+      buildPublicLive(qa);
+
+    expect(
+      publicReadModelHasPrivateKeys(
+        structure,
+      ),
+    ).toBe(false);
+
+    expect(
+      publicReadModelHasPrivateKeys(
+        live,
+      ),
+    ).toBe(false);
+
+    const snapshotBytes =
+      new TextEncoder()
+        .encode(JSON.stringify(qa))
+        .byteLength;
+
+    const structureBytes =
+      new TextEncoder()
+        .encode(JSON.stringify(structure))
+        .byteLength;
+
+    const liveBytes =
+      new TextEncoder()
+        .encode(JSON.stringify(live))
+        .byteLength;
+
+    expect(snapshotBytes)
+      .toBeLessThan(20_000_000);
+
+    expect(structureBytes)
+      .toBeLessThan(1_500_000);
+
+    expect(liveBytes)
+      .toBeLessThan(1_500_000);
+  });
+
+  it("removes withdrawn players from the public participant model", () => {
+    const qa = createNationalCircuitQaFixture(
+      snapshot(),
+    );
+
+    const withdrawn =
+      qa.workspace.participants.players[0] as any;
+
+    withdrawn.playerStatus =
+      "withdrawn";
+
+    const structure =
+      buildPublicStructure(qa) as any;
+
+    expect(
+      structure.players.some(
+        (player: any) =>
+          player.id === withdrawn.id,
+      ),
+    ).toBe(false);
   });
 });

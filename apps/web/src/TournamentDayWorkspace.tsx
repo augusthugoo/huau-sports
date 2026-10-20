@@ -38,11 +38,13 @@ import {
 } from "./TournamentDayStorage";
 import type { TeamFormat, TeamLineupAssignment, TeamRosterMember } from "@huau/core";
 import {
+  activeDayParticipantCount,
   applySafeAdminMerge,
   buildPublicLive,
   buildPublicStructure,
-  createQaFixture,
+  createNationalCircuitQaFixture,
   initializeReformSnapshot,
+  isDayQaFixture,
   markLiveDirty,
   markLivePublished,
   markStructureDirty,
@@ -364,6 +366,15 @@ export function TournamentDayWorkspace(props: Props) {
   const publish = async (finalized = false) => {
     const current = sessionRef.current;
     if (!current) return;
+
+    if (
+      isDayQaFixture(
+        current.snapshot as TournamentDayReformSnapshot,
+      )
+    ) {
+      setError("QA_FIXTURE_PUBLISH_BLOCKED");
+      return;
+    }
     if (
       finalized &&
       !window.confirm(
@@ -582,6 +593,15 @@ export function TournamentDayWorkspace(props: Props) {
   const publishPublicModel = async (kind: "structure" | "live") => {
     const current = sessionRef.current;
     if (!current) return;
+
+    if (
+      isDayQaFixture(
+        current.snapshot as TournamentDayReformSnapshot,
+      )
+    ) {
+      setError("QA_FIXTURE_PUBLISH_BLOCKED");
+      return;
+    }
     setBusy(kind === "structure" ? "public-structure" : "public-live");
     setError("");
     try {
@@ -614,6 +634,16 @@ export function TournamentDayWorkspace(props: Props) {
     }
     const current = sessionRef.current;
     if (!current) return;
+
+    if (
+      isDayQaFixture(
+        current.snapshot as TournamentDayReformSnapshot,
+      )
+    ) {
+      setError("QA_FIXTURE_PUBLISH_BLOCKED");
+      return;
+    }
+
     setBusy("public-promotion");
     setError("");
     try {
@@ -642,9 +672,13 @@ export function TournamentDayWorkspace(props: Props) {
     if (!qaMode) return;
     if (!window.confirm(tr(locale, "QA PRIVADO: esto agrega datos ficticios únicamente a la copia LOCAL actual. No lo uses sobre el torneo real. ¿Continuar?", "PRIVATE QA: this adds fake data only to the current LOCAL copy. Do not use it on the real tournament. Continue?"))) return;
     await mutate((next) => {
-      const fixture = createQaFixture(next);
+      const fixture = createNationalCircuitQaFixture(next);
       Object.assign(next, fixture);
-    }, tr(locale, "Fixture QA local cargado: 65 jugadores, 6 equipos +40 y 7 equipos +50.", "Local QA fixture loaded: 65 players, 6 +40 teams and 7 +50 teams."), "structure");
+    }, tr(
+      locale,
+      "Fixture QA del circuito cargado: 105 jugadores, 13 categorías, máximo 3 categorías por persona y 4 canchas. No hay formatos ni cronograma: ahora armás el torneo desde HUAU. La publicación al servidor queda bloqueada.",
+      "Circuit QA fixture loaded: 105 players, 13 categories, maximum 3 categories per person and 4 courts. No formats or schedule were generated: you can now build the tournament in HUAU. Server publishing is blocked.",
+    ), "structure");
   };
 
   if (loading) {
@@ -656,6 +690,9 @@ export function TournamentDayWorkspace(props: Props) {
 
   const snapshot = session.snapshot;
   const tournament = snapshot.workspace.core.tournament;
+  const qaFixtureActive = isDayQaFixture(
+    snapshot as TournamentDayReformSnapshot,
+  );
   const teamCategories = snapshot.team.categories as any[];
   const standardMatches = snapshot.workspace.standard.matches as any[];
   const teamMatches = teamCategories.flatMap((category) =>
@@ -712,9 +749,15 @@ export function TournamentDayWorkspace(props: Props) {
         <div className="td-day-actions">
           <span className={`td-local-chip ${session.dirty ? "dirty" : ""}`}>
             <span className="td-dot on" />
-            {session.dirty
-              ? tr(locale, "LOCAL · cambios sin publicar", "LOCAL · unpublished changes")
-              : "LOCAL · 0 D1"}
+            {qaFixtureActive
+              ? tr(
+                  locale,
+                  "QA CIRCUITO · publicación bloqueada",
+                  "CIRCUIT QA · publishing blocked",
+                )
+              : session.dirty
+                ? tr(locale, "LOCAL · cambios sin publicar", "LOCAL · unpublished changes")
+                : "LOCAL · 0 D1"}
           </span>
           <button
             className="ghost small"
@@ -726,7 +769,7 @@ export function TournamentDayWorkspace(props: Props) {
           >
             {tr(locale, "Abrir TV", "Open TV")} ↗
           </button>
-          <button className="light small" disabled={Boolean(busy)} onClick={() => void publish(false)}>
+          <button className="light small" disabled={Boolean(busy) || qaFixtureActive} onClick={() => void publish(false)}>
             {busy === "publish" ? "…" : tr(locale, "Publicar checkpoint", "Publish checkpoint")}
           </button>
         </div>
@@ -742,8 +785,8 @@ export function TournamentDayWorkspace(props: Props) {
           <span>{tr(locale, "pendientes", "pending")}</span>
         </div>
         <div>
-          <strong>{snapshot.workspace.participants.players.length}</strong>
-          <span>{tr(locale, "jugadores locales", "local players")}</span>
+          <strong>{activeDayParticipantCount(snapshot)}</strong>
+          <span>{tr(locale, "jugadores activos", "active players")}</span>
         </div>
         <div>
           <strong>{session.publishedRevision}</strong>
