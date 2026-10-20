@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import {
   buildCompetitionFromGroups,
+  generateFinalPhase,
   generateGlobalTournamentSchedule,
   generateTeamRoundRobinEncounters,
   knockoutRoundLabel,
@@ -2070,6 +2071,41 @@ function replaceAndSyncStandardCompetition(
   else competitions.push(competition);
 
   syncStandardCompetition(snapshot, competition);
+}
+
+export function rebuildDayStandardFinalPhase(
+  snapshot: TournamentDayReformSnapshot,
+  categoryId: string,
+) {
+  const competition = (snapshot.workspace.standard.competitions as Competition[]).find(
+    (candidate) => String(candidate.categoryId) === categoryId,
+  );
+
+  if (!competition) throw new Error("STANDARD_COMPETITION_NOT_FOUND");
+
+  const groupEncounters = competition.encounters.filter(
+    (encounter) => encounter.stage === "group",
+  );
+
+  if (!groupEncounters.length) {
+    throw new Error("STANDARD_GROUP_STAGE_NOT_FOUND");
+  }
+
+  if (groupEncounters.some((encounter) => encounter.status !== "finished")) {
+    throw new Error("GROUP_STAGE_INCOMPLETE");
+  }
+
+  const rebuilt = generateFinalPhase({
+    ...competition,
+    encounters: cloneDay(groupEncounters),
+    finalGenerated: false,
+  });
+
+  replaceAndSyncStandardCompetition(snapshot, rebuilt);
+  markStructureDirty(snapshot);
+  markLiveDirty(snapshot);
+
+  return rebuilt;
 }
 
 export function clearDayCategoryResults(snapshot: TournamentDayReformSnapshot, categoryId: string) {

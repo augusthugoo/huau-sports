@@ -14,6 +14,7 @@ import {
   previewAdminMerge,
   publicReadModelHasPrivateKeys,
   regenerateGlobalSchedule,
+  rebuildDayStandardFinalPhase,
   removeParticipantFromCategory,
   setParticipantNoShow,
   updateDayParticipant,
@@ -295,6 +296,149 @@ describe("provisional Standard playoff scheduling", () => {
     expect(regeneratedFinal).toBeTruthy();
     expect(regeneratedFinal.roundLabel).toBe("Final");
     expect(Number(regeneratedFinal.startAt)).toBeGreaterThan(0);
+  });
+});
+
+describe("rebuilding Standard final phase", () => {
+  it("preserves group results and replaces a stale playoff with crossed quarterfinals", () => {
+    const local = snapshot();
+    ensureDayLocalMeta(local);
+
+    const base = buildCompetitionFromGroups({
+      id: "competition:c1",
+      categoryId: "c1",
+      groups: [
+        {
+          id: "group-A",
+          name: "A",
+          entries: ["A1", "A2", "A3", "A4", "A5"].map((id, index) => ({
+            id,
+            name: id,
+            participantIds: [`pa${index + 1}`],
+            rating: 10 - index,
+          })),
+        },
+        {
+          id: "group-B",
+          name: "B",
+          entries: ["B1", "B2", "B3", "B4", "B5"].map((id, index) => ({
+            id,
+            name: id,
+            participantIds: [`pb${index + 1}`],
+            rating: 10 - index,
+          })),
+        },
+      ],
+      format: {
+        qualifiersPerGroup: 4,
+        wildcardQualifiers: 0,
+        playoffMode: "standard",
+        avoidGroupRematches: true,
+        bronzeMatch: false,
+      },
+    });
+
+    for (const encounter of base.encounters) {
+      if (encounter.stage !== "group" || !encounter.entryA || !encounter.entryB) continue;
+
+      const rankA = Number(encounter.entryA.id.slice(1));
+      const rankB = Number(encounter.entryB.id.slice(1));
+      const aWins = rankA < rankB;
+
+      encounter.status = "finished";
+      encounter.scoreA = aWins ? 15 : 6;
+      encounter.scoreB = aWins ? 6 : 15;
+      encounter.winnerEntryId = aWins ? encounter.entryA.id : encounter.entryB.id;
+      encounter.sets = [{
+        scoreA: encounter.scoreA,
+        scoreB: encounter.scoreB,
+      }];
+    }
+
+    const groupBefore = base.encounters
+      .filter((encounter) => encounter.stage === "group")
+      .map((encounter) => ({
+        id: encounter.id,
+        status: encounter.status,
+        scoreA: encounter.scoreA,
+        scoreB: encounter.scoreB,
+        winnerEntryId: encounter.winnerEntryId,
+      }));
+
+    const stale = generateFinalPhase(base);
+
+    const quarterfinals = stale.encounters.filter(
+      (encounter) =>
+        encounter.stage !== "group" &&
+        encounter.stage !== "consolation" &&
+        encounter.roundNumber === 1,
+    );
+
+    const q1 = quarterfinals[0];
+    const groupA = stale.groups.find((group) => group.id === "group-A");
+
+    if (!q1 || !groupA?.entries[0] || !groupA.entries[3]) {
+      throw new Error("EXPECTED_STALE_QUARTERFINAL");
+    }
+
+    // Simula el bug real del torneo: A1-A4.
+    q1.entryA = groupA.entries[0];
+    q1.entryB = groupA.entries[3];
+    q1.status = "finished";
+    q1.scoreA = 15;
+    q1.scoreB = 10;
+    q1.winnerEntryId = q1.entryA.id;
+    q1.sets = [{ scoreA: 15, scoreB: 10 }];
+
+    local.workspace.standard.competitions = [stale];
+    syncStandardCompetition(local, stale);
+
+    rebuildDayStandardFinalPhase(local, "c1");
+
+    const rebuilt = (
+      local.workspace.standard.competitions as Competition[]
+    ).find((competition) => competition.categoryId === "c1");
+
+    if (!rebuilt) {
+      throw new Error("EXPECTED_REBUILT_FINAL_PHASE");
+    }
+
+    const groupAfter = rebuilt.encounters
+      .filter((encounter) => encounter.stage === "group")
+      .map((encounter) => ({
+        id: encounter.id,
+        status: encounter.status,
+        scoreA: encounter.scoreA,
+        scoreB: encounter.scoreB,
+        winnerEntryId: encounter.winnerEntryId,
+      }));
+
+    expect(groupAfter).toEqual(groupBefore);
+
+    const rebuiltQuarterfinals = rebuilt.encounters.filter(
+      (encounter) =>
+        encounter.stage !== "group" &&
+        encounter.stage !== "consolation" &&
+        encounter.roundNumber === 1,
+    );
+
+    expect(
+      rebuiltQuarterfinals.map((encounter) => [
+        encounter.entryA?.id,
+        encounter.entryB?.id,
+      ]),
+    ).toEqual([
+      ["A1", "B4"],
+      ["A2", "B3"],
+      ["A3", "B2"],
+      ["A4", "B1"],
+    ]);
+
+    expect(
+      rebuilt.encounters
+        .filter((encounter) => encounter.stage !== "group")
+        .every((encounter) => encounter.status !== "finished"),
+    ).toBe(true);
   });
 });
 

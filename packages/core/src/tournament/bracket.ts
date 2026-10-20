@@ -102,11 +102,62 @@ function assignPoolToSeedNumbers(input: {
   return { bySeed, fallback: input.avoidRematches && !avoided };
 }
 
+function crossedTwoGroupSlots(
+  qualifiers: QualifiedEntry[],
+  bracketSize: number,
+  avoidGroupRematches: boolean,
+): BracketBuildResult | null {
+  if (!avoidGroupRematches || qualifiers.length !== bracketSize) return null;
+
+  const groupIds = [...new Set(qualifiers.map((entry) => entry.groupId))];
+  if (groupIds.length !== 2) return null;
+
+  const left = qualifiers
+    .filter((entry) => entry.groupId === groupIds[0])
+    .sort((a, b) => a.position - b.position);
+
+  const right = qualifiers
+    .filter((entry) => entry.groupId === groupIds[1])
+    .sort((a, b) => a.position - b.position);
+
+  if (!left.length || left.length !== right.length) return null;
+
+  for (let index = 0; index < left.length; index += 1) {
+    if (
+      left[index]?.position !== index + 1 ||
+      right[index]?.position !== index + 1
+    ) {
+      return null;
+    }
+  }
+
+  const slots: Array<QualifiedEntry | null> = [];
+
+  for (let index = 0; index < left.length; index += 1) {
+    slots.push(
+      left[index] ?? null,
+      right[right.length - 1 - index] ?? null,
+    );
+  }
+
+  return {
+    slots,
+    rematchFallback: false,
+  };
+}
+
 export function buildBracketSlots(
   qualifiers: QualifiedEntry[],
   bracketSize: number,
   format: StandardCompetitionFormat,
 ): BracketBuildResult {
+  const crossed = crossedTwoGroupSlots(
+    qualifiers,
+    bracketSize,
+    format.avoidGroupRematches,
+  );
+  if (crossed) return crossed;
+
   const firsts = qualifiers.filter((entry) => entry.position === 1).sort(compareSeedPerformance);
   let seconds = qualifiers.filter((entry) => entry.position === 2).sort(compareSeedPerformance);
   const rest = qualifiers.filter((entry) => entry.position > 2).sort(compareSeedPerformance);

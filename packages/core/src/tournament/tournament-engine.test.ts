@@ -176,6 +176,62 @@ describe("Phase 2 tournament engine parity fixtures", () => {
     expect(qualified[2]?.entry.id).toBe("A2");
   });
 
+  it("two-groups-top4: crosses positions without same-group quarterfinals", () => {
+    let value = competition(
+      [
+        group("A", ["A1", "A2", "A3", "A4", "A5"]),
+        group("B", ["B1", "B2", "B3", "B4", "B5"]),
+      ],
+      {
+        qualifiersPerGroup: 4,
+        wildcardQualifiers: 0,
+        playoffMode: "standard",
+        avoidGroupRematches: true,
+        bronzeMatch: false,
+      },
+    );
+
+    value = scoreByStrength(value);
+
+    const qualifiers = qualifiedEntries(value);
+    expect(qualifiers).toHaveLength(8);
+
+    const bracket = buildBracketSlots(qualifiers, 8, value.format);
+
+    expect(
+      Array.from({ length: 4 }, (_, index) => [
+        bracket.slots[index * 2]?.entry.id,
+        bracket.slots[index * 2 + 1]?.entry.id,
+      ]),
+    ).toEqual([
+      ["A1", "B4"],
+      ["A2", "B3"],
+      ["A3", "B2"],
+      ["A4", "B1"],
+    ]);
+
+    value = generateFinalPhase(value);
+
+    const quarterfinals = value.encounters.filter(
+      (match) =>
+        match.stage !== "group" &&
+        match.roundNumber === 1 &&
+        match.stage !== "consolation",
+    );
+
+    expect(
+      quarterfinals.map((match) => [
+        match.entryA?.id,
+        match.entryB?.id,
+      ]),
+    ).toEqual([
+      ["A1", "B4"],
+      ["A2", "B3"],
+      ["A3", "B2"],
+      ["A4", "B1"],
+    ]);
+  });
+
   it("standard-bracket-6-to-8-with-byes: seeds six qualifiers into an eight-slot bracket with two byes", () => {
     let value = competition(
       [group("A", ["A1", "A2", "A3"]), group("B", ["B1", "B2", "B3"]), group("C", ["C1", "C2", "C3"])],
