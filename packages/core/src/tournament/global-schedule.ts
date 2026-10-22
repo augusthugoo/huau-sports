@@ -21,11 +21,14 @@ export type GlobalScheduleUnit = {
   participants: string[];
   dependencyIds?: string[];
   dependencyRestSlots?: number;
+  dependencyRestMinutes?: number;
   notBefore?: string | null;
   notAfter?: string | null;
   durationMinutes: number;
   minimumRestSlots?: number;
   preferredRestSlots?: number;
+  minimumRestMinutes?: number;
+  preferredRestMinutes?: number;
   priority?: number;
   groupId?: string | null;
   groupName?: string | null;
@@ -67,6 +70,8 @@ export type GlobalScheduleSettings = {
   defaultMatchMinutes: number;
   minimumRestSlots: number;
   preferredRestSlots?: number;
+  minimumRestMinutes?: number;
+  preferredRestMinutes?: number;
   stepMinutes?: number;
   regenerateOnlyUnlocked?: boolean;
 };
@@ -168,6 +173,12 @@ function participantRestOk(
   const unitParticipants = new Set(unit.participants.filter(Boolean));
   if (!unitParticipants.size) return true;
 
+  const hardMinutes = unit.minimumRestMinutes ?? settings.minimumRestMinutes;
+  const targetMinutes = unit.preferredRestMinutes ?? settings.preferredRestMinutes;
+  const explicitMinutes = preferred
+    ? targetMinutes ?? hardMinutes
+    : hardMinutes;
+
   const slots = preferred
     ? Math.max(
         unit.preferredRestSlots ??
@@ -190,9 +201,11 @@ function participantRestOk(
     }
 
     const restMs =
-      slots *
-      Math.max(restSlotMinutes(unit), restSlotMinutes(other)) *
-      MINUTE;
+      explicitMinutes !== undefined
+        ? Math.max(0, Number(explicitMinutes)) * MINUTE
+        : slots *
+          Math.max(restSlotMinutes(unit), restSlotMinutes(other)) *
+          MINUTE;
 
     if (assignment.endAt <= startAt) {
       return startAt - assignment.endAt >= restMs;
@@ -237,6 +250,7 @@ function dependencyReadyAt(
   assignmentsByUnit: Map<string, GlobalScheduleAssignment>,
   unitsById: Map<string, GlobalScheduleUnit>,
 ) {
+  const explicitMinutes = unit.dependencyRestMinutes;
   const slots = Math.max(0, Number(unit.dependencyRestSlots ?? 0));
   return Math.max(
     0,
@@ -244,10 +258,14 @@ function dependencyReadyAt(
       const assignment = assignmentsByUnit.get(dependencyId);
       if (!assignment) return 0;
       const dependency = unitsById.get(dependencyId);
-      const restMinutes = dependency
+      const slotMinutes = dependency
         ? Math.max(restSlotMinutes(unit), restSlotMinutes(dependency))
         : restSlotMinutes(unit);
-      return assignment.endAt + slots * restMinutes * MINUTE;
+      const restMinutes =
+        explicitMinutes !== undefined
+          ? Math.max(0, Number(explicitMinutes))
+          : slots * slotMinutes;
+      return assignment.endAt + restMinutes * MINUTE;
     }),
   );
 }
@@ -257,6 +275,8 @@ function dependencyPreferredReadyAt(
   assignmentsByUnit: Map<string, GlobalScheduleAssignment>,
   unitsById: Map<string, GlobalScheduleUnit>,
 ) {
+  const hardMinutes = unit.dependencyRestMinutes;
+  const targetMinutes = unit.preferredRestMinutes;
   const slots = Math.max(
     Number(unit.dependencyRestSlots ?? 0),
     Number(unit.preferredRestSlots ?? unit.dependencyRestSlots ?? 0),
@@ -267,10 +287,14 @@ function dependencyPreferredReadyAt(
       const assignment = assignmentsByUnit.get(dependencyId);
       if (!assignment) return 0;
       const dependency = unitsById.get(dependencyId);
-      const restMinutes = dependency
+      const slotMinutes = dependency
         ? Math.max(restSlotMinutes(unit), restSlotMinutes(dependency))
         : restSlotMinutes(unit);
-      return assignment.endAt + slots * restMinutes * MINUTE;
+      const restMinutes =
+        targetMinutes !== undefined || hardMinutes !== undefined
+          ? Math.max(0, Number(targetMinutes ?? hardMinutes ?? 0))
+          : slots * slotMinutes;
+      return assignment.endAt + restMinutes * MINUTE;
     }),
   );
 }
