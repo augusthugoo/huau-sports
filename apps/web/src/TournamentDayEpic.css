@@ -253,3 +253,36 @@
 .epic-flow-same-day:hover{border-color:#454545;color:#f0f0ec}
 .td-schedule-rest-authority{display:grid;gap:3px;align-self:stretch;align-content:center;border:1px solid #242424;border-radius:11px;padding:8px 10px;background:#090909}
 .td-schedule-rest-authority b{font-size:.61rem;letter-spacing:.08em}.td-schedule-rest-authority span{font-size:.67rem;color:#777}
+
+
+/* HUAU operational blocks hotfix */
+.epic-day-windows{display:grid;gap:12px;padding:14px;border:1px solid rgba(255,255,255,.09);border-radius:18px;background:#050505}
+.epic-day-windows>header{display:flex;gap:10px;align-items:baseline;justify-content:space-between;flex-wrap:wrap}
+.epic-day-windows>header small{color:#969696}
+.epic-day-windows>div{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
+.epic-day-windows article{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;align-items:end;padding:12px;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:#0a0a0a}
+.epic-day-windows article>b{grid-column:1/-1;font-size:13px;letter-spacing:.04em}
+.epic-day-windows label,.epic-final-link{display:grid;gap:4px}
+.epic-day-windows label span,.epic-final-link span{font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.05em}
+.epic-final-link{margin-top:8px;max-width:240px}
+.epic-flow-row{align-items:start}
+.epic-flow-row select{min-width:0}
+.td-schedule-authority-note{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 12px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:#080808}
+.td-schedule-authority-note span{color:#999;font-size:12px}
+.td-court-grid-panel{overflow:hidden}
+.td-court-grid{display:grid;gap:6px;overflow-x:auto}
+.td-court-grid-head,.td-court-grid-row{display:grid;gap:6px;min-width:760px}
+.td-court-grid-head{position:sticky;top:0;z-index:1;background:#080808;padding:6px;border-radius:10px}
+.td-court-grid-head b{font-size:11px;color:#aaa;text-transform:uppercase;letter-spacing:.04em}
+.td-court-grid-wave{display:grid;gap:4px}
+.td-court-grid-row time{font-weight:800;font-variant-numeric:tabular-nums;padding:10px 6px}
+.td-court-grid-cell{min-height:58px;padding:8px 10px;border-radius:10px;border:1px solid rgba(255,255,255,.08);display:grid;gap:2px;align-content:center}
+.td-court-grid-cell.busy{background:#101010}
+.td-court-grid-cell.idle{background:#050505;color:#555}
+.td-court-grid-cell strong{font-size:12px}
+.td-court-grid-cell span,.td-court-grid-cell small{font-size:10px;color:#999;white-space:normal}
+.td-reservation-note{margin-left:88px;color:#d0ad62;font-size:10px}
+.td-schedule-fine-edit{border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:10px;background:#070707}
+.td-schedule-fine-edit>summary{cursor:pointer;font-weight:700;color:#aaa}
+.td-schedule-fine-edit[open]>summary{margin-bottom:12px}
+@media (max-width:900px){.epic-day-windows article{grid-template-columns:1fr}.epic-day-windows article>b{grid-column:auto}.td-reservation-note{margin-left:0}}

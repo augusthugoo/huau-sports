@@ -336,3 +336,180 @@ it("releases courts from a short anchored category to the next queue item", () =
   const cStart = Math.min(...result.assignments.filter((row) => row.categoryId === "C").map((row) => row.startAt));
   expect(cStart).toBe(new Date("2026-11-15T09:15:00").getTime());
 });
+
+it("keeps a strict reserved court idle instead of leaking it to the next category", () => {
+  const result = generateGlobalTournamentSchedule({
+    settings: {
+      ...base,
+      dailyStart: "09:00",
+      dailyEnd: "11:00",
+      courtCount: 4,
+      minimumRestSlots: 0,
+      preferredRestSlots: 0,
+    },
+    units: [
+      standard("a1", "A", ["shared", "a"], {
+        durationMinutes: 15,
+        minimumRestMinutes: 15,
+        preferredRestMinutes: 15,
+        reservationKey: "A",
+        reservationMode: "strict",
+        reservedCourts: 2,
+        reservationBlock: 1,
+        reservationOrder: 1,
+        maxConcurrentCourts: 2,
+      }),
+      standard("a2", "A", ["shared", "b"], {
+        durationMinutes: 15,
+        minimumRestMinutes: 15,
+        preferredRestMinutes: 15,
+        reservationKey: "A",
+        reservationMode: "strict",
+        reservedCourts: 2,
+        reservationBlock: 1,
+        reservationOrder: 1,
+        maxConcurrentCourts: 2,
+      }),
+      standard("b1", "B", ["b1", "b2"], {
+        durationMinutes: 15,
+        reservationKey: "B",
+        reservationMode: "strict",
+        reservedCourts: 2,
+        reservationBlock: 1,
+        reservationOrder: 2,
+        maxConcurrentCourts: 2,
+      }),
+      standard("b2", "B", ["b3", "b4"], {
+        durationMinutes: 15,
+        reservationKey: "B",
+        reservationMode: "strict",
+        reservedCourts: 2,
+        reservationBlock: 1,
+        reservationOrder: 2,
+        maxConcurrentCourts: 2,
+      }),
+      standard("b3", "B", ["b5", "b6"], {
+        durationMinutes: 15,
+        reservationKey: "B",
+        reservationMode: "strict",
+        reservedCourts: 2,
+        reservationBlock: 1,
+        reservationOrder: 2,
+        maxConcurrentCourts: 2,
+      }),
+      standard("b4", "B", ["b7", "b8"], {
+        durationMinutes: 15,
+        reservationKey: "B",
+        reservationMode: "strict",
+        reservedCourts: 2,
+        reservationBlock: 1,
+        reservationOrder: 2,
+        maxConcurrentCourts: 2,
+      }),
+      standard("c1", "C", ["c1", "c2"], {
+        durationMinutes: 15,
+        reservationKey: "C",
+        reservationMode: "strict",
+        reservedCourts: 4,
+        reservationBlock: 2,
+        reservationOrder: 3,
+        maxConcurrentCourts: 4,
+      }),
+    ],
+  });
+
+  const c = result.assignments.find((row) => row.unitId === "c1")!;
+  expect(c.startAt).toBeGreaterThanOrEqual(
+    new Date("2026-11-15T09:30:00").getTime(),
+  );
+});
+
+it("releases a finished strict reservation progressively to the next queue item", () => {
+  const result = generateGlobalTournamentSchedule({
+    settings: {
+      ...base,
+      dailyStart: "09:00",
+      dailyEnd: "11:00",
+      courtCount: 4,
+      minimumRestSlots: 0,
+      preferredRestSlots: 0,
+    },
+    units: [
+      standard("a1", "A", ["a1", "a2"], {
+        durationMinutes: 30,
+        reservationKey: "A",
+        reservationMode: "strict",
+        reservedCourts: 2,
+        reservationBlock: 1,
+        reservationOrder: 1,
+        maxConcurrentCourts: 2,
+      }),
+      standard("a2", "A", ["a3", "a4"], {
+        durationMinutes: 30,
+        reservationKey: "A",
+        reservationMode: "strict",
+        reservedCourts: 2,
+        reservationBlock: 1,
+        reservationOrder: 1,
+        maxConcurrentCourts: 2,
+      }),
+      standard("a3", "A", ["a5", "a6"], {
+        durationMinutes: 30,
+        reservationKey: "A",
+        reservationMode: "strict",
+        reservedCourts: 2,
+        reservationBlock: 1,
+        reservationOrder: 1,
+        maxConcurrentCourts: 2,
+      }),
+      standard("b1", "B", ["b1", "b2"], {
+        durationMinutes: 15,
+        reservationKey: "B",
+        reservationMode: "strict",
+        reservedCourts: 2,
+        reservationBlock: 1,
+        reservationOrder: 2,
+        maxConcurrentCourts: 2,
+      }),
+      standard("b2", "B", ["b3", "b4"], {
+        durationMinutes: 15,
+        reservationKey: "B",
+        reservationMode: "strict",
+        reservedCourts: 2,
+        reservationBlock: 1,
+        reservationOrder: 2,
+        maxConcurrentCourts: 2,
+      }),
+      standard("c1", "C", ["c1", "c2"], {
+        durationMinutes: 15,
+        reservationKey: "C",
+        reservationMode: "strict",
+        reservedCourts: 4,
+        reservationBlock: 2,
+        reservationOrder: 3,
+        maxConcurrentCourts: 4,
+      }),
+      standard("c2", "C", ["c3", "c4"], {
+        durationMinutes: 15,
+        reservationKey: "C",
+        reservationMode: "strict",
+        reservedCourts: 4,
+        reservationBlock: 2,
+        reservationOrder: 3,
+        maxConcurrentCourts: 4,
+      }),
+    ],
+  });
+
+  const cStart = Math.min(
+    ...result.assignments
+      .filter((row) => row.categoryId === "C")
+      .map((row) => row.startAt),
+  );
+  expect(cStart).toBe(new Date("2026-11-15T09:15:00").getTime());
+  expect(
+    result.assignments.filter(
+      (row) => row.categoryId === "C" && row.startAt === cStart,
+    ),
+  ).toHaveLength(2);
+});

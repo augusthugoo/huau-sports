@@ -40,6 +40,11 @@ export type GlobalScheduleUnit = {
   preferredCourts?: number[];
   exclusiveCourts?: number[];
   maxConcurrentCourts?: number | null;
+  reservationKey?: string | null;
+  reservationMode?: "strict" | "flexible" | null;
+  reservedCourts?: number | null;
+  reservationBlock?: number | null;
+  reservationOrder?: number | null;
   rubbers?: GlobalScheduleRubber[];
 };
 
@@ -449,6 +454,126 @@ function categoryConcurrencyOk(
   return simultaneous < max;
 }
 
+
+
+type StrictReservationState = {
+  key: string;
+  block: number;
+  order: number;
+  requested: number;
+  units: GlobalScheduleUnit[];
+};
+
+function reservationCapacityOk(
+  unit: GlobalScheduleUnit,
+  startAt: number,
+  endAt: number,
+  assignments: GlobalScheduleAssignment[],
+  units: GlobalScheduleUnit[],
+  assignmentsByUnit: Map<string, GlobalScheduleAssignment>,
+  settings: GlobalScheduleSettings,
+  courtCount: number,
+) {
+  if (unit.reservationBlock === null || unit.reservationBlock === undefined) {
+    return true;
+  }
+
+  const candidateBlock = Math.max(1, Number(unit.reservationBlock ?? 1));
+  const groups = new Map<string, StrictReservationState>();
+
+  for (const candidate of units) {
+    if (
+      candidate.date !== unit.date ||
+      candidate.reservationMode !== "strict" ||
+      !candidate.reservationKey
+    ) {
+      continue;
+    }
+
+    const block = Math.max(1, Number(candidate.reservationBlock ?? 1));
+    if (block > candidateBlock) continue;
+
+    const requested = Math.max(0, Math.trunc(Number(candidate.reservedCourts ?? 0)));
+    if (!requested) continue;
+
+    const key = candidate.reservationKey;
+    const current = groups.get(key);
+    if (current) {
+      current.block = Math.min(current.block, block);
+      current.order = Math.min(
+        current.order,
+        Math.max(1, Number(candidate.reservationOrder ?? 999)),
+      );
+      current.requested = Math.max(current.requested, requested);
+      current.units.push(candidate);
+    } else {
+      groups.set(key, {
+        key,
+        block,
+        order: Math.max(1, Number(candidate.reservationOrder ?? 999)),
+        requested,
+        units: [candidate],
+      });
+    }
+  }
+
+  const active = [...groups.values()]
+    .filter((group) => {
+      const gateAt = Math.min(
+        ...group.units.map((candidate) =>
+          localDateMinute(
+            candidate.date,
+            parseClock(candidate.notBefore ?? settings.dailyStart),
+          ),
+        ),
+      );
+      if (startAt < gateAt) return false;
+
+      const assigned = group.units
+        .map((candidate) => assignmentsByUnit.get(candidate.id))
+        .filter(Boolean) as GlobalScheduleAssignment[];
+      if (assigned.length < group.units.length) return true;
+
+      const lastEnd = Math.max(0, ...assigned.map((assignment) => assignment.endAt));
+      return lastEnd > startAt;
+    })
+    .sort(
+      (a, b) =>
+        a.block - b.block ||
+        a.order - b.order ||
+        a.key.localeCompare(b.key),
+    );
+
+  let remaining = courtCount;
+  const allocations = new Map<string, number>();
+  for (const group of active) {
+    const allocation = Math.max(0, Math.min(group.requested, remaining));
+    allocations.set(group.key, allocation);
+    remaining -= allocation;
+  }
+
+  const overlapping = assignments.filter((assignment) =>
+    intervalsOverlap(startAt, endAt, assignment.startAt, assignment.endAt),
+  );
+  const ownKey = unit.reservationKey ?? null;
+  const ownAllocation = ownKey ? allocations.get(ownKey) : undefined;
+
+  if (ownAllocation !== undefined) {
+    const ownUsed = overlapping.filter((assignment) => {
+      const scheduled = units.find((candidate) => candidate.id === assignment.unitId);
+      return scheduled?.reservationKey === ownKey;
+    }).length;
+    return ownUsed < ownAllocation;
+  }
+
+  const outsiderUsed = overlapping.filter((assignment) => {
+    const scheduled = units.find((candidate) => candidate.id === assignment.unitId);
+    return !scheduled?.reservationKey || !allocations.has(scheduled.reservationKey);
+  }).length;
+
+  return outsiderUsed < remaining;
+}
+
 function stageOrder(unit: GlobalScheduleUnit) {
   if (unit.stage === "group") return 0;
   if (unit.stage === "playoff") return 1;
@@ -579,6 +704,16 @@ export function generateGlobalTournamentSchedule(input: {
       !courtOrder(unit, courtCount, exclusiveOwners).includes(lock.court) ||
       !courtFree(lock.court, lock.startAt, lock.endAt, assignments, closedCourts, breaks) ||
       !categoryConcurrencyOk(unit, lock.startAt, lock.endAt, assignments) ||
+      !reservationCapacityOk(
+        unit,
+        lock.startAt,
+        lock.endAt,
+        assignments,
+        units,
+        assignmentsByUnit,
+        settings,
+        courtCount,
+      ) ||
       !participantRestOk(unit, lock.startAt, lock.endAt, assignments, unitsById, settings, false);
     if (invalid) {
       conflicts.push({
@@ -644,6 +779,16 @@ export function generateGlobalTournamentSchedule(input: {
         const endAt = startAt + durationMs;
         if (endAt > dayEnd) break;
         if (!categoryConcurrencyOk(unit, startAt, endAt, assignments)) continue;
+        if (!reservationCapacityOk(
+          unit,
+          startAt,
+          endAt,
+          assignments,
+          units,
+          assignmentsByUnit,
+          settings,
+          courtCount,
+        )) continue;
 
         for (const court of courtOrder(unit, courtCount, exclusiveOwners)) {
           if (!courtFree(court, startAt, endAt, assignments, closedCourts, breaks)) {
