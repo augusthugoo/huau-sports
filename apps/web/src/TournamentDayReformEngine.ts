@@ -769,13 +769,45 @@ export function setCategoryScheduleDate(
   markStructureDirty(snapshot);
 }
 
+
+function scheduleClockValue(value: string | null | undefined) {
+  const match = /^(\d{2}):(\d{2})$/.exec(String(value ?? "").trim());
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return hour * 60 + minute;
+}
+
+function laterScheduleClock(...values: Array<string | null | undefined>) {
+  const valid = values
+    .map((value) => ({ value: String(value ?? "").trim(), minute: scheduleClockValue(value) }))
+    .filter((row): row is { value: string; minute: number } => row.minute !== null);
+  if (!valid.length) return "";
+  valid.sort((a, b) => b.minute - a.minute);
+  return valid[0]!.value;
+}
+
+function earlierScheduleClock(...values: Array<string | null | undefined>) {
+  const valid = values
+    .map((value) => ({ value: String(value ?? "").trim(), minute: scheduleClockValue(value) }))
+    .filter((row): row is { value: string; minute: number } => row.minute !== null);
+  if (!valid.length) return "";
+  valid.sort((a, b) => a.minute - b.minute);
+  return valid[0]!.value;
+}
+
 function applySchedulePolicy(
   snapshot: TournamentDayReformSnapshot,
   units: GlobalScheduleUnit[],
 ): GlobalScheduleUnit[] {
   const settings = snapshot.workspace.core.settings as any;
   const policy = settings.schedulePolicy as
-    | { mode?: string; categories?: Record<string, any> }
+    | {
+        mode?: string;
+        categories?: Record<string, any>;
+        days?: Record<string, { start?: string; end?: string; courts?: number }>;
+      }
     | undefined;
   if (!policy || !policy.categories) return units;
 
@@ -791,7 +823,10 @@ function applySchedulePolicy(
     groupOrder.set(categoryId, new Map(groups.map(([id], index) => [id, index + 1])));
   }
 
-  const manualNotBefore = new Map<string, string>();
+  const manualFlowMeta = new Map<
+    string,
+    { notBefore: string; reservationBlock: number; reservationOrder: number }
+  >();
   if (mode === "manual_flow") {
     for (const phase of ["group", "final"] as const) {
       const representativeDate = new Map<string, string>();
@@ -818,7 +853,9 @@ function applySchedulePolicy(
           const configuredDate = String(
             phase === "group"
               ? rule.groupDate ?? ""
-              : rule.finalDate ?? "",
+              : rule.finalFollowsGroups
+                ? rule.groupDate ?? ""
+                : rule.finalDate ?? "",
           ).trim();
           const date =
             /^\d{4}-\d{2}-\d{2}$/.test(configuredDate)
@@ -827,7 +864,9 @@ function applySchedulePolicy(
           const configuredStart = String(
             phase === "group"
               ? rule.groupNotBefore ?? rule.notBefore ?? ""
-              : rule.finalNotBefore ?? rule.notBefore ?? "",
+              : rule.finalFollowsGroups
+                ? ""
+                : rule.finalNotBefore ?? rule.notBefore ?? "",
           ).trim();
           const explicitStart =
             /^\d{2}:\d{2}$/.test(configuredStart)
@@ -843,21 +882,44 @@ function applySchedulePolicy(
         );
 
       const anchorByDate = new Map<string, string>();
+      const blockStateByDate = new Map<
+        string,
+        { block: number; explicitAnchor: string | null }
+      >();
 
       for (const row of ordered) {
+        const state = blockStateByDate.get(row.date) ?? {
+          block: 0,
+          explicitAnchor: null,
+        };
+
         if (row.explicitStart) {
+          if (state.explicitAnchor !== row.explicitStart) {
+            state.block += 1;
+            state.explicitAnchor = row.explicitStart;
+          }
           anchorByDate.set(row.date, row.explicitStart);
+        } else {
+          state.block += 1;
+          state.explicitAnchor = null;
         }
+
+        blockStateByDate.set(row.date, state);
+        const dayStart = String(
+          policy.days?.[row.date]?.start ??
+            settings.dailyStart ??
+            "09:00",
+        );
         const effectiveStart =
           row.explicitStart ||
           anchorByDate.get(row.date) ||
-          "";
-        if (effectiveStart) {
-          manualNotBefore.set(
-            `${phase}:${row.categoryId}`,
-            effectiveStart,
-          );
-        }
+          dayStart;
+
+        manualFlowMeta.set(`${phase}:${row.categoryId}`, {
+          notBefore: effectiveStart,
+          reservationBlock: Math.max(1, state.block),
+          reservationOrder: row.order,
+        });
       }
     }
   }
@@ -879,21 +941,41 @@ function applySchedulePolicy(
             ? Math.max(1, Number(rule.phase ?? 1))
             : 0;
 
-    const dateCandidate = String(postGroup ? rule.finalDate ?? "" : rule.groupDate ?? "").trim();
+    const dateCandidate = String(
+      postGroup
+        ? rule.finalFollowsGroups
+          ? rule.groupDate ?? ""
+          : rule.finalDate ?? ""
+        : rule.groupDate ?? "",
+    ).trim();
+    const resolvedDate = /^\d{4}-\d{2}-\d{2}$/.test(dateCandidate)
+      ? dateCandidate
+      : unit.date;
     const explicitNotBefore = String(
       postGroup
-        ? rule.finalNotBefore ?? rule.notBefore ?? ""
+        ? rule.finalFollowsGroups
+          ? ""
+          : rule.finalNotBefore ?? rule.notBefore ?? ""
         : rule.groupNotBefore ?? rule.notBefore ?? "",
     ).trim();
-    const inheritedNotBefore =
+    const flowMeta =
       mode === "manual_flow"
-        ? manualNotBefore.get(
+        ? manualFlowMeta.get(
             `${postGroup ? "final" : "group"}:${unit.categoryId}`,
-          ) ?? ""
-        : "";
-    const notBeforeCandidate =
-      explicitNotBefore || inheritedNotBefore;
-    const notAfterCandidate = String(postGroup ? rule.finalNotAfter ?? "" : rule.groupNotAfter ?? "").trim();
+          )
+        : undefined;
+    const inheritedNotBefore = flowMeta?.notBefore ?? "";
+    const dayPolicy = policy.days?.[resolvedDate] ?? {};
+    const dayStart = String(dayPolicy.start ?? settings.dailyStart ?? "09:00");
+    const dayEnd = String(dayPolicy.end ?? settings.dailyEnd ?? "20:00");
+    const notBeforeCandidate = laterScheduleClock(
+      explicitNotBefore || inheritedNotBefore,
+      dayStart,
+    );
+    const phaseNotAfter = String(
+      postGroup ? rule.finalNotAfter ?? "" : rule.groupNotAfter ?? "",
+    ).trim();
+    const notAfterCandidate = earlierScheduleClock(phaseNotAfter, dayEnd);
     const durationCandidate = Math.max(
       5,
       Number(
@@ -942,12 +1024,63 @@ function applySchedulePolicy(
     }
 
     const phaseMaxCourtsRaw = postGroup
-      ? rule.finalMaxConcurrentCourts ?? rule.maxConcurrentCourts
-      : rule.groupMaxConcurrentCourts ?? rule.maxConcurrentCourts;
+      ? rule.finalReservedCourts ?? rule.finalMaxConcurrentCourts ?? rule.maxConcurrentCourts
+      : rule.groupReservedCourts ?? rule.groupMaxConcurrentCourts ?? rule.maxConcurrentCourts;
+    const dayCourtCount = Math.max(
+      0,
+      Math.trunc(Number(dayPolicy.courts ?? 0)),
+    );
+    const reservedCourts =
+      phaseMaxCourtsRaw === null ||
+      phaseMaxCourtsRaw === undefined ||
+      phaseMaxCourtsRaw === ""
+        ? null
+        : Math.max(
+            1,
+            dayCourtCount > 0
+              ? Math.min(dayCourtCount, Number(phaseMaxCourtsRaw))
+              : Number(phaseMaxCourtsRaw),
+          );
+    const reservationMode = String(
+      postGroup
+        ? rule.finalReservationMode ?? rule.reservationMode ?? "strict"
+        : rule.groupReservationMode ?? rule.reservationMode ?? "strict",
+    ) === "flexible"
+      ? "flexible"
+      : "strict";
+    const phaseName = postGroup ? "final" : "group";
+    const attachedFinals = Boolean(rule.finalFollowsGroups);
+    const reservationKey =
+      mode === "manual_flow"
+        ? `manual:${attachedFinals ? "full" : phaseName}:${unit.categoryId}`
+        : null;
+    const configuredAllowedCourts = Array.isArray(rule.allowedCourts)
+      ? rule.allowedCourts.map(Number)
+      : [];
+    const dayAllowedCourts = dayCourtCount > 0
+      ? Array.from({ length: dayCourtCount }, (_, index) => index + 1)
+      : [];
+    const allowedCourts = dayAllowedCourts.length
+      ? configuredAllowedCourts.length
+        ? configuredAllowedCourts.filter((court: number) =>
+            dayAllowedCourts.includes(court),
+          )
+        : dayAllowedCourts
+      : configuredAllowedCourts;
+    const preferredCourts = Array.isArray(rule.preferredCourts)
+      ? rule.preferredCourts
+          .map(Number)
+          .filter((court: number) => !allowedCourts.length || allowedCourts.includes(court))
+      : [];
+    const exclusiveCourts = Array.isArray(rule.exclusiveCourts)
+      ? rule.exclusiveCourts
+          .map(Number)
+          .filter((court: number) => !allowedCourts.length || allowedCourts.includes(court))
+      : [];
 
     return {
       ...unit,
-      date: /^\d{4}-\d{2}-\d{2}$/.test(dateCandidate) ? dateCandidate : unit.date,
+      date: resolvedDate,
       durationMinutes: durationCandidate,
       ...(unit.rubbers
         ? { rubbers: unit.rubbers.map((rubber) => ({ ...rubber, durationMinutes: durationCandidate })) }
@@ -957,10 +1090,17 @@ function applySchedulePolicy(
       policySequenceIndex: sequenceIndex,
       continuityKey:
         mode === "manual_flow"
-          ? `manual:${postGroup ? "final" : "group"}:${unit.categoryId}`
+          ? reservationKey
           : mode === "blocks" || mode === "categories"
             ? `${unit.categoryId}:${phase || legacyOrder}`
             : null,
+      reservationKey,
+      reservationMode: mode === "manual_flow" ? reservationMode : null,
+      reservedCourts: mode === "manual_flow" ? reservedCourts : null,
+      reservationBlock:
+        mode === "manual_flow" ? flowMeta?.reservationBlock ?? operationalOrder : null,
+      reservationOrder:
+        mode === "manual_flow" ? flowMeta?.reservationOrder ?? operationalOrder : null,
       notBefore: /^\d{2}:\d{2}$/.test(notBeforeCandidate) ? notBeforeCandidate : null,
       notAfter: /^\d{2}:\d{2}$/.test(notAfterCandidate) ? notAfterCandidate : null,
       priority:
@@ -977,13 +1117,10 @@ function applySchedulePolicy(
           }
         : {}),
       preferredRestSlots,
-      allowedCourts: Array.isArray(rule.allowedCourts) ? rule.allowedCourts.map(Number) : [],
-      preferredCourts: Array.isArray(rule.preferredCourts) ? rule.preferredCourts.map(Number) : [],
-      exclusiveCourts: Array.isArray(rule.exclusiveCourts) ? rule.exclusiveCourts.map(Number) : [],
-      maxConcurrentCourts:
-        phaseMaxCourtsRaw === null || phaseMaxCourtsRaw === undefined || phaseMaxCourtsRaw === ""
-          ? null
-          : Math.max(1, Number(phaseMaxCourtsRaw)),
+      allowedCourts,
+      preferredCourts,
+      exclusiveCourts,
+      maxConcurrentCourts: reservedCourts,
     };
   });
 }

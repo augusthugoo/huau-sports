@@ -289,7 +289,6 @@ export function IntegralSchedulePanel({ locale, snapshot, mutate }: { locale: Lo
   const scheduleMeta=ensureDayLocalMeta(snapshot).schedule;
   const settings=snapshot.workspace.core.settings as any;
   const categories=snapshot.workspace.core.categories as any[];
-  const manualFlow=String(settings.schedulePolicy?.mode??"")==="manual_flow";
   const preventWheelMutation=(event:any)=>{
     const target=event.target;
     if(
@@ -298,14 +297,33 @@ export function IntegralSchedulePanel({ locale, snapshot, mutate }: { locale: Lo
       document.activeElement===target
     ) target.blur();
   };
-  const saveOperatingWindow=async(event:FormEvent<HTMLFormElement>)=>{event.preventDefault();const data=new FormData(event.currentTarget);await mutate(next=>{const target=next.workspace.core.settings as any;target.dailyStart=String(data.get("dailyStart")??"09:00");target.dailyEnd=String(data.get("dailyEnd")??"20:00");target.defaultMatchMinutes=Math.max(5,Number(data.get("matchMinutes")??30));target.teamRubberMinutes=Math.max(5,Number(data.get("teamRubberMinutes")??target.defaultMatchMinutes));target.minimumRestSlots=Math.max(0,Number(data.get("minimumRestSlots")??0));target.preferredRestSlots=Math.max(target.minimumRestSlots,Number(data.get("preferredRestSlots")??target.minimumRestSlots));(next.workspace.core.tournament as any).courtCount=Math.max(1,Number(data.get("courtCount")??next.workspace.core.tournament.courtCount??1));target.schedulePlanRevision=Number(target.schedulePlanRevision??0)+1;},tr(locale,"Ventana operativa actualizada. Regenerá el cronograma para aplicarla.","Operating window updated. Regenerate the schedule to apply it."),"structure");};
   const conflicts=scheduleMeta.lastConflicts;
-  const standardMinutes=Math.max(5,Number(settings.defaultMatchMinutes??30));
-  const teamRubberMinutes=Math.max(5,Number(settings.teamRubberMinutes??standardMinutes));
-  const minimumRestSlots=Math.max(0,Number(settings.minimumRestSlots??1));
-  const preferredRestSlots=Math.max(minimumRestSlots,Number(settings.preferredRestSlots??settings.minimumRestSlots??1));
-  const teamSeries=(snapshot.team.categories as any[]).map((category)=>({name:String(category.name??"Team"),rubbers:Number(category.format?.encounter?.rubbers?.length??0)})).filter((row)=>row.rubbers>0);
   const blocks=useMemo(()=>{const map=new Map<string,any[]>();for(const row of schedule){const key=String(row.scheduleUnitId??row.id);const list=map.get(key)??[];list.push(row);map.set(key,list)}return [...map.entries()]},[schedule]);
+  const courtCount=Math.max(1,Number(snapshot.workspace.core.tournament.courtCount??1));
+  const waveTimes=useMemo(()=>[...new Set(schedule.flatMap((row:any)=>[Number(row.startAt),Number(row.endAt)]).filter((value)=>Number.isFinite(value)&&value>0))].sort((a,b)=>a-b),[schedule]);
+  const reservationNotes=(at:number)=>{
+    const notes:string[]=[];
+    const policy=settings.schedulePolicy?.categories??{};
+    for(const category of categories){
+      const id=String(category.id);
+      const rule=policy[id]??{};
+      for(const phase of ["group","final"] as const){
+        const strict=String(phase==="group"?rule.groupReservationMode??"strict":rule.finalReservationMode??"strict")!=="flexible";
+        if(!strict)continue;
+        const reserved=Number(phase==="group"?rule.groupReservedCourts??rule.groupMaxConcurrentCourts??0:rule.finalReservedCourts??rule.finalMaxConcurrentCourts??0);
+        if(!reserved)continue;
+        const rows=schedule.filter((row:any)=>String(row.categoryId)===id&&(phase==="group"?String(row.stage??"group")==="group":String(row.stage??"group")!=="group"));
+        if(!rows.length)continue;
+        const first=Math.min(...rows.map((row:any)=>Number(row.startAt)));
+        const last=Math.max(...rows.map((row:any)=>Number(row.endAt)));
+        if(at<first||at>=last)continue;
+        const occupied=rows.filter((row:any)=>Number(row.startAt)<=at&&Number(row.endAt)>at).length;
+        const idle=Math.max(0,reserved-occupied);
+        if(idle>0)notes.push(`${category.name}: ${idle} ${tr(locale,idle===1?"cancha libre reservada":"canchas libres reservadas",idle===1?"reserved idle court":"reserved idle courts")}`);
+      }
+    }
+    return notes;
+  };
   const realBlocks=blocks.filter(([,rows])=>!rows.every((row:any)=>Boolean(row.provisional))).length;
   const provisionalBlocks=blocks.length-realBlocks;
   const schedulePlanDirty=Number(settings.schedulePlanRevision??0)!==Number(settings.scheduleGeneratedPlanRevision??0);
@@ -315,17 +333,41 @@ export function IntegralSchedulePanel({ locale, snapshot, mutate }: { locale: Lo
   const addBreak=async(event:FormEvent<HTMLFormElement>)=>{event.preventDefault();const data=new FormData(event.currentTarget);const start=String(data.get("start")??"");const end=String(data.get("end")??"");await mutate(next=>addScheduleBreak(next,localDateTimeToUnix(start.slice(0,10),start.slice(11,16)),localDateTimeToUnix(end.slice(0,10),end.slice(11,16)),String(data.get("label")??"").trim()||tr(locale,"Descanso","Break")),tr(locale,"Descanso agregado al scheduler.","Scheduler break added."));};
   return <section className="td-stack" onWheelCapture={preventWheelMutation}>
     <article className="panel td-dense-panel">
-      <div className="panel-title"><div><div className="eyebrow">GLOBAL SCHEDULER</div><h2>{tr(locale,"Cronograma completo","Complete schedule")}</h2></div><span>{realBlocks} {tr(locale,"reales","real")} · {provisionalBlocks} {tr(locale,"reservas finales","final reservations")}</span></div>
+      <div className="panel-title"><div><div className="eyebrow">CRONOGRAMA GENERADO</div><h2>{tr(locale,"Operación por cancha y hora","Court-by-time operation")}</h2></div><span>{realBlocks} {tr(locale,"reales","real")} · {provisionalBlocks} {tr(locale,"reservas finales","final reservations")}</span></div>
       {schedulePlanDirty?<div className="td-schedule-dirty"><b>{tr(locale,"PLAN MODIFICADO","PLAN CHANGED")}</b><span>{tr(locale,"El cronograma visible todavía no refleja el último Plan Operativo. Regenerá antes de evaluarlo.","The visible schedule does not yet reflect the latest Operational Plan. Regenerate before evaluating it.")}</span></div>:null}
       <div className="form-actions"><button className="light" onClick={()=>void mutate(next=>{regenerateGlobalSchedule(next)},tr(locale,"Cronograma global regenerado.","Global schedule regenerated."))}>{tr(locale,"Regenerar cronograma completo","Regenerate complete schedule")}</button><button className="ghost" onClick={()=>void mutate(next=>{regenerateGlobalSchedule(next,{onlyUnlocked:true})},tr(locale,"Se regeneró sólo lo no bloqueado.","Only unlocked blocks were regenerated."))}>{tr(locale,"Regenerar solo no bloqueados","Regenerate unlocked only")}</button></div>
-      <p className="muted">{tr(locale,"Standard y Team compiten por las mismas canchas. Team reserva la serie completa en una cancha. Descanso mínimo y fin de jornada son restricciones duras.","Standard and Team share the same court pool. Team reserves the full encounter on one court. Minimum rest and daily end are hard constraints.")}</p>
-      <form className="td-inline-form td-inline-dense td-schedule-window" onSubmit={saveOperatingWindow}><label><span>{tr(locale,"Inicio global / fallback","Global start / fallback")}</span><input name="dailyStart" type="time" defaultValue={String(settings.dailyStart??"09:00")} required /></label><label><span>{tr(locale,"Fin duro global","Global hard end")}</span><input name="dailyEnd" type="time" defaultValue={String(settings.dailyEnd??"20:00")} required /></label><label><span>{tr(locale,"Canchas operativas","Operational courts")}</span><input name="courtCount" type="number" min="1" defaultValue={Math.max(1,Number(snapshot.workspace.core.tournament.courtCount??1))} /></label><label><span>{tr(locale,"Min/partido Standard · fallback","Min/Standard match · fallback")}</span><input name="matchMinutes" type="number" min="5" defaultValue={standardMinutes} /></label><label><span>{tr(locale,"Min/rubber Team","Min/Team rubber")}</span><input name="teamRubberMinutes" type="number" min="5" defaultValue={teamRubberMinutes} /></label>{manualFlow?<><input type="hidden" name="minimumRestSlots" value="0"/><input type="hidden" name="preferredRestSlots" value="0"/><div className="td-schedule-rest-authority"><b>{tr(locale,"DESCANSOS","REST")}</b><span>{tr(locale,"En el modo manual se definen arriba, en minutos y por fase.","In manual mode they are defined above, in minutes and per phase.")}</span></div></>:<><label><span>{tr(locale,"Descanso mínimo (bloques)","Minimum rest (slots)")}</span><input name="minimumRestSlots" type="number" min="0" defaultValue={Number(settings.minimumRestSlots??1)} /></label><label><span>{tr(locale,"Descanso preferido (bloques)","Preferred rest (slots)")}</span><input name="preferredRestSlots" type="number" min="0" defaultValue={Number(settings.preferredRestSlots??settings.minimumRestSlots??1)} /></label></>}<button className="ghost small">{tr(locale,"Guardar ventana","Save window")}</button></form><div className="td-schedule-math"><span><b>{standardMinutes} min</b><small>{tr(locale,"duración de cada partido Standard","each Standard match")}</small></span><span><b>{teamRubberMinutes} min</b><small>{tr(locale,"duración estimada de cada rubber Team","each Team rubber")}</small></span>{!manualFlow?<><span><b>{minimumRestSlots} {tr(locale,"partido(s)","match(es)")}</b><small>{tr(locale,"descanso mínimo; se convierte usando la duración efectiva de cada categoría/fase","minimum rest; converted using each category/phase effective duration")}</small></span><span><b>{preferredRestSlots} {tr(locale,"partido(s)","match(es)")}</b><small>{tr(locale,"descanso preferido; el scheduler puede ceder hasta el mínimo si hace falta","preferred rest; scheduler may fall back to the minimum when needed")}</small></span></>:null}{teamSeries.map((row)=><span key={row.name}><b>{row.rubbers} × {teamRubberMinutes} = {row.rubbers*teamRubberMinutes} min</b><small>{row.name} · {tr(locale,"reserva estimada de serie completa; el scheduler usa una grilla de 1 min","estimated full encounter reservation; scheduler uses a 1 min grid")}</small></span>)}</div>
+      <p className="muted">{tr(locale,"El motor respeta las reservas del Plan Operativo, cruces de jugadores, descansos y dependencias. Una cancha libre puede ser intencional si pertenece a una reserva estricta.","The engine respects Operational Plan reservations, participant overlaps, rest and dependencies. An idle court can be intentional when it belongs to a strict reservation.")}</p>
+      <div className="td-schedule-authority-note"><b>{tr(locale,"La configuración vive en Plan Operativo","Configuration lives in Operational Plan")}</b><span>{tr(locale,"Acá sólo regenerás, revisás conflictos y editás excepciones puntuales. No hay una segunda ventana global que mantener.","Here you only regenerate, review conflicts and edit specific exceptions. There is no second global window to maintain.")}</span></div>
       {conflicts.length ? <details className="td-conflict-summary"><summary><div><b>{rootConflicts.length} {tr(locale,"problema(s) raíz","root issue(s)")} · {cascadeConflicts.length} {tr(locale,"consecuencia(s)","downstream consequence(s)")}</b><span>{tr(locale,"Primero resolvé capacidad/ventanas. Las dependencias posteriores pueden caer sólo porque una ronda anterior no entró.","Resolve capacity/windows first. Later dependencies may fail only because an earlier round did not fit.")}</span></div><em>{tr(locale,"Ver detalles","Details")}</em></summary><div className="td-conflict-details">{rootConflicts.map((conflict,index)=><div className="warning-line" key={`root-${conflict.code}-${index}`}><b>{conflict.code}</b> · {conflict.message}</div>)}{cascadeConflicts.length?<div className="td-conflict-cascade"><strong>{tr(locale,"Consecuencias por dependencia","Dependency consequences")}</strong>{cascadeConflicts.map((conflict,index)=><div className="warning-line" key={`cascade-${index}`}><b>{conflict.code}</b> · {conflict.message}</div>)}</div>:null}</div></details> : null}
     </article>
     <article className="panel td-schedule-category-days">
       <div className="panel-title"><div><div className="eyebrow">AUTORIDAD OPERATIVA</div><h2>{tr(locale,"Las fases mandan","Phase plan is authoritative")}</h2></div></div>
       <p className="muted">{tr(locale,"Las fechas de Administración son referencia. Día de grupos y día de fase final se definen en Plan Operativo; cambiar una fase no arrastra silenciosamente toda la categoría.","Admin dates are reference values. Group day and final-phase day are defined in Operational Plan; changing one phase never silently drags the whole category.")}</p>
       <div className="td-chip-list">{categories.map((category:any)=><span key={category.id}><b>{category.name}</b> · Admin {String(category.scheduledDate??"—")}</span>)}</div>
+    </article>
+    <article className="panel td-court-grid-panel">
+      <div className="panel-title"><div><div className="eyebrow">VISTA OPERATIVA</div><h2>{tr(locale,"Grilla cancha × hora","Court × time grid")}</h2></div></div>
+      {!waveTimes.length?<p className="muted">{tr(locale,"Regenerá el cronograma para ver la grilla.","Regenerate the schedule to see the grid.")}</p>:<div className="td-court-grid">
+        <div className="td-court-grid-head" style={{gridTemplateColumns:`82px repeat(${courtCount}, minmax(150px,1fr))`}}><b>{tr(locale,"Hora","Time")}</b>{Array.from({length:courtCount},(_,index)=><b key={index}>Cancha {index+1}</b>)}</div>
+        {waveTimes.map((at)=>{
+          const active=schedule.filter((row:any)=>Number(row.startAt)<=at&&Number(row.endAt)>at);
+          const notes=reservationNotes(at);
+          if(!active.length&&!notes.length)return null;
+          return <div className="td-court-grid-wave" key={at}>
+            <div className="td-court-grid-row" style={{gridTemplateColumns:`82px repeat(${courtCount}, minmax(150px,1fr))`}}>
+              <time>{new Date(at*1000).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</time>
+              {Array.from({length:courtCount},(_,index)=>{
+                const court=index+1;
+                const row=active.find((candidate:any)=>Number(String(candidate.courtLabel).match(/\d+/)?.[0]??0)===court);
+                return <div className={`td-court-grid-cell ${row?"busy":"idle"}`} key={court}>
+                  {row?<><strong>{row.categoryName}</strong><span>{row.sideA&&row.sideB?`${row.sideA} vs ${row.sideB}`:row.roundLabel??row.stage}</span>{Number(row.startAt)<at?<small>{tr(locale,"en curso","in progress")}</small>:null}</>:<span>—</span>}
+                </div>;
+              })}
+            </div>
+            {notes.length?<small className="td-reservation-note">{tr(locale,"Reserva activa","Active reservation")}: {notes.join(" · ")}</small>:null}
+          </div>;
+        })}
+      </div>}
     </article>
     <article className="panel td-schedule-constraints">
       <div className="panel-title"><div><div className="eyebrow">RESTRICCIONES MANUALES</div><h2>{tr(locale,"Canchas cerradas y descansos","Closed courts & breaks")}</h2></div></div>
@@ -335,7 +377,7 @@ export function IntegralSchedulePanel({ locale, snapshot, mutate }: { locale: Lo
       </div>
       <div className="td-chip-list">{scheduleMeta.closedCourts.map((item,index)=><span key={`court-${index}`}>Cancha {item.court} · {new Date(item.startAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}–{new Date(item.endAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})} · {item.label}</span>)}{scheduleMeta.breaks.map((item,index)=><span key={`break-${index}`}>{item.label} · {new Date(item.startAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}–{new Date(item.endAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</span>)}</div>
     </article>
-    <div className="td-schedule-list">{blocks.map(([blockId,rows])=><ScheduleBlock key={blockId} blockId={blockId} rows={rows} locale={locale} mutate={mutate}/>)}</div>
+    <details className="td-schedule-fine-edit"><summary>{tr(locale,"Edición fina por partido / serie","Fine edit by match / encounter")}</summary><div className="td-schedule-list">{blocks.map(([blockId,rows])=><ScheduleBlock key={blockId} blockId={blockId} rows={rows} locale={locale} mutate={mutate}/>)}</div></details>
   </section>;
 }
 

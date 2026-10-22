@@ -1353,24 +1353,55 @@ function scheduleClockMinutes(value: string) {
 
 function categoryParticipantIds(snapshot: TournamentDayReformSnapshot, categoryId: string) {
   const ids = new Set<string>();
+  const canonical = (value: unknown) => {
+    const raw = String(value ?? "");
+    if (!raw) return "";
+    const player = (snapshot.workspace.participants.players as any[]).find((candidate) =>
+      [candidate.id, candidate.organizationPersonId, candidate.userId]
+        .filter(Boolean)
+        .map(String)
+        .includes(raw),
+    );
+    return String(player?.id ?? raw);
+  };
   for (const row of snapshot.workspace.participants.playerCategories as any[]) {
     if (String(row.categoryId) !== categoryId) continue;
-    for (const value of [row.playerProfileId, row.partnerProfileId]) if (value) ids.add(String(value));
+    for (const value of [row.playerProfileId, row.partnerProfileId]) {
+      const id = canonical(value);
+      if (id) ids.add(id);
+    }
   }
   for (const entry of snapshot.workspace.standard.entries as any[]) {
     if (String(entry.categoryId) !== categoryId) continue;
-    for (const value of entry.localProfileIds ?? []) ids.add(String(value));
+    for (const value of entry.localProfileIds ?? []) {
+      const id = canonical(value);
+      if (id) ids.add(id);
+    }
+  }
+  for (const teamCategory of snapshot.team.categories as any[]) {
+    if (String(teamCategory.id) !== categoryId) continue;
+    for (const entry of teamCategory.entries ?? []) {
+      for (const member of entry.roster ?? []) {
+        const id = canonical(member.personId);
+        if (id) ids.add(id);
+      }
+    }
   }
   return ids;
 }
 
-function sharedParticipantCount(snapshot: TournamentDayReformSnapshot, a: string | null, b: string) {
-  if (!a) return 0;
-  const left = categoryParticipantIds(snapshot, a);
-  const right = categoryParticipantIds(snapshot, b);
-  let count = 0;
-  for (const value of left) if (right.has(value)) count += 1;
-  return count;
+function sharedParticipantSummary(snapshot: TournamentDayReformSnapshot, categoryId: string) {
+  const current = categoryParticipantIds(snapshot, categoryId);
+  return (snapshot.workspace.core.categories as any[])
+    .filter((category) => String(category.id) !== categoryId)
+    .map((category) => {
+      const other = categoryParticipantIds(snapshot, String(category.id));
+      let count = 0;
+      for (const value of current) if (other.has(value)) count += 1;
+      return { id: String(category.id), name: String(category.name), count };
+    })
+    .filter((row) => row.count > 0)
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
 
 function preventScheduleWheelMutation(event: any) {
@@ -1410,6 +1441,36 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
 
   const [groupOrder, setGroupOrder] = useState<string[]>(() => sortedIds("group"));
   const [finalOrder, setFinalOrder] = useState<string[]>(() => sortedIds("final"));
+  const [finalModes, setFinalModes] = useState<Record<string, "after_groups" | "custom">>(() =>
+    Object.fromEntries(
+      categories.map((category) => {
+        const id = String(category.id);
+        return [
+          id,
+          existing.categories?.[id]?.finalFollowsGroups ||
+          (existing.categories?.[id]?.groupDate &&
+            existing.categories?.[id]?.finalDate === existing.categories?.[id]?.groupDate &&
+            !existing.categories?.[id]?.finalNotBefore)
+            ? "after_groups"
+            : "custom",
+        ];
+      }),
+    ),
+  );
+
+  const operationalDays = [...new Set(
+    categories.flatMap((category) => {
+      const id = String(category.id);
+      const rule = existing.categories?.[id] ?? {};
+      const groupDay = String(rule.groupDate ?? fallbackDate(category));
+      const finalDay = String(
+        rule.finalFollowsGroups
+          ? groupDay
+          : rule.finalDate ?? groupDay,
+      );
+      return [groupDay, finalDay];
+    }),
+  )].sort();
 
   useEffect(() => {
     const ids = new Set(categories.map((category) => String(category.id)));
@@ -1421,6 +1482,25 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
       ...current.filter((id) => ids.has(id)),
       ...categories.map((category) => String(category.id)).filter((id) => !current.includes(id)),
     ]);
+    setFinalModes((current) => ({
+      ...Object.fromEntries(
+        categories.map((category) => {
+          const id = String(category.id);
+          return [
+            id,
+            existing.categories?.[id]?.finalFollowsGroups ||
+            (existing.categories?.[id]?.groupDate &&
+              existing.categories?.[id]?.finalDate === existing.categories?.[id]?.groupDate &&
+              !existing.categories?.[id]?.finalNotBefore)
+              ? "after_groups"
+              : "custom",
+          ];
+        }),
+      ),
+      ...Object.fromEntries(
+        Object.entries(current).filter(([id]) => ids.has(id)),
+      ),
+    }));
   }, [categories.length]);
 
   const move = (list: string[], setList: (value: string[]) => void, dragged: string, target: string) => {
@@ -1484,7 +1564,7 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
       result.set(
         id,
         anchorByDate.get(day) ??
-          String(settings.dailyStart ?? "09:00"),
+          String(existing.days?.[day]?.start ?? settings.dailyStart ?? "09:00"),
       );
     }
 
@@ -1519,9 +1599,10 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
       row.earliest = Math.min(row.earliest, startMinute);
       byDay.set(day, row);
     }
-    const endMinute = scheduleClockMinutes(String(settings.dailyEnd ?? "20:00")) ?? 1200;
-    const courts = Math.max(1, Number(snapshot.workspace.core.tournament.courtCount ?? 1));
     return [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([day, row]) => {
+      const dayRule = existing.days?.[day] ?? {};
+      const endMinute = scheduleClockMinutes(String(dayRule.end ?? settings.dailyEnd ?? "20:00")) ?? 1200;
+      const courts = Math.max(1, Number(dayRule.courts ?? snapshot.workspace.core.tournament.courtCount ?? 1));
       const capacity = Math.max(0, endMinute - row.earliest) * courts;
       const occupancy = capacity > 0 ? Math.round((row.minutes / capacity) * 100) : 999;
       return { day, ...row, capacity, occupancy };
@@ -1531,6 +1612,23 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
+
+    for (const day of operationalDays) {
+      const start = String(data.get(`dayStart:${day}`) ?? "");
+      const end = String(data.get(`dayEnd:${day}`) ?? "");
+      const startMinutes = scheduleClockMinutes(start);
+      const endMinutes = scheduleClockMinutes(end);
+      if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) {
+        window.alert(
+          tr(
+            locale,
+            `Revisá la ventana operativa de ${day}: el fin debe ser posterior al inicio.`,
+            `Check the operating window for ${day}: end must be after start.`,
+          ),
+        );
+        return;
+      }
+    }
 
     for (const category of categories) {
       const id = String(category.id);
@@ -1567,6 +1665,22 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
       const targetSettings = next.workspace.core.settings as any;
       const previous = targetSettings.schedulePolicy?.categories ?? {};
       const categoryRules: Record<string, any> = {};
+      const dayRules: Record<string, any> = {};
+
+      for (const day of operationalDays) {
+        dayRules[day] = {
+          start: String(data.get(`dayStart:${day}`) ?? targetSettings.dailyStart ?? "09:00"),
+          end: String(data.get(`dayEnd:${day}`) ?? targetSettings.dailyEnd ?? "20:00"),
+          courts: Math.max(
+            1,
+            Number(
+              data.get(`dayCourts:${day}`) ??
+                (next.workspace.core.tournament as any).courtCount ??
+                1,
+            ),
+          ),
+        };
+      }
 
       for (const category of categories) {
         const id = String(category.id);
@@ -1576,30 +1690,56 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
         const groupMinimumRestMinutes = Math.max(0, Number(data.get(`groupMinRest:${id}`) ?? 0));
         const finalMinimumRestMinutes = Math.max(0, Number(data.get(`finalMinRest:${id}`) ?? 0));
 
+        const groupDate = String(data.get(`groupDate:${id}`) ?? "").trim() || null;
+        const finalFollowsGroups = finalModes[id] === "after_groups";
+        const groupReservedRaw = String(data.get(`groupReserved:${id}`) ?? "").trim();
+        const finalReservedRaw = String(data.get(`finalReserved:${id}`) ?? "").trim();
+        const groupReservedCourts = groupReservedRaw
+          ? Math.max(1, Number(groupReservedRaw))
+          : null;
+        const finalReservedCourts = finalFollowsGroups
+          ? groupReservedCourts
+          : finalReservedRaw
+            ? Math.max(1, Number(finalReservedRaw))
+            : null;
+
         categoryRules[id] = {
           ...old,
           order: groupIndex + 1,
           groupOrder: groupIndex + 1,
-          finalOrder: finalIndex + 1,
+          finalOrder: finalFollowsGroups ? groupIndex + 1 : finalIndex + 1,
           phase: 1,
-          groupDate: String(data.get(`groupDate:${id}`) ?? "").trim() || null,
-          finalDate: String(data.get(`finalDate:${id}`) ?? "").trim() || null,
+          groupDate,
+          finalFollowsGroups,
+          finalDate: finalFollowsGroups
+            ? groupDate
+            : String(data.get(`finalDate:${id}`) ?? "").trim() || null,
           groupNotBefore: String(data.get(`groupStart:${id}`) ?? "").trim() || null,
           groupNotAfter: String(data.get(`groupEnd:${id}`) ?? "").trim() || null,
-          finalNotBefore: String(data.get(`finalStart:${id}`) ?? "").trim() || null,
-          finalNotAfter: String(data.get(`finalEnd:${id}`) ?? "").trim() || null,
+          finalNotBefore: finalFollowsGroups
+            ? null
+            : String(data.get(`finalStart:${id}`) ?? "").trim() || null,
+          finalNotAfter: finalFollowsGroups
+            ? null
+            : String(data.get(`finalEnd:${id}`) ?? "").trim() || null,
           groupMatchMinutes: Math.max(5, Number(data.get(`groupMinutes:${id}`) ?? settings.defaultMatchMinutes ?? 30)),
           finalMatchMinutes: Math.max(5, Number(data.get(`finalMinutes:${id}`) ?? data.get(`groupMinutes:${id}`) ?? settings.defaultMatchMinutes ?? 30)),
           groupMinimumRestMinutes,
           groupPreferredRestMinutes: Math.max(groupMinimumRestMinutes, Number(data.get(`groupPreferredRest:${id}`) ?? groupMinimumRestMinutes)),
-          finalMinimumRestMinutes,
-          finalPreferredRestMinutes: Math.max(finalMinimumRestMinutes, Number(data.get(`finalPreferredRest:${id}`) ?? finalMinimumRestMinutes)),
-          groupMaxConcurrentCourts: String(data.get(`groupMax:${id}`) ?? "").trim()
-            ? Math.max(1, Number(data.get(`groupMax:${id}`)))
-            : null,
-          finalMaxConcurrentCourts: String(data.get(`finalMax:${id}`) ?? "").trim()
-            ? Math.max(1, Number(data.get(`finalMax:${id}`)))
-            : null,
+          finalMinimumRestMinutes: finalFollowsGroups
+            ? groupMinimumRestMinutes
+            : finalMinimumRestMinutes,
+          finalPreferredRestMinutes: finalFollowsGroups
+            ? Math.max(groupMinimumRestMinutes, Number(data.get(`groupPreferredRest:${id}`) ?? groupMinimumRestMinutes))
+            : Math.max(finalMinimumRestMinutes, Number(data.get(`finalPreferredRest:${id}`) ?? finalMinimumRestMinutes)),
+          groupReservedCourts,
+          finalReservedCourts,
+          groupMaxConcurrentCourts: groupReservedCourts,
+          finalMaxConcurrentCourts: finalReservedCourts,
+          groupReservationMode: String(data.get(`groupReservationMode:${id}`) ?? "strict") === "flexible" ? "flexible" : "strict",
+          finalReservationMode: finalFollowsGroups
+            ? String(data.get(`groupReservationMode:${id}`) ?? "strict") === "flexible" ? "flexible" : "strict"
+            : String(data.get(`finalReservationMode:${id}`) ?? "strict") === "flexible" ? "flexible" : "strict",
           groupSequence: String(data.get(`groupSequence:${id}`) ?? old.groupSequence ?? old.sequence ?? "rounds"),
           finalSequence: String(data.get(`finalSequence:${id}`) ?? old.finalSequence ?? old.sequence ?? "rounds"),
           allowedCourts: parseCourtList(String(data.get(`allowed:${id}`) ?? "")),
@@ -1608,7 +1748,28 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
         };
       }
 
-      targetSettings.schedulePolicy = { mode: "manual_flow", categories: categoryRules };
+      targetSettings.schedulePolicy = {
+        mode: "manual_flow",
+        days: dayRules,
+        categories: categoryRules,
+      };
+      const dayValues = Object.values(dayRules);
+      const orderedStarts = dayValues
+        .map((row: any) => String(row.start))
+        .sort((a, b) => (scheduleClockMinutes(a) ?? 0) - (scheduleClockMinutes(b) ?? 0));
+      const orderedEnds = dayValues
+        .map((row: any) => String(row.end))
+        .sort((a, b) => (scheduleClockMinutes(b) ?? 0) - (scheduleClockMinutes(a) ?? 0));
+      if (orderedStarts[0]) targetSettings.dailyStart = orderedStarts[0];
+      if (orderedEnds[0]) targetSettings.dailyEnd = orderedEnds[0];
+      if (dayValues.length) {
+        (next.workspace.core.tournament as any).courtCount = Math.max(
+          1,
+          ...dayValues.map((row: any) => Number(row.courts ?? 1)),
+        );
+      }
+      targetSettings.minimumRestSlots = 0;
+      targetSettings.preferredRestSlots = 0;
       targetSettings.schedulePlanRevision = Number(targetSettings.schedulePlanRevision ?? 0) + 1;
       markStructureDirty(next);
     }, tr(locale,"Plan operativo guardado. El cronograma quedó pendiente de regenerar.","Operational plan saved. Schedule regeneration is pending."),"structure");
@@ -1622,9 +1783,9 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
     const category = categoryById.get(id);
     if (!category) return null;
     const rule = existing.categories?.[id] ?? {};
-    const previousId = index > 0 ? order[index - 1] ?? null : null;
-    const shared = sharedParticipantCount(snapshot, previousId, id);
     const isGroup = phase === "group";
+    if (!isGroup && finalModes[id] === "after_groups") return null;
+    const shared = sharedParticipantSummary(snapshot, id);
     const baseDate = fallbackDate(category);
     const date = String(isGroup ? rule.groupDate ?? baseDate : rule.finalDate ?? rule.groupDate ?? baseDate);
     const startValue = String(isGroup ? rule.groupNotBefore ?? "" : rule.finalNotBefore ?? "");
@@ -1649,9 +1810,14 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
         ? rule.groupPreferredRestMinutes ?? settings.schedulePreferredRestMinutes ?? Math.max(minRest, 25)
         : rule.finalPreferredRestMinutes ?? settings.schedulePreferredRestMinutes ?? Math.max(minRest, 25),
     );
-    const maxCourts = isGroup
-      ? rule.groupMaxConcurrentCourts ?? rule.maxConcurrentCourts ?? ""
-      : rule.finalMaxConcurrentCourts ?? rule.maxConcurrentCourts ?? "";
+    const reservedCourts = isGroup
+      ? rule.groupReservedCourts ?? rule.groupMaxConcurrentCourts ?? rule.maxConcurrentCourts ?? ""
+      : rule.finalReservedCourts ?? rule.finalMaxConcurrentCourts ?? rule.maxConcurrentCourts ?? "";
+    const reservationMode = String(
+      isGroup
+        ? rule.groupReservationMode ?? rule.reservationMode ?? "strict"
+        : rule.finalReservationMode ?? rule.reservationMode ?? "strict",
+    );
 
     return <div
       className="epic-flow-row"
@@ -1674,20 +1840,23 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
           {isGroup
             ? `${realGroupMatches(id)} ${tr(locale,"partidos/series de grupos","group matches/series")}`
             : tr(locale,"fase final · orden independiente","final phase · independent order")}
-          {shared > 0 ? ` · ${shared} ${tr(locale,"jug. compartidos con anterior","players shared with previous")}` : ""}
+          {shared.length
+            ? ` · ${tr(locale,"Comparte jugadores con","Shares players with")}: ${shared.map((row) => `${row.name} (${row.count})`).join(", ")}`
+            : ` · ${tr(locale,"sin cruces detectados","no overlaps detected")}`}
         </small>
-        {!isGroup ? <button
-          type="button"
-          className="epic-flow-same-day"
-          onClick={(event)=>{
-            const form=event.currentTarget.closest("form");
-            const groupDate=form?.elements.namedItem(`groupDate:${id}`);
-            const finalDate=form?.elements.namedItem(`finalDate:${id}`);
-            if(groupDate instanceof HTMLInputElement && finalDate instanceof HTMLInputElement){
-              finalDate.value=groupDate.value;
-            }
-          }}
-        >{tr(locale,"Mismo día que grupos","Same day as groups")}</button> : null}
+        {isGroup ? <label className="epic-final-link">
+          <span>{tr(locale,"Finales","Finals")}</span>
+          <select
+            value={finalModes[id] ?? "custom"}
+            onChange={(event)=>setFinalModes((current)=>({
+              ...current,
+              [id]: event.target.value === "after_groups" ? "after_groups" : "custom",
+            }))}
+          >
+            <option value="after_groups">{tr(locale,"Después de grupos · mismo día","After groups · same day")}</option>
+            <option value="custom">{tr(locale,"Planificar aparte","Plan separately")}</option>
+          </select>
+        </label> : null}
       </div>
       <label><span>{tr(locale,"Día","Day")}</span><input name={`${phase}Date:${id}`} type="date" defaultValue={date}/></label>
       <label className="epic-flow-start-field"><span>{tr(locale,"No antes de","Not before")}</span><input name={`${phase}Start:${id}`} type="time" defaultValue={startValue}/><small>{startValue ? tr(locale,"ancla manual","manual anchor") : tr(locale,`vacío = continúa la cola desde ${effectiveStart}`,`blank = continue queue from ${effectiveStart}`)}</small></label>
@@ -1695,7 +1864,11 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
       <label><span>{tr(locale,"Min/partido","Min/match")}</span><input name={`${phase}Minutes:${id}`} type="number" min="5" defaultValue={minutes}/></label>
       <label><span>{tr(locale,"Desc. mín.","Min rest")}</span><input name={`${phase}MinRest:${id}`} type="number" min="0" defaultValue={minRest}/></label>
       <label><span>{tr(locale,"Desc. objetivo","Target rest")}</span><input name={`${phase}PreferredRest:${id}`} type="number" min="0" defaultValue={preferredRest}/></label>
-      <label><span>{tr(locale,"Máx. canchas","Max courts")}</span><input name={`${phase}Max:${id}`} type="number" min="1" placeholder="—" defaultValue={maxCourts}/></label>
+      <label><span>{tr(locale,"Canchas reservadas","Reserved courts")}</span><input name={`${phase}Reserved:${id}`} type="number" min="1" placeholder="—" defaultValue={reservedCourts}/></label>
+      <label><span>{tr(locale,"Uso de reserva","Reservation use")}</span><select name={`${phase}ReservationMode:${id}`} defaultValue={reservationMode}>
+        <option value="strict">{tr(locale,"Estricto · no prestar huecos","Strict · do not lend gaps")}</option>
+        <option value="flexible">{tr(locale,"Flexible · rellenar huecos","Flexible · fill gaps")}</option>
+      </select></label>
     </div>;
   });
 
@@ -1703,13 +1876,28 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
     <div className="panel-title"><div>
       <div className="eyebrow">{tr(locale,"PLAN OPERATIVO · CONTROL MANUAL","OPERATIONAL PLAN · MANUAL CONTROL")}</div>
       <h2>{tr(locale,"Vos definís el torneo; HUAU resuelve las canchas","You define the tournament; HUAU resolves the courts")}</h2>
-      <p className="muted">{tr(locale,"El orden no es una barrera: una categoría posterior puede entrar apenas haya cancha y jugadores legales. Para forzar una espera, usá “No antes de”. Dos categorías con la misma hora y máximo 2 canchas pueden arrancar 2+2.","Order is not a barrier: a later category may enter as soon as a court and eligible players are available. To force a wait, use “Not before”. Two categories at the same time with max 2 courts may start 2+2.")}</p>
+      <p className="muted">{tr(locale,"Pensalo como bloques de operación. Las canchas reservadas quedan protegidas para esa categoría mientras siga viva: un hueco por descanso no se presta en modo estricto. Cuando la categoría termina, su reserva se libera inmediatamente a la siguiente prioridad.","Think in operating blocks. Reserved courts stay protected while that category is alive: a rest gap is not lent in strict mode. When the category finishes, its reservation is released immediately to the next priority.")}</p>
     </div></div>
 
     <div className="epic-policy-legend">
-      <span><b>{tr(locale,"DURO","HARD")}</b>{tr(locale,"día · no antes de · hasta · descanso mínimo · máximo de canchas","day · not before · until · minimum rest · max courts")}</span>
-      <span><b>{tr(locale,"PREFERENCIA","PREFERENCE")}</b>{tr(locale,"orden visual · continuidad · descanso objetivo; nunca inventa otro día","visual order · continuity · target rest; never invents another day")}</span>
+      <span><b>{tr(locale,"DURO","HARD")}</b>{tr(locale,"ventana del día · ancla · descanso mínimo · reserva estricta de canchas","day window · anchor · minimum rest · strict court reservation")}</span>
+      <span><b>{tr(locale,"FLEXIBLE","FLEXIBLE")}</b>{tr(locale,"permite prestar huecos de una reserva; usalo sólo cuando realmente quieras mezclar categorías","allows reservation gaps to be lent; use only when you really want categories mixed")}</span>
     </div>
+
+    <section className="epic-day-windows">
+      <header><strong>{tr(locale,"Ventana y canchas por día","Window and courts by day")}</strong><small>{tr(locale,"Ésta es la autoridad operativa. No hay otro “inicio global” que tengas que mantener a mano.","This is the operating authority. There is no second “global start” to maintain manually.")}</small></header>
+      <div>
+        {operationalDays.map((day)=>{
+          const dayRule=existing.days?.[day]??{};
+          return <article key={day}>
+            <b>{day}</b>
+            <label><span>{tr(locale,"Inicio","Start")}</span><input name={`dayStart:${day}`} type="time" defaultValue={String(dayRule.start??settings.dailyStart??"09:00")} required/></label>
+            <label><span>{tr(locale,"Fin duro","Hard end")}</span><input name={`dayEnd:${day}`} type="time" defaultValue={String(dayRule.end??settings.dailyEnd??"20:00")} required/></label>
+            <label><span>{tr(locale,"Canchas","Courts")}</span><input name={`dayCourts:${day}`} type="number" min="1" defaultValue={Math.max(1,Number(dayRule.courts??snapshot.workspace.core.tournament.courtCount??1))}/></label>
+          </article>;
+        })}
+      </div>
+    </section>
 
     <div className="epic-capacity-grid">
       {capacityRows.map((row)=><span key={row.day} className={row.occupancy > 100 ? "over" : row.occupancy >= 85 ? "tight" : ""}>
@@ -1726,7 +1914,7 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
       </section>
 
       <section className="epic-flow-phase">
-        <header><div><span>2</span><div><strong>{tr(locale,"Fases finales","Final phases")}</strong><small>{tr(locale,"Orden totalmente independiente de los grupos.","Order fully independent from groups.")}</small></div></div></header>
+        <header><div><span>2</span><div><strong>{tr(locale,"Finales planificadas aparte","Separately planned finals")}</strong><small>{tr(locale,"Las categorías marcadas “Después de grupos” quedan adjuntas arriba y no duplican una fila acá.","Categories marked “After groups” stay attached above and do not duplicate a row here.")}</small></div></div></header>
         <div className="epic-flow-table">{renderPhaseRows("final",finalOrder,setFinalOrder)}</div>
       </section>
 
