@@ -1309,8 +1309,8 @@ describe("manual-first operational scheduling", () => {
   it("starts two explicitly anchored categories together without a hard category barrier", () => {
     const local = snapshot();
     ensureDayLocalMeta(local);
-    (local.workspace.core.tournament as any).courtCount = 2;
-    (local.workspace.core.settings as any).dailyStart = "09:00";
+    (local.workspace.core.tournament as any).courtCount = 3;
+    (local.workspace.core.settings as any).dailyStart = "08:00";
     (local.workspace.core.settings as any).dailyEnd = "12:00";
     (local.workspace.core.settings as any).minimumRestSlots = 0;
     (local.workspace.core.settings as any).preferredRestSlots = 0;
@@ -1318,9 +1318,10 @@ describe("manual-first operational scheduling", () => {
     local.workspace.core.categories = [
       { id: "c1", name: "A", entryType: "individual" },
       { id: "c2", name: "B", entryType: "individual" },
+      { id: "c3", name: "C", entryType: "individual" },
     ] as any[];
 
-    local.workspace.participants.players = ["p1","p2","p3","p4"].map((id) => ({
+    local.workspace.participants.players = ["p1","p2","p3","p4","p5","p6"].map((id) => ({
       id,
       organizationPersonId: `person-${id}`,
       displayName: id,
@@ -1333,6 +1334,8 @@ describe("manual-first operational scheduling", () => {
       { playerProfileId: "p2", categoryId: "c1", partnerProfileId: null },
       { playerProfileId: "p3", categoryId: "c2", partnerProfileId: null },
       { playerProfileId: "p4", categoryId: "c2", partnerProfileId: null },
+      { playerProfileId: "p5", categoryId: "c3", partnerProfileId: null },
+      { playerProfileId: "p6", categoryId: "c3", partnerProfileId: null },
     ] as any[];
 
     local.workspace.standard.entries = [
@@ -1340,6 +1343,8 @@ describe("manual-first operational scheduling", () => {
       { id: "e2", categoryId: "c1", displayName: "p2", sourceKey: "p2", localProfileIds: ["p2"], status: "ready" },
       { id: "e3", categoryId: "c2", displayName: "p3", sourceKey: "p3", localProfileIds: ["p3"], status: "ready" },
       { id: "e4", categoryId: "c2", displayName: "p4", sourceKey: "p4", localProfileIds: ["p4"], status: "ready" },
+      { id: "e5", categoryId: "c3", displayName: "p5", sourceKey: "p5", localProfileIds: ["p5"], status: "ready" },
+      { id: "e6", categoryId: "c3", displayName: "p6", sourceKey: "p6", localProfileIds: ["p6"], status: "ready" },
     ] as any[];
 
     const competitionA = buildCompetitionFromGroups({
@@ -1360,23 +1365,37 @@ describe("manual-first operational scheduling", () => {
       ] }],
       format: { playoffMode: "league_only" },
     });
+    const competitionC = buildCompetitionFromGroups({
+      id: "competition:c3",
+      categoryId: "c3",
+      groups: [{ id: "g3", name: "A", entries: [
+        { id: "e5", name: "p5", participantIds: ["p5"], rating: 0 },
+        { id: "e6", name: "p6", participantIds: ["p6"], rating: 0 },
+      ] }],
+      format: { playoffMode: "league_only" },
+    });
 
-    local.workspace.standard.competitions = [competitionA, competitionB];
+    local.workspace.standard.competitions = [competitionA, competitionB, competitionC];
     syncStandardCompetition(local, competitionA);
     syncStandardCompetition(local, competitionB);
+    syncStandardCompetition(local, competitionC);
 
     (local.workspace.core.settings as any).schedulePolicy = {
       mode: "manual_flow",
       categories: {
         c1: { groupOrder: 1, groupDate: "2026-11-15", groupNotBefore: "09:00", groupMatchMinutes: 25, groupMinimumRestMinutes: 0, groupPreferredRestMinutes: 0, groupMaxConcurrentCourts: 1 },
         c2: { groupOrder: 2, groupDate: "2026-11-15", groupNotBefore: "09:00", groupMatchMinutes: 25, groupMinimumRestMinutes: 0, groupPreferredRestMinutes: 0, groupMaxConcurrentCourts: 1 },
+        c3: { groupOrder: 3, groupDate: "2026-11-15", groupMatchMinutes: 25, groupMinimumRestMinutes: 0, groupPreferredRestMinutes: 0, groupMaxConcurrentCourts: 1 },
       },
     };
 
     regenerateGlobalSchedule(local);
     const rows = (local.workspace.schedule.schedule as QaScheduleRow[]).filter((row) => row.stage === "group" && !row.provisional);
-    expect(rows).toHaveLength(2);
-    expect(rows[0]?.startAt).toBe(rows[1]?.startAt);
-    expect(rows[0]?.courtLabel).not.toBe(rows[1]?.courtLabel);
+    expect(rows).toHaveLength(3);
+    const expectedStart = Math.floor(
+      new Date("2026-11-15T09:00:00").getTime() / 1000,
+    );
+    expect(rows.every((row) => Number(row.startAt) === expectedStart)).toBe(true);
+    expect(new Set(rows.map((row) => row.courtLabel)).size).toBe(3);
   });
 });
