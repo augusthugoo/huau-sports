@@ -1373,6 +1373,17 @@ function sharedParticipantCount(snapshot: TournamentDayReformSnapshot, a: string
   return count;
 }
 
+function preventScheduleWheelMutation(event: any) {
+  const target = event.target;
+  if (
+    target instanceof HTMLInputElement &&
+    (target.type === "number" || target.type === "time") &&
+    document.activeElement === target
+  ) {
+    target.blur();
+  }
+}
+
 export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: Locale; snapshot: TournamentDayReformSnapshot; mutate: EpicDayMutate }) {
   const settings = snapshot.workspace.core.settings as any;
   const categories = snapshot.workspace.core.categories as any[];
@@ -1441,6 +1452,50 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
       );
 
   const categoryById = new Map(categories.map((category) => [String(category.id), category] as const));
+
+  const phaseEffectiveStarts = (
+    phase: "group" | "final",
+    order: string[],
+  ) => {
+    const result = new Map<string, string>();
+    const anchorByDate = new Map<string, string>();
+
+    for (const id of order) {
+      const category = categoryById.get(id);
+      if (!category) continue;
+      const rule = existing.categories?.[id] ?? {};
+      const day = String(
+        phase === "group"
+          ? rule.groupDate ?? fallbackDate(category)
+          : rule.finalDate ?? rule.groupDate ?? fallbackDate(category),
+      );
+      const explicit = String(
+        phase === "group"
+          ? rule.groupNotBefore ?? ""
+          : rule.finalNotBefore ?? "",
+      ).trim();
+
+      if (/^\d{2}:\d{2}$/.test(explicit)) {
+        anchorByDate.set(day, explicit);
+        result.set(id, explicit);
+        continue;
+      }
+
+      result.set(
+        id,
+        anchorByDate.get(day) ??
+          String(settings.dailyStart ?? "09:00"),
+      );
+    }
+
+    return result;
+  };
+
+  const groupEffectiveStarts =
+    phaseEffectiveStarts("group", groupOrder);
+  const finalEffectiveStarts =
+    phaseEffectiveStarts("final", finalOrder);
+
   const capacityRows = (() => {
     const byDay = new Map<string, { minutes: number; matches: number; earliest: number }>();
     for (const id of groupOrder) {
@@ -1450,7 +1505,14 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
       const day = String(rule.groupDate ?? fallbackDate(category));
       const minutes = Math.max(5, Number(rule.groupMatchMinutes ?? settings.defaultMatchMinutes ?? 30));
       const matches = realGroupMatches(id);
-      const startMinute = scheduleClockMinutes(String(rule.groupNotBefore ?? settings.dailyStart ?? "09:00")) ?? 540;
+      const startMinute =
+        scheduleClockMinutes(
+          String(
+            groupEffectiveStarts.get(id) ??
+              settings.dailyStart ??
+              "09:00",
+          ),
+        ) ?? 540;
       const row = byDay.get(day) ?? { minutes: 0, matches: 0, earliest: startMinute };
       row.minutes += matches * minutes;
       row.matches += matches;
@@ -1566,6 +1628,11 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
     const baseDate = fallbackDate(category);
     const date = String(isGroup ? rule.groupDate ?? baseDate : rule.finalDate ?? rule.groupDate ?? baseDate);
     const startValue = String(isGroup ? rule.groupNotBefore ?? "" : rule.finalNotBefore ?? "");
+    const effectiveStart = String(
+      (isGroup ? groupEffectiveStarts : finalEffectiveStarts).get(id) ??
+        settings.dailyStart ??
+        "09:00",
+    );
     const endValue = String(isGroup ? rule.groupNotAfter ?? "" : rule.finalNotAfter ?? "");
     const minutes = Number(
       isGroup
@@ -1589,12 +1656,18 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
     return <div
       className="epic-flow-row"
       key={`${phase}:${id}`}
-      draggable
-      onDragStart={(event)=>event.dataTransfer.setData("text/plain",id)}
       onDragOver={(event)=>event.preventDefault()}
       onDrop={(event)=>{event.preventDefault();move(order,setOrder,event.dataTransfer.getData("text/plain"),id)}}
     >
-      <span className="epic-flow-handle" title={tr(locale,"Arrastrá para ordenar","Drag to reorder")}>☰</span>
+      <span
+        className="epic-flow-handle"
+        title={tr(locale,"Arrastrá para ordenar","Drag to reorder")}
+        draggable
+        onDragStart={(event)=>{
+          event.dataTransfer.effectAllowed="move";
+          event.dataTransfer.setData("text/plain",id);
+        }}
+      >☰</span>
       <div className="epic-flow-category">
         <strong>{index + 1}. {category.name}</strong>
         <small>
@@ -1603,9 +1676,21 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
             : tr(locale,"fase final · orden independiente","final phase · independent order")}
           {shared > 0 ? ` · ${shared} ${tr(locale,"jug. compartidos con anterior","players shared with previous")}` : ""}
         </small>
+        {!isGroup ? <button
+          type="button"
+          className="epic-flow-same-day"
+          onClick={(event)=>{
+            const form=event.currentTarget.closest("form");
+            const groupDate=form?.elements.namedItem(`groupDate:${id}`);
+            const finalDate=form?.elements.namedItem(`finalDate:${id}`);
+            if(groupDate instanceof HTMLInputElement && finalDate instanceof HTMLInputElement){
+              finalDate.value=groupDate.value;
+            }
+          }}
+        >{tr(locale,"Mismo día que grupos","Same day as groups")}</button> : null}
       </div>
       <label><span>{tr(locale,"Día","Day")}</span><input name={`${phase}Date:${id}`} type="date" defaultValue={date}/></label>
-      <label><span>{tr(locale,"No antes de","Not before")}</span><input name={`${phase}Start:${id}`} type="time" defaultValue={startValue}/></label>
+      <label className="epic-flow-start-field"><span>{tr(locale,"No antes de","Not before")}</span><input name={`${phase}Start:${id}`} type="time" defaultValue={startValue}/><small>{startValue ? tr(locale,"ancla manual","manual anchor") : tr(locale,`vacío = continúa la cola desde ${effectiveStart}`,`blank = continue queue from ${effectiveStart}`)}</small></label>
       <label><span>{tr(locale,"Hasta","Until")}</span><input name={`${phase}End:${id}`} type="time" defaultValue={endValue}/></label>
       <label><span>{tr(locale,"Min/partido","Min/match")}</span><input name={`${phase}Minutes:${id}`} type="number" min="5" defaultValue={minutes}/></label>
       <label><span>{tr(locale,"Desc. mín.","Min rest")}</span><input name={`${phase}MinRest:${id}`} type="number" min="0" defaultValue={minRest}/></label>
@@ -1629,12 +1714,12 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
     <div className="epic-capacity-grid">
       {capacityRows.map((row)=><span key={row.day} className={row.occupancy > 100 ? "over" : row.occupancy >= 85 ? "tight" : ""}>
         <b>{row.day}</b>
-        <strong>{row.matches} {tr(locale,"partidos/series","matches/series")} · {Math.floor(row.minutes/60)}h {row.minutes%60}m</strong>
+        <strong>{row.matches} {tr(locale,"partidos/series de grupos","group matches/series")} · {Math.floor(row.minutes/60)}h {row.minutes%60}m</strong>
         <small>{tr(locale,"Capacidad teórica","Theoretical capacity")}: {Math.floor(row.capacity/60)}h {row.capacity%60}m · {row.occupancy}%</small>
       </span>)}
     </div>
 
-    <form onSubmit={save} className="td-stack">
+    <form onSubmit={save} onWheelCapture={preventScheduleWheelMutation} className="td-stack">
       <section className="epic-flow-phase">
         <header><div><span>1</span><div><strong>{tr(locale,"Grupos","Groups")}</strong><small>{tr(locale,"Arrastrá para definir la cola de entrada del día.","Drag to define the day's entry queue.")}</small></div></div></header>
         <div className="epic-flow-table">{renderPhaseRows("group",groupOrder,setGroupOrder)}</div>

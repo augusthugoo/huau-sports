@@ -791,6 +791,77 @@ function applySchedulePolicy(
     groupOrder.set(categoryId, new Map(groups.map(([id], index) => [id, index + 1])));
   }
 
+  const manualNotBefore = new Map<string, string>();
+  if (mode === "manual_flow") {
+    for (const phase of ["group", "final"] as const) {
+      const representativeDate = new Map<string, string>();
+
+      for (const unit of units) {
+        const unitPhase = unit.stage === "group" ? "group" : "final";
+        if (unitPhase !== phase) continue;
+        if (!representativeDate.has(unit.categoryId)) {
+          representativeDate.set(unit.categoryId, unit.date);
+        }
+      }
+
+      const ordered = [...representativeDate.entries()]
+        .map(([categoryId, fallbackDate]) => {
+          const rule = policy.categories?.[categoryId] ?? {};
+          const order = Math.max(
+            1,
+            Number(
+              phase === "group"
+                ? rule.groupOrder ?? rule.order ?? 999
+                : rule.finalOrder ?? rule.order ?? 999,
+            ),
+          );
+          const configuredDate = String(
+            phase === "group"
+              ? rule.groupDate ?? ""
+              : rule.finalDate ?? "",
+          ).trim();
+          const date =
+            /^\d{4}-\d{2}-\d{2}$/.test(configuredDate)
+              ? configuredDate
+              : fallbackDate;
+          const configuredStart = String(
+            phase === "group"
+              ? rule.groupNotBefore ?? rule.notBefore ?? ""
+              : rule.finalNotBefore ?? rule.notBefore ?? "",
+          ).trim();
+          const explicitStart =
+            /^\d{2}:\d{2}$/.test(configuredStart)
+              ? configuredStart
+              : "";
+
+          return { categoryId, order, date, explicitStart };
+        })
+        .sort(
+          (a, b) =>
+            a.order - b.order ||
+            a.categoryId.localeCompare(b.categoryId),
+        );
+
+      const anchorByDate = new Map<string, string>();
+
+      for (const row of ordered) {
+        if (row.explicitStart) {
+          anchorByDate.set(row.date, row.explicitStart);
+        }
+        const effectiveStart =
+          row.explicitStart ||
+          anchorByDate.get(row.date) ||
+          "";
+        if (effectiveStart) {
+          manualNotBefore.set(
+            `${phase}:${row.categoryId}`,
+            effectiveStart,
+          );
+        }
+      }
+    }
+  }
+
   return units.map((unit) => {
     const rule = policy.categories?.[unit.categoryId] ?? {};
     const postGroup = unit.stage !== "group";
@@ -809,9 +880,19 @@ function applySchedulePolicy(
             : 0;
 
     const dateCandidate = String(postGroup ? rule.finalDate ?? "" : rule.groupDate ?? "").trim();
-    const notBeforeCandidate = String(
-      postGroup ? rule.finalNotBefore ?? rule.notBefore ?? "" : rule.groupNotBefore ?? rule.notBefore ?? "",
+    const explicitNotBefore = String(
+      postGroup
+        ? rule.finalNotBefore ?? rule.notBefore ?? ""
+        : rule.groupNotBefore ?? rule.notBefore ?? "",
     ).trim();
+    const inheritedNotBefore =
+      mode === "manual_flow"
+        ? manualNotBefore.get(
+            `${postGroup ? "final" : "group"}:${unit.categoryId}`,
+          ) ?? ""
+        : "";
+    const notBeforeCandidate =
+      explicitNotBefore || inheritedNotBefore;
     const notAfterCandidate = String(postGroup ? rule.finalNotAfter ?? "" : rule.groupNotAfter ?? "").trim();
     const durationCandidate = Math.max(
       5,

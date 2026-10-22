@@ -241,3 +241,15 @@
 @media(max-width:1250px){.epic-flow-row{grid-template-columns:30px minmax(180px,1.2fr) repeat(4,minmax(95px,1fr))}}
 @media(max-width:850px){.epic-flow-row{grid-template-columns:28px 1fr 1fr}.epic-flow-category{grid-column:2/-1}.epic-flow-row label{grid-column:auto}.epic-flow-advanced-grid>section{grid-template-columns:1fr}.epic-flow-advanced-grid>section>*{grid-column:1!important}}
 @media(max-width:560px){.epic-flow-row{grid-template-columns:26px 1fr}.epic-flow-category,.epic-flow-row label{grid-column:2}.td-schedule-dirty{align-items:flex-start;flex-direction:column}}
+
+/* HUAU schedule QA repair 20261022 */
+.epic-policy-panel{background:#0d0d0d!important;border-color:#242424!important}
+.epic-flow-row{background:#090909;border-color:#242424}
+.epic-capacity-grid>span{background:#090909;border-color:#242424}
+.epic-flow-handle{display:grid;place-items:center;width:28px;height:34px;border:1px solid transparent;border-radius:8px}
+.epic-flow-handle:hover{border-color:#303030;background:#111}
+.epic-flow-start-field small{font-size:.58rem;line-height:1.15;color:#777;margin-top:1px}
+.epic-flow-same-day{justify-self:start;margin-top:4px;border:1px solid #2b2b2b;background:#0a0a0a;color:#b8b8b3;border-radius:999px;padding:4px 7px;font-size:.58rem;cursor:pointer}
+.epic-flow-same-day:hover{border-color:#454545;color:#f0f0ec}
+.td-schedule-rest-authority{display:grid;gap:3px;align-self:stretch;align-content:center;border:1px solid #242424;border-radius:11px;padding:8px 10px;background:#090909}
+.td-schedule-rest-authority b{font-size:.61rem;letter-spacing:.08em}.td-schedule-rest-authority span{font-size:.67rem;color:#777}
