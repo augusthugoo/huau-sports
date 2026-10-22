@@ -115,6 +115,20 @@ function localMutationError(locale: Locale, error: unknown) {
       "That player is already used in another active entry in this category.",
     );
   }
+  if (message === "STANDARD_RESULT_HAS_DOWNSTREAM_ENCOUNTER") {
+    return tr(
+      locale,
+      "Ese resultado ya tiene partidos posteriores jugados. La corrección segura debe invalidar solamente la rama afectada.",
+      "That result already has played descendants. Safe correction must invalidate only the affected branch.",
+    );
+  }
+  if (message === "STANDARD_RESULT_HAS_DOWNSTREAM_FINAL") {
+    return tr(
+      locale,
+      "Ese resultado de grupo ya alimentó una fase final iniciada. La corrección segura debe reconstruir toda la fase final.",
+      "That group result already fed a started final phase. Safe correction must rebuild the full final phase.",
+    );
+  }
   return message;
 }
 const toMs = (value: number) => (value < 10_000_000_000 ? value * 1000 : value);
@@ -1916,12 +1930,26 @@ function StandardResultCard({
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
+    let cascade = false;
+
+    if (match.status === "finished") {
+      cascade = window.confirm(
+        tr(
+          locale,
+          "Vas a corregir un resultado terminado. Si hay partidos posteriores dependientes, HUAU borrará sus resultados incompatibles. Si es un partido de grupos y la fase final ya empezó, reconstruirá toda la fase final conservando los demás resultados de grupos. ¿Continuar?",
+          "You are correcting a finished result. If later matches depend on it, HUAU will clear incompatible downstream results. If this is a group match and the final phase has started, it will rebuild the full final phase while preserving all other group results. Continue?",
+        ),
+      );
+      if (!cascade) return;
+    }
+
     await mutate((next) => {
       setLocalStandardResult(
         next,
         match.categoryId,
         match.encounterId,
         standardResultFromForm(data, "score", Number(match.bestOf)),
+        { cascade },
       );
     }, tr(locale, "Resultado Standard guardado localmente.", "Standard result saved locally."));
   };

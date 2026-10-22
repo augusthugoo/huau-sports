@@ -5,7 +5,13 @@ import {
   generateFinalPhase,
   type Competition,
 } from "@huau/core";
-import { syncStandardCompetition } from "./TournamentDayEngine";
+import {
+  advanceLocalLiveDraw,
+  generateLocalStandardStructure,
+  setLocalStandardResult,
+  startLocalLiveDraw,
+  syncStandardCompetition,
+} from "./TournamentDayEngine";
 import {
   activeDayParticipantCount,
   buildPublicLive,
@@ -1052,5 +1058,249 @@ describe("national circuit QA fixture", () => {
           player.id === withdrawn.id,
       ),
     ).toBe(false);
+  });
+});
+
+describe("definitive Tournament Day QA regressions", () => {
+  it("schedules groups and final phase on different operational days with different durations", () => {
+    const local = snapshot();
+    ensureDayLocalMeta(local);
+
+    local.workspace.core.settings.schedulePolicy = {
+      mode: "blocks",
+      categories: {
+        c1: {
+          order: 1,
+          phase: 1,
+          sequence: "rounds",
+          groupDate: "2027-01-10",
+          finalDate: "2027-01-11",
+          groupNotBefore: "09:15",
+          finalNotBefore: "10:30",
+          groupMatchMinutes: 20,
+          finalMatchMinutes: 35,
+          preferredRestSlots: 1,
+          maxConcurrentCourts: 2,
+        },
+      },
+    };
+
+    local.workspace.participants.players = ["A", "B", "C", "D"].map((name, index) => ({
+      id: `p${index + 1}`,
+      organizationPersonId: `person${index + 1}`,
+      displayName: name,
+      sportGender: "female",
+      duprSingles: 4 - index * 0.1,
+      duprDoubles: 4 - index * 0.1,
+      playerStatus: "confirmed",
+    }));
+    local.workspace.standard.entries = ["A", "B", "C", "D"].map((name, index) => ({
+      id: `e${index + 1}`,
+      categoryId: "c1",
+      displayName: name,
+      localProfileIds: [`p${index + 1}`],
+      sourceKey: `p${index + 1}`,
+      status: "ready",
+    }));
+
+    generateLocalStandardStructure(local, "c1", 1, "snake");
+    const competition = (local.workspace.standard.competitions as Competition[])[0]!;
+    competition.format.playoffMode = "top4_semis";
+    syncStandardCompetition(local, competition);
+    regenerateGlobalSchedule(local);
+
+    const rows = local.workspace.schedule.schedule as QaScheduleRow[];
+    const groups = rows.filter((row) => row.stage === "group");
+    const finals = rows.filter((row) => row.stage !== "group");
+    expect(groups.length).toBeGreaterThan(0);
+    expect(finals.length).toBeGreaterThan(0);
+
+    const localDate = (seconds: number) => {
+      const date = new Date(seconds * 1000);
+      const pad = (value: number) => String(value).padStart(2, "0");
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+    };
+
+    expect(groups.every((row) => localDate(Number(row.startAt)) === "2027-01-10")).toBe(true);
+    expect(finals.every((row) => localDate(Number(row.startAt)) === "2027-01-11")).toBe(true);
+    expect(Number(groups[0]!.endAt) - Number(groups[0]!.startAt)).toBe(20 * 60);
+    expect(Number(finals[0]!.endAt) - Number(finals[0]!.startAt)).toBe(35 * 60);
+  });
+
+  it("pins the highest DUPR entry in a different group when heads are enabled", () => {
+    const local = snapshot();
+    ensureDayLocalMeta(local);
+    (local.workspace.core.categories[0] as any).daySeedHeads = true;
+
+    local.workspace.participants.players = Array.from({ length: 8 }, (_, index) => ({
+      id: `p${index + 1}`,
+      organizationPersonId: `person${index + 1}`,
+      displayName: `P${index + 1}`,
+      sportGender: "male",
+      duprSingles: 5 - index * 0.2,
+      duprDoubles: 5 - index * 0.2,
+      playerStatus: "confirmed",
+    }));
+    local.workspace.standard.entries = Array.from({ length: 8 }, (_, index) => ({
+      id: `e${index + 1}`,
+      categoryId: "c1",
+      displayName: `P${index + 1}`,
+      localProfileIds: [`p${index + 1}`],
+      sourceKey: `p${index + 1}`,
+      status: "ready",
+    }));
+
+    generateLocalStandardStructure(local, "c1", 2, "random");
+    const competition = (local.workspace.standard.competitions as Competition[])[0]!;
+    const headGroups = competition.groups
+      .filter((group) => group.entries.some((entry) => ["e1", "e2"].includes(entry.id)))
+      .map((group) => group.id);
+    expect(new Set(headGroups).size).toBe(2);
+  });
+
+  it("keeps DUPR heads pinned while the remaining entries are drawn live", () => {
+    const local = snapshot();
+    ensureDayLocalMeta(local);
+    (local.workspace.core.categories[0] as any).daySeedHeads = true;
+
+    local.workspace.participants.players = Array.from({ length: 8 }, (_, index) => ({
+      id: `p${index + 1}`,
+      organizationPersonId: `person${index + 1}`,
+      displayName: `P${index + 1}`,
+      sportGender: "male",
+      duprSingles: 5 - index * 0.2,
+      duprDoubles: 5 - index * 0.2,
+      playerStatus: "confirmed",
+    }));
+    local.workspace.standard.entries = Array.from({ length: 8 }, (_, index) => ({
+      id: `e${index + 1}`,
+      categoryId: "c1",
+      displayName: `P${index + 1}`,
+      localProfileIds: [`p${index + 1}`],
+      sourceKey: `p${index + 1}`,
+      status: "ready",
+    }));
+
+    startLocalLiveDraw(local, "c1", 2);
+    let session = (local.workspace.standard.drawSessions as any[])[0]!;
+    let state = JSON.parse(String(session.stateJson));
+    expect(state.assignments.A[0]).toBe("e1");
+    expect(state.assignments.B[0]).toBe("e2");
+
+    while (state.status !== "complete") {
+      advanceLocalLiveDraw(local, "c1");
+      session = (local.workspace.standard.drawSessions as any[])[0]!;
+      state = JSON.parse(String(session.stateJson));
+    }
+
+    const competition = (local.workspace.standard.competitions as Competition[])[0]!;
+    expect(competition.groups.find((group) => group.name === "A")?.entries[0]?.id).toBe("e1");
+    expect(competition.groups.find((group) => group.name === "B")?.entries[0]?.id).toBe("e2");
+  });
+
+  it("uses the sum of both doubles DUPRs as pair rating", () => {
+    const local = snapshot();
+    ensureDayLocalMeta(local);
+    local.workspace.core.categories[0] = { id: "c1", name: "Dobles", entryType: "pair" } as any;
+    local.workspace.participants.players = [
+      { id: "p1", organizationPersonId: "person1", displayName: "A", duprDoubles: 4.1, playerStatus: "confirmed" },
+      { id: "p2", organizationPersonId: "person2", displayName: "B", duprDoubles: 3.8, playerStatus: "confirmed" },
+      { id: "p3", organizationPersonId: "person3", displayName: "C", duprDoubles: 3.5, playerStatus: "confirmed" },
+      { id: "p4", organizationPersonId: "person4", displayName: "D", duprDoubles: 3.3, playerStatus: "confirmed" },
+    ];
+    local.workspace.standard.entries = [
+      { id: "pair1", categoryId: "c1", displayName: "A / B", localProfileIds: ["p1", "p2"], status: "ready", seedRating: 3.95 },
+      { id: "pair2", categoryId: "c1", displayName: "C / D", localProfileIds: ["p3", "p4"], status: "ready", seedRating: 3.4 },
+    ];
+
+    generateLocalStandardStructure(local, "c1", 1, "snake");
+    const competition = (local.workspace.standard.competitions as Competition[])[0]!;
+    expect(competition.groups[0]!.entries.find((entry) => entry.id === "pair1")?.rating).toBeCloseTo(7.9, 3);
+    expect(competition.groups[0]!.entries.find((entry) => entry.id === "pair2")?.rating).toBeCloseTo(6.8, 3);
+  });
+
+  it("cascades a late knockout correction only through the affected branch", () => {
+    const local = snapshot();
+    ensureDayLocalMeta(local);
+    const base = buildCompetitionFromGroups({
+      id: "competition:c1",
+      categoryId: "c1",
+      groups: [{
+        id: "g1",
+        name: "A",
+        entries: ["A", "B", "C", "D"].map((id, index) => ({ id, name: id, participantIds: [`p${index + 1}`], rating: 4 - index })),
+      }],
+      format: { playoffMode: "top4_semis", bronzeMatch: false },
+    });
+    for (const encounter of base.encounters) {
+      if (!encounter.entryA || !encounter.entryB) continue;
+      encounter.status = "finished";
+      encounter.scoreA = 15;
+      encounter.scoreB = 10;
+      encounter.winnerEntryId = encounter.entryA.id;
+      encounter.sets = [{ scoreA: 15, scoreB: 10 }];
+    }
+    const finals = generateFinalPhase(base);
+    local.workspace.standard.competitions = [finals];
+    syncStandardCompetition(local, finals);
+    const semis = finals.encounters.filter((encounter) => encounter.roundLabel === "Semifinal");
+    setLocalStandardResult(local, "c1", semis[0]!.id, { scoreA: 15, scoreB: 10 });
+    setLocalStandardResult(local, "c1", semis[1]!.id, { scoreA: 15, scoreB: 11 });
+    let current = (local.workspace.standard.competitions as Competition[])[0]!;
+    const final = current.encounters.find((encounter) => encounter.stage === "final")!;
+    setLocalStandardResult(local, "c1", final.id, { scoreA: 15, scoreB: 12 });
+
+    setLocalStandardResult(local, "c1", semis[0]!.id, { scoreA: 10, scoreB: 15 }, { cascade: true });
+    current = (local.workspace.standard.competitions as Competition[])[0]!;
+    const corrected = current.encounters.find((encounter) => encounter.id === semis[0]!.id)!;
+    const untouched = current.encounters.find((encounter) => encounter.id === semis[1]!.id)!;
+    const resetFinal = current.encounters.find((encounter) => encounter.stage === "final")!;
+    expect(corrected.status).toBe("finished");
+    expect(untouched.status).toBe("finished");
+    expect(resetFinal.status).not.toBe("finished");
+    expect(resetFinal.winnerEntryId).toBeNull();
+    expect(resetFinal.entryA?.id).toBe(corrected.winnerEntryId);
+  });
+
+  it("rebuilds the final phase after a late group correction while preserving every other group result", () => {
+    const local = snapshot();
+    ensureDayLocalMeta(local);
+    local.workspace.participants.players = ["A", "B", "C", "D"].map((name, index) => ({ id: `p${index + 1}`, organizationPersonId: `person${index + 1}`, displayName: name, duprSingles: 4 - index * 0.1, playerStatus: "confirmed" }));
+    local.workspace.standard.entries = ["A", "B", "C", "D"].map((name, index) => ({ id: `e${index + 1}`, categoryId: "c1", displayName: name, localProfileIds: [`p${index + 1}`], sourceKey: `p${index + 1}`, status: "ready" }));
+    generateLocalStandardStructure(local, "c1", 1, "snake");
+    let competition = (local.workspace.standard.competitions as Competition[])[0]!;
+    competition.format.playoffMode = "top4_semis";
+    syncStandardCompetition(local, competition);
+    for (const encounter of [...competition.encounters]) {
+      setLocalStandardResult(local, "c1", encounter.id, { scoreA: 15, scoreB: 10 });
+    }
+    competition = (local.workspace.standard.competitions as Competition[])[0]!;
+    const firstGroup = competition.encounters.find((encounter) => encounter.stage === "group")!;
+    const otherGroup = competition.encounters.find((encounter) => encounter.stage === "group" && encounter.id !== firstGroup.id)!;
+    const otherBefore = { scoreA: otherGroup.scoreA, scoreB: otherGroup.scoreB, winner: otherGroup.winnerEntryId };
+    const semi = competition.encounters.find((encounter) => encounter.roundLabel === "Semifinal")!;
+    setLocalStandardResult(local, "c1", semi.id, { scoreA: 15, scoreB: 10 });
+
+    setLocalStandardResult(local, "c1", firstGroup.id, { scoreA: 10, scoreB: 15 }, { cascade: true });
+    competition = (local.workspace.standard.competitions as Competition[])[0]!;
+    const preserved = competition.encounters.find((encounter) => encounter.id === otherGroup.id)!;
+    expect({ scoreA: preserved.scoreA, scoreB: preserved.scoreB, winner: preserved.winnerEntryId }).toEqual(otherBefore);
+    expect(competition.finalGenerated).toBe(true);
+    expect(competition.encounters.filter((encounter) => encounter.stage !== "group").every((encounter) => encounter.status !== "finished")).toBe(true);
+  });
+
+  it("marks QA public models, preserves Team phase metadata and never treats an unmaterialized fixture as finished", () => {
+    const qa = createNationalCircuitQaFixture(snapshot());
+    const structure = buildPublicStructure(qa) as any;
+    const live = buildPublicLive(qa) as any;
+    expect(structure.qaFixture).toBe(true);
+    expect(live.qaFixture).toBe(true);
+    expect(live.status).toBe("live");
+
+    const teamQa = createQaFixture(snapshot());
+    const teamLive = buildPublicLive(teamQa) as any;
+    expect(teamLive.results.team.length).toBeGreaterThan(0);
+    expect(teamLive.results.team[0].stage).toBe("group");
+    expect(teamLive.results.team[0].roundLabel).toBeTruthy();
   });
 });

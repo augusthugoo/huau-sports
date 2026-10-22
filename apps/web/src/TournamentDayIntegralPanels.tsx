@@ -31,7 +31,6 @@ import {
   resetDayCategoryCompetition,
   restoreParticipant,
   setParticipantNoShow,
-  setCategoryScheduleDate,
   setScheduleUnitLocked,
   teamEntryRating,
   updateDayParticipant,
@@ -290,15 +289,12 @@ export function IntegralSchedulePanel({ locale, snapshot, mutate }: { locale: Lo
   const scheduleMeta=ensureDayLocalMeta(snapshot).schedule;
   const settings=snapshot.workspace.core.settings as any;
   const categories=snapshot.workspace.core.categories as any[];
-  const tournamentStart=Number(snapshot.workspace.core.tournament.startAt??Date.now());
-  const defaultCategoryDate=new Date(tournamentStart<10_000_000_000?tournamentStart*1000:tournamentStart).toISOString().slice(0,10);
-  const categoryDates=scheduleMeta.categoryDates??{};
-  const saveOperatingWindow=async(event:FormEvent<HTMLFormElement>)=>{event.preventDefault();const data=new FormData(event.currentTarget);await mutate(next=>{const target=next.workspace.core.settings as any;target.dailyStart=String(data.get("dailyStart")??"09:00");target.dailyEnd=String(data.get("dailyEnd")??"20:00");target.defaultMatchMinutes=Math.max(5,Number(data.get("matchMinutes")??30));target.teamRubberMinutes=Math.max(5,Number(data.get("teamRubberMinutes")??target.defaultMatchMinutes));target.minimumRestSlots=Math.max(0,Number(data.get("minimumRestSlots")??1));target.preferredRestSlots=Math.max(target.minimumRestSlots,Number(data.get("preferredRestSlots")??target.minimumRestSlots));},tr(locale,"Ventana operativa actualizada. Regenerá el cronograma para aplicarla.","Operating window updated. Regenerate the schedule to apply it."),"structure");};
+  const saveOperatingWindow=async(event:FormEvent<HTMLFormElement>)=>{event.preventDefault();const data=new FormData(event.currentTarget);await mutate(next=>{const target=next.workspace.core.settings as any;target.dailyStart=String(data.get("dailyStart")??"09:00");target.dailyEnd=String(data.get("dailyEnd")??"20:00");target.defaultMatchMinutes=Math.max(5,Number(data.get("matchMinutes")??30));target.teamRubberMinutes=Math.max(5,Number(data.get("teamRubberMinutes")??target.defaultMatchMinutes));target.minimumRestSlots=Math.max(0,Number(data.get("minimumRestSlots")??1));target.preferredRestSlots=Math.max(target.minimumRestSlots,Number(data.get("preferredRestSlots")??target.minimumRestSlots));(next.workspace.core.tournament as any).courtCount=Math.max(1,Number(data.get("courtCount")??next.workspace.core.tournament.courtCount??1));},tr(locale,"Ventana operativa actualizada. Regenerá el cronograma para aplicarla.","Operating window updated. Regenerate the schedule to apply it."),"structure");};
   const conflicts=scheduleMeta.lastConflicts;
   const standardMinutes=Math.max(5,Number(settings.defaultMatchMinutes??30));
   const teamRubberMinutes=Math.max(5,Number(settings.teamRubberMinutes??standardMinutes));
-  const minimumRestMinutes=Math.max(0,Number(settings.minimumRestSlots??1))*standardMinutes;
-  const preferredRestMinutes=Math.max(Number(settings.minimumRestSlots??1),Number(settings.preferredRestSlots??settings.minimumRestSlots??1))*standardMinutes;
+  const minimumRestSlots=Math.max(0,Number(settings.minimumRestSlots??1));
+  const preferredRestSlots=Math.max(minimumRestSlots,Number(settings.preferredRestSlots??settings.minimumRestSlots??1));
   const teamSeries=(snapshot.team.categories as any[]).map((category)=>({name:String(category.name??"Team"),rubbers:Number(category.format?.encounter?.rubbers?.length??0)})).filter((row)=>row.rubbers>0);
   const blocks=useMemo(()=>{const map=new Map<string,any[]>();for(const row of schedule){const key=String(row.scheduleUnitId??row.id);const list=map.get(key)??[];list.push(row);map.set(key,list)}return [...map.entries()]},[schedule]);
   const addCourtClosure=async(event:FormEvent<HTMLFormElement>)=>{event.preventDefault();const data=new FormData(event.currentTarget);const start=String(data.get("start")??"");const end=String(data.get("end")??"");await mutate(next=>closeCourt(next,Math.max(1,Number(data.get("court")??1)),localDateTimeToUnix(start.slice(0,10),start.slice(11,16)),localDateTimeToUnix(end.slice(0,10),end.slice(11,16)),String(data.get("label")??"").trim()||tr(locale,"Cancha cerrada","Court closed")),tr(locale,"Cierre de cancha agregado.","Court closure added."));};
@@ -308,20 +304,13 @@ export function IntegralSchedulePanel({ locale, snapshot, mutate }: { locale: Lo
       <div className="panel-title"><div><div className="eyebrow">GLOBAL SCHEDULER</div><h2>{tr(locale,"Cronograma completo","Complete schedule")}</h2></div><span>{blocks.length} {tr(locale,"bloques","blocks")}</span></div>
       <div className="form-actions"><button className="light" onClick={()=>void mutate(next=>{regenerateGlobalSchedule(next)},tr(locale,"Cronograma global regenerado.","Global schedule regenerated."))}>{tr(locale,"Regenerar cronograma completo","Regenerate complete schedule")}</button><button className="ghost" onClick={()=>void mutate(next=>{regenerateGlobalSchedule(next,{onlyUnlocked:true})},tr(locale,"Se regeneró sólo lo no bloqueado.","Only unlocked blocks were regenerated."))}>{tr(locale,"Regenerar solo no bloqueados","Regenerate unlocked only")}</button></div>
       <p className="muted">{tr(locale,"Standard y Team compiten por las mismas canchas. Team reserva la serie completa en una cancha. Descanso mínimo y fin de jornada son restricciones duras.","Standard and Team share the same court pool. Team reserves the full encounter on one court. Minimum rest and daily end are hard constraints.")}</p>
-      <form className="td-inline-form td-inline-dense td-schedule-window" onSubmit={saveOperatingWindow}><label><span>{tr(locale,"Inicio","Start")}</span><input name="dailyStart" type="time" defaultValue={String(settings.dailyStart??"09:00")} required /></label><label><span>{tr(locale,"Fin duro","Hard end")}</span><input name="dailyEnd" type="time" defaultValue={String(settings.dailyEnd??"20:00")} required /></label><label><span>{tr(locale,"Min/partido Standard","Min/Standard match")}</span><input name="matchMinutes" type="number" min="5" defaultValue={standardMinutes} /></label><label><span>{tr(locale,"Min/rubber Team","Min/Team rubber")}</span><input name="teamRubberMinutes" type="number" min="5" defaultValue={teamRubberMinutes} /></label><label><span>{tr(locale,"Descanso mínimo (bloques)","Minimum rest (slots)")}</span><input name="minimumRestSlots" type="number" min="0" defaultValue={Number(settings.minimumRestSlots??1)} /></label><label><span>{tr(locale,"Descanso preferido (bloques)","Preferred rest (slots)")}</span><input name="preferredRestSlots" type="number" min="0" defaultValue={Number(settings.preferredRestSlots??settings.minimumRestSlots??1)} /></label><button className="ghost small">{tr(locale,"Guardar ventana","Save window")}</button></form><div className="td-schedule-math"><span><b>{standardMinutes} min</b><small>{tr(locale,"duración de cada partido Standard","each Standard match")}</small></span><span><b>{teamRubberMinutes} min</b><small>{tr(locale,"duración estimada de cada rubber Team","each Team rubber")}</small></span><span><b>{minimumRestMinutes} min</b><small>{tr(locale,"descanso mínimo actual entre participaciones","current minimum rest between appearances")}</small></span><span><b>{preferredRestMinutes} min</b><small>{tr(locale,"descanso preferido actual","current preferred rest")}</small></span>{teamSeries.map((row)=><span key={row.name}><b>{row.rubbers} × {teamRubberMinutes} = {row.rubbers*teamRubberMinutes} min</b><small>{row.name} · {tr(locale,"reserva estimada de serie completa; el scheduler usa una grilla de 1 min","estimated full encounter reservation; scheduler uses a 1 min grid")}</small></span>)}</div>
+      <form className="td-inline-form td-inline-dense td-schedule-window" onSubmit={saveOperatingWindow}><label><span>{tr(locale,"Inicio","Start")}</span><input name="dailyStart" type="time" defaultValue={String(settings.dailyStart??"09:00")} required /></label><label><span>{tr(locale,"Fin duro","Hard end")}</span><input name="dailyEnd" type="time" defaultValue={String(settings.dailyEnd??"20:00")} required /></label><label><span>{tr(locale,"Canchas operativas","Operational courts")}</span><input name="courtCount" type="number" min="1" defaultValue={Math.max(1,Number(snapshot.workspace.core.tournament.courtCount??1))} /></label><label><span>{tr(locale,"Min/partido Standard · fallback","Min/Standard match · fallback")}</span><input name="matchMinutes" type="number" min="5" defaultValue={standardMinutes} /></label><label><span>{tr(locale,"Min/rubber Team","Min/Team rubber")}</span><input name="teamRubberMinutes" type="number" min="5" defaultValue={teamRubberMinutes} /></label><label><span>{tr(locale,"Descanso mínimo (bloques)","Minimum rest (slots)")}</span><input name="minimumRestSlots" type="number" min="0" defaultValue={Number(settings.minimumRestSlots??1)} /></label><label><span>{tr(locale,"Descanso preferido (bloques)","Preferred rest (slots)")}</span><input name="preferredRestSlots" type="number" min="0" defaultValue={Number(settings.preferredRestSlots??settings.minimumRestSlots??1)} /></label><button className="ghost small">{tr(locale,"Guardar ventana","Save window")}</button></form><div className="td-schedule-math"><span><b>{standardMinutes} min</b><small>{tr(locale,"duración de cada partido Standard","each Standard match")}</small></span><span><b>{teamRubberMinutes} min</b><small>{tr(locale,"duración estimada de cada rubber Team","each Team rubber")}</small></span><span><b>{minimumRestSlots} {tr(locale,"partido(s)","match(es)")}</b><small>{tr(locale,"descanso mínimo; se convierte usando la duración efectiva de cada categoría/fase","minimum rest; converted using each category/phase effective duration")}</small></span><span><b>{preferredRestSlots} {tr(locale,"partido(s)","match(es)")}</b><small>{tr(locale,"descanso preferido; el scheduler puede ceder hasta el mínimo si hace falta","preferred rest; scheduler may fall back to the minimum when needed")}</small></span>{teamSeries.map((row)=><span key={row.name}><b>{row.rubbers} × {teamRubberMinutes} = {row.rubbers*teamRubberMinutes} min</b><small>{row.name} · {tr(locale,"reserva estimada de serie completa; el scheduler usa una grilla de 1 min","estimated full encounter reservation; scheduler uses a 1 min grid")}</small></span>)}</div>
       {conflicts.length ? <details className="td-conflict-summary"><summary><div><b>{conflicts.length} {tr(locale,"bloque(s) no pudieron programarse","block(s) could not be scheduled")}</b><span>{tr(locale,"El scheduler respetó el fin duro, descansos y restricciones. Abrí para ver detalles técnicos.","The scheduler respected hard end, rest and restrictions. Open for technical details.")}</span></div><em>{tr(locale,"Ver detalles","Details")}</em></summary><div className="td-conflict-details">{conflicts.map((conflict,index)=><div className="warning-line" key={`${conflict.code}-${index}`}><b>{conflict.code}</b> · {conflict.message}</div>)}</div></details> : null}
     </article>
     <article className="panel td-schedule-category-days">
-      <div className="panel-title"><div><div className="eyebrow">DÍAS DE JUEGO</div><h2>{tr(locale,"Día operativo por categoría","Operational day by category")}</h2></div></div>
-      <p className="muted">{tr(locale,"Administración queda como referencia inicial. Acá Tournament Day manda: cambiar un día mueve la categoría completa y las próximas regeneraciones respetan este override local.","Administration remains the initial reference. Tournament Day is authoritative here: changing a day moves the full category and future regenerations respect this local override.")}</p>
-      <div className="td-category-day-grid">
-        {categories.map((category:any)=>{
-          const adminDate=String(category.scheduledDate??defaultCategoryDate);
-          const localDate=String(categoryDates[String(category.id)]??adminDate);
-          const overridden=Boolean(categoryDates[String(category.id)]);
-          return <label className={`td-category-day ${overridden?"overridden":""}`} key={category.id}><span><b>{category.name}</b><small>{overridden?tr(locale,`Tournament Day · Admin: ${adminDate}`,`Tournament Day · Admin: ${adminDate}`):tr(locale,`Referencia Admin: ${adminDate}`,`Admin reference: ${adminDate}`)}</small></span><input type="date" value={localDate} onChange={(event)=>{const value=event.target.value;if(!value)return;void mutate(next=>setCategoryScheduleDate(next,String(category.id),value),tr(locale,`Día de ${category.name} actualizado a ${value}.`,`Day for ${category.name} updated to ${value}.`),"structure")}} /></label>
-        })}
-      </div>
+      <div className="panel-title"><div><div className="eyebrow">AUTORIDAD OPERATIVA</div><h2>{tr(locale,"Las fases mandan","Phase plan is authoritative")}</h2></div></div>
+      <p className="muted">{tr(locale,"Las fechas de Administración son referencia. Día de grupos y día de fase final se definen en Plan Operativo; cambiar una fase no arrastra silenciosamente toda la categoría.","Admin dates are reference values. Group day and final-phase day are defined in Operational Plan; changing one phase never silently drags the whole category.")}</p>
+      <div className="td-chip-list">{categories.map((category:any)=><span key={category.id}><b>{category.name}</b> · Admin {String(category.scheduledDate??"—")}</span>)}</div>
     </article>
     <article className="panel td-schedule-constraints">
       <div className="panel-title"><div><div className="eyebrow">RESTRICCIONES MANUALES</div><h2>{tr(locale,"Canchas cerradas y descansos","Closed courts & breaks")}</h2></div></div>
@@ -361,13 +350,72 @@ function ScheduleBlock({blockId,rows,locale,mutate}:{blockId:string;rows:any[];l
   return <form className={`td-schedule-row td-schedule-block ${team?"team-block":""}`} onSubmit={save}><div><strong>{first.sideA||first.roundLabel||first.categoryName}{first.sideB?` vs ${first.sideB}`:""}</strong><span>{first.categoryName} · {team?`${rows.length} rubbers · misma cancha`:first.stage} · {locked?"LOCKED":""}</span>{team?<small>{rows.map((r,index)=>visibleRubber(r,index)).filter(Boolean).join(" → ")}</small>:null}</div><label><span>{tr(locale,"Inicio","Start")}</span><input name="start" type="datetime-local" defaultValue={unixToLocalDateTime(Math.min(...rows.map((r)=>Number(r.startAt))))}/></label><label><span>{tr(locale,"Cancha","Court")}</span><input name="court" defaultValue={String(first.courtLabel).match(/\d+/)?.[0]??"1"}/></label><div className="form-actions"><button className="ghost small">{tr(locale,"Guardar posición","Save position")}</button><button type="button" className={locked?"light small":"ghost small"} onClick={(event)=>{if(locked){void mutate(next=>setScheduleUnitLocked(next,blockId,false),tr(locale,"Bloque desbloqueado.","Block unlocked."));return;}const form=event.currentTarget.form;if(!form)return;const patch=readPatch(form);void mutate(next=>updateScheduleUnit(next,blockId,patch),tr(locale,"Posición guardada y bloqueada.","Position saved and locked."));}}>{locked?tr(locale,"Desbloquear 🔓","Unlock 🔓"):tr(locale,"Guardar + bloquear 🔒","Save + lock 🔒")}</button></div></form>
 }
 
-function scheduleIndex(snapshot:TournamentDayReformSnapshot){const map=new Map<string,number>();for(const row of snapshot.workspace.schedule.schedule as any[]){const id=String(row.matchId??row.encounterId??"");if(!id)continue;const t=Number(row.startAt??0);const old=map.get(id);if(old===undefined||t<old)map.set(id,t)}return map}
+type OperationalResultRow = {
+  key: string;
+  type: "standard" | "team";
+  start: number | undefined;
+  end: number | undefined;
+  status: string;
+  match?: any;
+  category?: any;
+  enc?: any;
+};
+
+function scheduleWindowIndex(snapshot:TournamentDayReformSnapshot){
+  const map=new Map<string,{start:number;end:number}>();
+  for(const row of snapshot.workspace.schedule.schedule as any[]){
+    for(const rawId of [row.matchId,row.encounterId]){
+      const id=String(rawId??"");
+      if(!id)continue;
+      const start=Number(row.startAt??0);
+      const end=Number(row.endAt??row.startAt??0);
+      const old=map.get(id);
+      map.set(id,{start:old?Math.min(old.start,start):start,end:old?Math.max(old.end,end):end});
+    }
+  }
+  return map;
+}
+
+function operationalWaveTime(value:number){return new Date(value*1000).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}
+
 export function IntegralResultsPanel({locale,snapshot,renderStandard,renderTeamRubber}:{locale:Locale;snapshot:TournamentDayReformSnapshot;renderStandard:(match:any)=>ReactNode;renderTeamRubber:(category:any,encounter:any,match:any)=>ReactNode}){
-  const order=scheduleIndex(snapshot); const now=Math.floor(Date.now()/1000); const standard=(snapshot.workspace.standard.matches as any[]).filter((m)=>m.entryAId&&m.entryBId&&!['bye','skipped'].includes(m.status)); const team=(snapshot.team.categories as any[]).flatMap((category)=>(category.encounters??[]).map((enc:any)=>({category,enc})));
-  const bucket=(start:number|undefined,status:string)=>['finished','bye','skipped'].includes(status)?'finished':start&&start<=now&&now<=start+90*60?'now':start&&start>now?'next':'pending';
-  const standardRows=standard.map((m)=>({type:'standard',match:m,start:order.get(String(m.matchId??m.encounterId)),bucket:bucket(order.get(String(m.matchId??m.encounterId)),m.status)})); const teamRows=team.map(({category,enc})=>{const starts=(enc.matches??[]).map((m:any)=>order.get(String(m.id))).filter(Boolean) as number[];const start=starts.length?Math.min(...starts):undefined;return{type:'team',category,enc,start,bucket:bucket(start,enc.status)}}); const rows=[...standardRows,...teamRows].sort((a:any,b:any)=>Number(a.start??Number.MAX_SAFE_INTEGER)-Number(b.start??Number.MAX_SAFE_INTEGER));
-  const section=(key:string,title:string)=><article className="panel wide td-results-operational"><div className="panel-title"><h2>{title}</h2><span>{rows.filter((r:any)=>r.bucket===key).length}</span></div>{rows.filter((r:any)=>r.bucket===key).map((r:any)=>r.type==='standard'?<div key={`s-${r.match.matchId??r.match.encounterId}`}>{renderStandard(r.match)}</div>:<TeamEncounterResult key={`t-${r.enc.id}`} category={r.category} encounter={r.enc} renderRubber={renderTeamRubber}/>)}</article>;
-  return <section className="td-stack">{section('now',tr(locale,'Ahora','Now'))}{section('next',tr(locale,'Próximos','Next'))}{section('pending',tr(locale,'Pendientes','Pending'))}{section('finished',tr(locale,'Terminados','Finished'))}</section>;
+  const windows=scheduleWindowIndex(snapshot);
+  const now=Math.floor(Date.now()/1000);
+  const standard:OperationalResultRow[]=(snapshot.workspace.standard.matches as any[])
+    .filter((match)=>match.entryAId&&match.entryBId&&!['bye','skipped'].includes(String(match.status)))
+    .map((match)=>{const window=windows.get(String(match.matchId??match.encounterId));return{key:`s:${match.matchId??match.encounterId}`,type:'standard',start:window?.start,end:window?.end,status:String(match.status),match}});
+  const team:OperationalResultRow[]=(snapshot.team.categories as any[]).flatMap((category)=>(category.encounters??[]).map((enc:any)=>{
+    const encounterWindows=(enc.matches??[]).map((match:any)=>windows.get(String(match.id))).filter(Boolean) as Array<{start:number;end:number}>;
+    return{key:`t:${enc.id}`,type:'team' as const,start:encounterWindows.length?Math.min(...encounterWindows.map((row)=>row.start)):undefined,end:encounterWindows.length?Math.max(...encounterWindows.map((row)=>row.end)):undefined,status:String(enc.status),category,enc};
+  }));
+  const rows=[...standard,...team];
+  const terminal=(row:OperationalResultRow)=>['finished','bye','skipped'].includes(row.status);
+  const finished=rows.filter(terminal);
+  const unscheduled=rows.filter((row)=>!terminal(row)&&!row.start);
+  const scheduled=rows.filter((row)=>!terminal(row)&&Boolean(row.start));
+  const waveMap=new Map<number,OperationalResultRow[]>();
+  for(const row of scheduled){const start=Number(row.start);const list=waveMap.get(start)??[];list.push(row);waveMap.set(start,list)}
+  const waves=[...waveMap.entries()].sort(([a],[b])=>a-b).map(([start,waveRows])=>({start,end:Math.max(...waveRows.map((row)=>Number(row.end??row.start??start))),rows:waveRows}));
+  const explicitLive=waves.find((wave)=>wave.rows.some((row)=>row.status==='in_progress'))??null;
+  const firstStarted=waves.find((wave)=>wave.start<=now)??null;
+  const current=explicitLive??firstStarted;
+  const overdue=explicitLive
+    ? waves.filter((wave)=>wave.start<explicitLive.start)
+    : [];
+  const next=current
+    ? waves.find((wave)=>wave.start>current.start)??null
+    : waves.find((wave)=>wave.start>now)??waves[0]??null;
+  const later=waves.filter((wave)=>(!current||wave.start!==current.start)&&(!next||wave.start!==next.start)&&wave.start>(current?.start??now));
+  const renderRow=(row:OperationalResultRow)=>row.type==='standard'?<div key={row.key}>{renderStandard(row.match)}</div>:<TeamEncounterResult key={row.key} category={row.category} encounter={row.enc} renderRubber={renderTeamRubber}/>;
+  const waveCard=(title:string,wave:{start:number;rows:OperationalResultRow[]}|null,empty:string)=><article className="panel wide td-results-operational"><div className="panel-title"><h2>{title}</h2><span>{wave?.rows.length??0}</span></div>{wave?<><small>{operationalWaveTime(wave.start)}</small>{wave.rows.map(renderRow)}</>:<p className="muted">{empty}</p>}</article>;
+  return <section className="td-stack">
+    {waveCard(tr(locale,'Turno actual','Current wave'),current,tr(locale,'El próximo turno todavía no comenzó.','The next wave has not started yet.'))}
+    {overdue.length?<article className="panel wide td-results-operational td-results-overdue"><div className="panel-title"><h2>{tr(locale,'Atrasados · revisar','Overdue · review')}</h2><span>{overdue.length} {tr(locale,'turnos','waves')}</span></div><p className="muted">{tr(locale,'Hay turnos anteriores todavía abiertos mientras otro turno figura en juego. Revisá si falta cargar un resultado o cerrar un partido.','Earlier waves are still open while another wave is in progress. Check for a missing result or an unclosed match.')}</p>{overdue.map((wave)=><details key={wave.start} open><summary><strong>{operationalWaveTime(wave.start)}</strong><span>{wave.rows.length} {tr(locale,'partido(s)','match(es)')}</span></summary><div>{wave.rows.map(renderRow)}</div></details>)}</article>:null}
+    {waveCard(tr(locale,'Siguiente turno','Next wave'),next,tr(locale,'No hay un siguiente turno programado.','No next wave is scheduled.'))}
+    {later.length?<article className="panel wide td-results-operational"><div className="panel-title"><h2>{tr(locale,'Después','Later')}</h2><span>{later.length} {tr(locale,'turnos','waves')}</span></div>{later.map((wave)=><details key={wave.start}><summary><strong>{operationalWaveTime(wave.start)}</strong><span>{wave.rows.length} {tr(locale,'partido(s)','match(es)')}</span></summary><div>{wave.rows.map(renderRow)}</div></details>)}</article>:null}
+    <article className="panel wide td-results-operational"><div className="panel-title"><h2>{tr(locale,'Sin programar','Unscheduled')}</h2><span>{unscheduled.length}</span></div>{unscheduled.length?unscheduled.map(renderRow):<p className="muted">{tr(locale,'Todo lo pendiente tiene turno.','Every pending match has a scheduled wave.')}</p>}</article>
+    <details className="panel wide td-results-operational"><summary><strong>{tr(locale,'Terminados','Finished')}</strong><span>{finished.length}</span></summary><div>{finished.sort((a,b)=>Number(b.start??0)-Number(a.start??0)).map(renderRow)}</div></details>
+  </section>;
 }
 function TeamEncounterResult({category,encounter,renderRubber}:{category:any;encounter:any;renderRubber:(category:any,encounter:any,match:any)=>ReactNode}){let a=0,b=0;for(const m of encounter.matches??[]){if(!m.resultStatus)continue;const def=(category.format?.encounter?.rubbers??[]).find((r:any)=>r.key===m.rubberKey);const w=Number(def?.weight??1);if(m.winnerSide==='A')a+=w;if(m.winnerSide==='B')b+=w}return <details className="td-team-result-encounter" open={encounter.status==='in_progress'}><summary><span>{category.name} · {encounter.roundLabel??encounter.stage}</span><strong>{encounter.sideA} {a} — {b} {encounter.sideB}</strong></summary><div className="td-team-rubber-stack">{[...(encounter.matches??[])].sort((x:any,y:any)=>Number(x.rubberOrder)-Number(y.rubberOrder)).map((m:any)=><div key={m.id}>{renderRubber(category,encounter,m)}</div>)}</div></details>}
 

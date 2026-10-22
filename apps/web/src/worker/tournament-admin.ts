@@ -3401,13 +3401,25 @@ export async function handleTournamentAdminApi(
       const body = await readJson<{ status?: string; publicLive?: boolean; publicParticipants?: boolean; name?: string; courtCount?: number; visibility?: string }>(request);
       const allowedStatuses = ["draft","registration_open","registration_closed","draw_ready","scheduled","live","completed","cancelled"];
       if (body.status && !allowedStatuses.includes(body.status)) return json({ ok: false, code: "INVALID_STATUS" }, { status: 400 });
+
       await env.HUAU_DB.prepare(
         `UPDATE tournaments SET name=COALESCE(?,name),court_count=COALESCE(?,court_count),visibility=COALESCE(?,visibility),
                 status=COALESCE(?,status),public_live=COALESCE(?,public_live),public_participants=COALESCE(?,public_participants),updated_at=? WHERE id=?`,
       ).bind(body.name?.trim() || null,body.courtCount ? Math.max(1,Math.trunc(body.courtCount)) : null,body.visibility ?? null,body.status ?? null,
         body.publicLive === undefined ? null : asBool(body.publicLive),body.publicParticipants === undefined ? null : asBool(body.publicParticipants),unixNow(),tournamentId).run();
+
       if (body.publicLive !== undefined) {
-        await setTournamentLandingPromotion(env, tournamentId, body.publicLive);
+        const promoted = await setTournamentLandingPromotion(env, tournamentId, body.publicLive);
+        if (!promoted && body.publicLive) {
+          // Mantener D1 y manifest coherentes si todavía no existe estructura pública.
+          await env.HUAU_DB.prepare(
+            `UPDATE tournaments SET public_live=?,updated_at=? WHERE id=?`,
+          ).bind(asBool(accessResult.tournament.publicLive),unixNow(),tournamentId).run();
+          return json(
+            { ok: false, code: "PUBLIC_LIVE_STRUCTURE_REQUIRED" },
+            { status: 409 },
+          );
+        }
       }
       await invalidatePublicCatalogState(env, accessResult.tournament.slug);
       return json({ ok: true });

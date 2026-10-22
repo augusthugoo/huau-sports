@@ -305,6 +305,16 @@ async function putSnapshot(
     };
   }
 
+  const qaFixture = record(snapshot.localMeta?.qaFixture);
+  if (Object.keys(qaFixture).length) {
+    return {
+      response: json(
+        { ok: false, code: "TOURNAMENT_DAY_QA_PUBLISH_BLOCKED" },
+        { status: 409 },
+      ),
+    };
+  }
+
   const serialized = JSON.stringify(snapshot);
   if (serialized.length > 20_000_000) {
     return {

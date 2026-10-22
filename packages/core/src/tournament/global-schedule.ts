@@ -22,6 +22,7 @@ export type GlobalScheduleUnit = {
   dependencyIds?: string[];
   dependencyRestSlots?: number;
   notBefore?: string | null;
+  notAfter?: string | null;
   durationMinutes: number;
   minimumRestSlots?: number;
   preferredRestSlots?: number;
@@ -31,6 +32,7 @@ export type GlobalScheduleUnit = {
   policyPhase?: number | null;
   policySequenceKey?: string | null;
   policySequenceIndex?: number | null;
+  continuityKey?: string | null;
   allowedCourts?: number[];
   preferredCourts?: number[];
   exclusiveCourts?: number[];
@@ -133,6 +135,16 @@ function assignmentDuration(unit: GlobalScheduleUnit) {
   return Math.max(1, unit.durationMinutes);
 }
 
+function restSlotMinutes(unit: GlobalScheduleUnit) {
+  if (unit.kind === "team" && unit.rubbers?.length) {
+    return Math.max(
+      1,
+      ...unit.rubbers.map((rubber) => Math.max(1, rubber.durationMinutes)),
+    );
+  }
+  return Math.max(1, unit.durationMinutes);
+}
+
 function expandRubbers(unit: GlobalScheduleUnit, startAt: number): GlobalScheduleRubberAssignment[] {
   if (unit.kind !== "team" || !unit.rubbers?.length) return [];
   let cursor = startAt;
@@ -155,19 +167,39 @@ function participantRestOk(
 ) {
   const unitParticipants = new Set(unit.participants.filter(Boolean));
   if (!unitParticipants.size) return true;
+
   const slots = preferred
-    ? Math.max(unit.preferredRestSlots ?? settings.preferredRestSlots ?? unit.minimumRestSlots ?? settings.minimumRestSlots, unit.minimumRestSlots ?? settings.minimumRestSlots)
+    ? Math.max(
+        unit.preferredRestSlots ??
+          settings.preferredRestSlots ??
+          unit.minimumRestSlots ??
+          settings.minimumRestSlots,
+        unit.minimumRestSlots ?? settings.minimumRestSlots,
+      )
     : Math.max(0, unit.minimumRestSlots ?? settings.minimumRestSlots);
-  const restMs = slots * Math.max(1, settings.defaultMatchMinutes) * MINUTE;
 
   return assignments.every((assignment) => {
     const other = unitsById.get(assignment.unitId);
     if (!other) return true;
-    const shared = other.participants.some((participant) => unitParticipants.has(participant));
+    const shared = other.participants.some((participant) =>
+      unitParticipants.has(participant),
+    );
     if (!shared) return true;
-    if (intervalsOverlap(startAt, endAt, assignment.startAt, assignment.endAt)) return false;
-    if (assignment.endAt <= startAt) return startAt - assignment.endAt >= restMs;
-    if (endAt <= assignment.startAt) return assignment.startAt - endAt >= restMs;
+    if (intervalsOverlap(startAt, endAt, assignment.startAt, assignment.endAt)) {
+      return false;
+    }
+
+    const restMs =
+      slots *
+      Math.max(restSlotMinutes(unit), restSlotMinutes(other)) *
+      MINUTE;
+
+    if (assignment.endAt <= startAt) {
+      return startAt - assignment.endAt >= restMs;
+    }
+    if (endAt <= assignment.startAt) {
+      return assignment.startAt - endAt >= restMs;
+    }
     return false;
   });
 }
@@ -200,22 +232,47 @@ function dependenciesReady(
   );
 }
 
-function dependencyEnd(unit: GlobalScheduleUnit, assignmentsByUnit: Map<string, GlobalScheduleAssignment>) {
-  return Math.max(
-    0,
-    ...(unit.dependencyIds ?? []).map((dependencyId) => assignmentsByUnit.get(dependencyId)?.endAt ?? 0),
-  );
-}
-
 function dependencyReadyAt(
   unit: GlobalScheduleUnit,
   assignmentsByUnit: Map<string, GlobalScheduleAssignment>,
-  settings: GlobalScheduleSettings,
+  unitsById: Map<string, GlobalScheduleUnit>,
 ) {
-  const endAt = dependencyEnd(unit, assignmentsByUnit);
-  if (!endAt) return 0;
   const slots = Math.max(0, Number(unit.dependencyRestSlots ?? 0));
-  return endAt + slots * Math.max(1, settings.defaultMatchMinutes) * MINUTE;
+  return Math.max(
+    0,
+    ...(unit.dependencyIds ?? []).map((dependencyId) => {
+      const assignment = assignmentsByUnit.get(dependencyId);
+      if (!assignment) return 0;
+      const dependency = unitsById.get(dependencyId);
+      const restMinutes = dependency
+        ? Math.max(restSlotMinutes(unit), restSlotMinutes(dependency))
+        : restSlotMinutes(unit);
+      return assignment.endAt + slots * restMinutes * MINUTE;
+    }),
+  );
+}
+
+function dependencyPreferredReadyAt(
+  unit: GlobalScheduleUnit,
+  assignmentsByUnit: Map<string, GlobalScheduleAssignment>,
+  unitsById: Map<string, GlobalScheduleUnit>,
+) {
+  const slots = Math.max(
+    Number(unit.dependencyRestSlots ?? 0),
+    Number(unit.preferredRestSlots ?? unit.dependencyRestSlots ?? 0),
+  );
+  return Math.max(
+    0,
+    ...(unit.dependencyIds ?? []).map((dependencyId) => {
+      const assignment = assignmentsByUnit.get(dependencyId);
+      if (!assignment) return 0;
+      const dependency = unitsById.get(dependencyId);
+      const restMinutes = dependency
+        ? Math.max(restSlotMinutes(unit), restSlotMinutes(dependency))
+        : restSlotMinutes(unit);
+      return assignment.endAt + slots * restMinutes * MINUTE;
+    }),
+  );
 }
 
 function lowerBarrierUnits(unit: GlobalScheduleUnit, units: GlobalScheduleUnit[]) {
@@ -318,14 +375,15 @@ function policySequenceEnd(
 }
 
 function exclusiveCourtOwners(units: GlobalScheduleUnit[], courtCount: number) {
-  const owners = new Map<number, Set<string>>();
+  const owners = new Map<string, Set<string>>();
   for (const unit of units) {
     for (const court of unit.exclusiveCourts ?? []) {
       const value = Math.trunc(Number(court));
       if (value < 1 || value > courtCount) continue;
-      const set = owners.get(value) ?? new Set<string>();
+      const key = `${unit.date}:${value}`;
+      const set = owners.get(key) ?? new Set<string>();
       set.add(unit.categoryId);
-      owners.set(value, set);
+      owners.set(key, set);
     }
   }
   return owners;
@@ -334,7 +392,7 @@ function exclusiveCourtOwners(units: GlobalScheduleUnit[], courtCount: number) {
 function courtOrder(
   unit: GlobalScheduleUnit,
   courtCount: number,
-  exclusiveOwners: Map<number, Set<string>>,
+  exclusiveOwners: Map<string, Set<string>>,
 ) {
   const all = Array.from({ length: courtCount }, (_, index) => index + 1);
   const valid = (values: number[] | undefined) => [...new Set((values ?? [])
@@ -344,7 +402,7 @@ function courtOrder(
   const allowed = valid(unit.allowedCourts);
   let base = exclusive.length ? exclusive : allowed.length ? allowed : all;
   base = base.filter((court) => {
-    const owners = exclusiveOwners.get(court);
+    const owners = exclusiveOwners.get(`${unit.date}:${court}`);
     return !owners?.size || owners.has(unit.categoryId);
   });
   const preferred = valid(unit.preferredCourts).filter((court) => base.includes(court));
@@ -367,23 +425,98 @@ function categoryConcurrencyOk(
   return simultaneous < max;
 }
 
-function unitOrderScore(unit: GlobalScheduleUnit, categoryCounts: Map<string, number>) {
-  const stageWeight = unit.stage === "group" ? 0 : unit.stage === "playoff" ? 20 : unit.stage === "bronze" ? 30 : unit.stage === "final" ? 40 : 10;
-  return (unit.priority ?? 0) * -1000 + stageWeight + (categoryCounts.get(unit.categoryId) ?? 0) * 3 + Number(unit.roundNumber ?? 0) + Number(unit.legNumber ?? 0) * 2;
+function stageOrder(unit: GlobalScheduleUnit) {
+  if (unit.stage === "group") return 0;
+  if (unit.stage === "playoff") return 1;
+  if (unit.stage === "bronze") return 2;
+  if (unit.stage === "final") return 3;
+  return 1;
 }
 
-function candidateTimes(unit: GlobalScheduleUnit, settings: GlobalScheduleSettings, earliestAt: number) {
+function compareReadyUnits(
+  a: GlobalScheduleUnit,
+  b: GlobalScheduleUnit,
+  assignments: GlobalScheduleAssignment[],
+  unitsById: Map<string, GlobalScheduleUnit>,
+) {
+  // Compatibilidad con la política actual: un priority mayor va primero.
+  const priority = Number(b.priority ?? 0) - Number(a.priority ?? 0);
+  if (priority !== 0) return priority;
+
+  const lastFor = (unit: GlobalScheduleUnit) =>
+    Math.max(
+      0,
+      ...assignments
+        .filter((assignment) => {
+          const scheduled = unitsById.get(assignment.unitId);
+          return (
+            Boolean(unit.continuityKey) &&
+            scheduled?.date === unit.date &&
+            scheduled?.continuityKey === unit.continuityKey
+          );
+        })
+        .map((assignment) => assignment.endAt),
+    );
+
+  const lastA = lastFor(a);
+  const lastB = lastFor(b);
+
+  // Sólo desempata candidatos que pueden entrar en el mismo wave. Una
+  // categoría ya iniciada conserva pulso, pero nunca deja una cancha ociosa
+  // si otra categoría legal puede jugar antes.
+  if (Boolean(a.continuityKey) || Boolean(b.continuityKey)) {
+    if (Boolean(lastA) !== Boolean(lastB)) return lastA ? -1 : 1;
+    if (lastA !== lastB) return lastB - lastA;
+  }
+
+  const stage = stageOrder(a) - stageOrder(b);
+  if (stage !== 0) return stage;
+
+  const round = Number(a.roundNumber ?? 0) - Number(b.roundNumber ?? 0);
+  if (round !== 0) return round;
+
+  const leg = Number(a.legNumber ?? 0) - Number(b.legNumber ?? 0);
+  if (leg !== 0) return leg;
+
+  return a.id.localeCompare(b.id);
+}
+
+function unitEndMinute(unit: GlobalScheduleUnit, settings: GlobalScheduleSettings) {
+  const dailyEnd = parseClock(settings.dailyEnd);
+  return unit.notAfter
+    ? Math.min(dailyEnd, parseClock(unit.notAfter))
+    : dailyEnd;
+}
+
+function unitEndAt(unit: GlobalScheduleUnit, settings: GlobalScheduleSettings) {
+  return localDateMinute(unit.date, unitEndMinute(unit, settings));
+}
+
+function candidateTimes(
+  unit: GlobalScheduleUnit,
+  settings: GlobalScheduleSettings,
+  earliestAt: number,
+  latestAt = Number.POSITIVE_INFINITY,
+) {
   const dayStartMinute = parseClock(settings.dailyStart);
-  const unitStartMinute = unit.notBefore ? parseClock(unit.notBefore) : dayStartMinute;
+  const unitStartMinute = unit.notBefore
+    ? parseClock(unit.notBefore)
+    : dayStartMinute;
   const startMinute = Math.max(dayStartMinute, unitStartMinute);
-  const endMinute = parseClock(settings.dailyEnd);
+  const endMinute = unitEndMinute(unit, settings);
   if (endMinute <= startMinute) return [];
   const startAt = Math.max(localDateMinute(unit.date, startMinute), earliestAt);
   const endAt = localDateMinute(unit.date, endMinute);
   const step = Math.max(1, settings.stepMinutes ?? 5) * MINUTE;
   const rounded = Math.ceil(startAt / step) * step;
   const values: number[] = [];
-  for (let cursor = rounded; cursor < endAt; cursor += step) values.push(cursor);
+  for (
+    let cursor = rounded;
+    cursor < endAt && cursor <= latestAt;
+    cursor += step
+  ) {
+    values.push(cursor);
+  }
   return values;
 }
 
@@ -412,7 +545,7 @@ export function generateGlobalTournamentSchedule(input: {
     const unitStart = unit.notBefore
       ? localDateMinute(unit.date, parseClock(unit.notBefore))
       : dayStart;
-    const dayEnd = localDateMinute(unit.date, parseClock(settings.dailyEnd));
+    const dayEnd = unitEndAt(unit, settings);
     const invalid =
       lock.court < 1 ||
       lock.court > courtCount ||
@@ -446,64 +579,115 @@ export function generateGlobalTournamentSchedule(input: {
   }
 
   const pending = units.filter((unit) => !assignmentsByUnit.has(unit.id));
-  const categoryCounts = new Map<string, number>();
-  assignments.forEach((assignment) => categoryCounts.set(assignment.categoryId, (categoryCounts.get(assignment.categoryId) ?? 0) + 1));
 
   let progress = true;
   while (pending.some((unit) => !assignmentsByUnit.has(unit.id)) && progress) {
     progress = false;
+
     const ready = pending
       .filter((unit) => !assignmentsByUnit.has(unit.id))
       .filter((unit) => dependenciesReady(unit, assignmentsByUnit, unitsById))
       .filter((unit) => barrierReady(unit, units, assignmentsByUnit))
       .filter((unit) => policyPhaseReady(unit, units, assignmentsByUnit))
       .filter((unit) => policySequenceReady(unit, units, assignmentsByUnit))
-      .sort((a, b) => unitOrderScore(a, categoryCounts) - unitOrderScore(b, categoryCounts));
+      .sort((a, b) => compareReadyUnits(a, b, assignments, unitsById));
+
+    const candidates: Array<{
+      unit: GlobalScheduleUnit;
+      court: number;
+      startAt: number;
+      preferred: boolean;
+    }> = [];
+    let earliestCandidateStart = Number.POSITIVE_INFINITY;
 
     for (const unit of ready) {
       const durationMs = assignmentDuration(unit) * MINUTE;
       const earliestAt = Math.max(
-        dependencyReadyAt(unit, assignmentsByUnit, settings),
+        dependencyReadyAt(unit, assignmentsByUnit, unitsById),
         barrierEnd(unit, units, assignmentsByUnit),
         policyPhaseEnd(unit, units, assignmentsByUnit),
         policySequenceEnd(unit, units, assignmentsByUnit),
       );
-      const dayEnd = localDateMinute(unit.date, parseClock(settings.dailyEnd));
+      const dayEnd = unitEndAt(unit, settings);
       let best: { court: number; startAt: number; preferred: boolean } | null = null;
 
-      for (const preferred of [true, false]) {
-        for (const startAt of candidateTimes(unit, settings, earliestAt)) {
-          const endAt = startAt + durationMs;
-          if (endAt > dayEnd) break;
-          if (!categoryConcurrencyOk(unit, startAt, endAt, assignments)) continue;
-          for (const court of courtOrder(unit, courtCount, exclusiveOwners)) {
-            if (!courtFree(court, startAt, endAt, assignments, closedCourts, breaks)) continue;
-            if (!participantRestOk(unit, startAt, endAt, assignments, unitsById, settings, false)) continue;
-            if (preferred && !participantRestOk(unit, startAt, endAt, assignments, unitsById, settings, true)) continue;
-            best = { court, startAt, preferred };
-            break;
+      for (const startAt of candidateTimes(
+        unit,
+        settings,
+        earliestAt,
+        earliestCandidateStart,
+      )) {
+        const endAt = startAt + durationMs;
+        if (endAt > dayEnd) break;
+        if (!categoryConcurrencyOk(unit, startAt, endAt, assignments)) continue;
+
+        for (const court of courtOrder(unit, courtCount, exclusiveOwners)) {
+          if (!courtFree(court, startAt, endAt, assignments, closedCourts, breaks)) {
+            continue;
           }
-          if (best) break;
+          if (!participantRestOk(
+            unit,
+            startAt,
+            endAt,
+            assignments,
+            unitsById,
+            settings,
+            false,
+          )) {
+            continue;
+          }
+          const preferred =
+            startAt >= dependencyPreferredReadyAt(unit, assignmentsByUnit, unitsById) &&
+            participantRestOk(
+              unit,
+              startAt,
+              endAt,
+              assignments,
+              unitsById,
+              settings,
+              true,
+            );
+          best = { court, startAt, preferred };
+          break;
         }
         if (best) break;
       }
 
       if (!best) continue;
-      const assignment: GlobalScheduleAssignment = {
-        unitId: unit.id,
-        categoryId: unit.categoryId,
-        kind: unit.kind,
-        court: best.court,
-        startAt: best.startAt,
-        endAt: best.startAt + durationMs,
-        locked: false,
-        rubbers: expandRubbers(unit, best.startAt),
-      };
-      assignments.push(assignment);
-      assignmentsByUnit.set(unit.id, assignment);
-      categoryCounts.set(unit.categoryId, (categoryCounts.get(unit.categoryId) ?? 0) + 1);
-      progress = true;
+      if (best.startAt < earliestCandidateStart) {
+        earliestCandidateStart = best.startAt;
+        candidates.length = 0;
+      }
+      if (best.startAt === earliestCandidateStart) {
+        candidates.push({ unit, ...best });
+      }
     }
+
+    if (!candidates.length) continue;
+
+    candidates.sort(
+      (a, b) =>
+        Number(b.preferred) - Number(a.preferred) ||
+        compareReadyUnits(a.unit, b.unit, assignments, unitsById) ||
+        a.court - b.court ||
+        a.unit.id.localeCompare(b.unit.id),
+    );
+
+    const chosen = candidates[0]!;
+    const durationMs = assignmentDuration(chosen.unit) * MINUTE;
+    const assignment: GlobalScheduleAssignment = {
+      unitId: chosen.unit.id,
+      categoryId: chosen.unit.categoryId,
+      kind: chosen.unit.kind,
+      court: chosen.court,
+      startAt: chosen.startAt,
+      endAt: chosen.startAt + durationMs,
+      locked: false,
+      rubbers: expandRubbers(chosen.unit, chosen.startAt),
+    };
+    assignments.push(assignment);
+    assignmentsByUnit.set(chosen.unit.id, assignment);
+    progress = true;
   }
 
   for (const assignment of assignments) {
@@ -515,7 +699,7 @@ export function generateGlobalTournamentSchedule(input: {
       return !dependency || dependency.endAt > assignment.startAt;
     });
     const dependencyRestViolation =
-      dependencyReadyAt(unit, assignmentsByUnit, settings) > assignment.startAt;
+      dependencyReadyAt(unit, assignmentsByUnit, unitsById) > assignment.startAt;
     const barrierViolation = lowerBarrierUnits(unit, units).some((candidate) => {
       const previous = assignmentsByUnit.get(candidate.id);
       return !previous || previous.endAt > assignment.startAt;
@@ -544,7 +728,7 @@ export function generateGlobalTournamentSchedule(input: {
       code: unresolved ? "SCHEDULE_DEPENDENCY_UNRESOLVED" : "SCHEDULE_EXCEEDS_DAILY_END",
       message: unresolved
         ? `No se pudo programar ${unit.id} porque una dependencia anterior no quedó programada.`
-        : `No entra el bloque ${unit.id} antes de ${settings.dailyEnd} respetando canchas, bloqueos y descanso mínimo.`,
+        : `No entra el bloque ${unit.id} antes de ${unit.notAfter ?? settings.dailyEnd} respetando canchas, bloqueos y descanso mínimo.`,
     });
   }
 

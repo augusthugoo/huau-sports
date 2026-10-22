@@ -798,34 +798,90 @@ function applySchedulePolicy(
       : mode === "blocks"
         ? Math.max(1, Number(rule.phase ?? 1))
         : 0;
+    const postGroup = unit.stage !== "group";
+    const dateCandidate = String(
+      postGroup ? rule.finalDate ?? "" : rule.groupDate ?? "",
+    ).trim();
+    const notBeforeCandidate = String(
+      postGroup
+        ? rule.finalNotBefore ?? rule.notBefore ?? ""
+        : rule.groupNotBefore ?? rule.notBefore ?? "",
+    ).trim();
+    const notAfterCandidate = String(
+      postGroup
+        ? rule.finalNotAfter ?? ""
+        : rule.groupNotAfter ?? "",
+    ).trim();
+    const durationCandidate = Math.max(
+      5,
+      Number(
+        postGroup
+          ? rule.finalMatchMinutes ?? (unit.kind === "team" ? unit.rubbers?.[0]?.durationMinutes ?? unit.durationMinutes : unit.durationMinutes)
+          : rule.groupMatchMinutes ?? (unit.kind === "team" ? unit.rubbers?.[0]?.durationMinutes ?? unit.durationMinutes : unit.durationMinutes),
+      ),
+    );
+    const preferredRestSlots = Math.max(
+      Number(unit.minimumRestSlots ?? 0),
+      Number(rule.preferredRestSlots ?? unit.preferredRestSlots ?? 0),
+    );
     const sequence = String(rule.sequence ?? "free");
-    const notBeforeCandidate = String(rule.notBefore ?? "").trim();
-    const notBefore = /^\d{2}:\d{2}$/.test(notBeforeCandidate)
-      ? notBeforeCandidate
-      : null;
     let sequenceKey: string | null = null;
     let sequenceIndex: number | null = null;
+
     if (sequence === "rounds") {
-      sequenceKey = `rounds:${unit.categoryId}`;
+      sequenceKey = `rounds:${unit.categoryId}:${postGroup ? "final" : "group"}`;
       sequenceIndex = Math.max(1, Number(unit.roundNumber ?? 1));
-    } else if ((sequence === "groups" || sequence === "group_pairs") && unit.groupId) {
+    } else if (
+      !postGroup &&
+      (sequence === "groups" || sequence === "group_pairs") &&
+      unit.groupId
+    ) {
       const groupIndex = groupOrder.get(unit.categoryId)?.get(String(unit.groupId)) ?? 1;
       sequenceKey = `groups:${unit.categoryId}`;
       sequenceIndex = sequence === "group_pairs" ? Math.ceil(groupIndex / 2) : groupIndex;
     }
+
     return {
       ...unit,
+      date: /^\d{4}-\d{2}-\d{2}$/.test(dateCandidate)
+        ? dateCandidate
+        : unit.date,
+      durationMinutes: durationCandidate,
+      ...(unit.rubbers
+        ? {
+            rubbers: unit.rubbers.map((rubber) => ({
+              ...rubber,
+              durationMinutes: durationCandidate,
+            })),
+          }
+        : {}),
       policyPhase: phase || null,
       policySequenceKey: sequenceKey,
-      notBefore,
       policySequenceIndex: sequenceIndex,
-      priority: mode === "priority" || mode === "blocks" ? -order : (unit.priority ?? 0),
+      continuityKey:
+        mode === "blocks" || mode === "categories"
+          ? `${unit.categoryId}:${phase || order}`
+          : null,
+      notBefore: /^\d{2}:\d{2}$/.test(notBeforeCandidate)
+        ? notBeforeCandidate
+        : null,
+      notAfter: /^\d{2}:\d{2}$/.test(notAfterCandidate)
+        ? notAfterCandidate
+        : null,
+      priority:
+        mode === "priority" || mode === "blocks"
+          ? -order
+          : unit.priority ?? 0,
+      preferredRestSlots,
       allowedCourts: Array.isArray(rule.allowedCourts) ? rule.allowedCourts.map(Number) : [],
       preferredCourts: Array.isArray(rule.preferredCourts) ? rule.preferredCourts.map(Number) : [],
       exclusiveCourts: Array.isArray(rule.exclusiveCourts) ? rule.exclusiveCourts.map(Number) : [],
-      maxConcurrentCourts: rule.maxConcurrentCourts === null || rule.maxConcurrentCourts === undefined || rule.maxConcurrentCourts === ""
-        ? null
-        : Math.max(1, Number(rule.maxConcurrentCourts)),
+      maxConcurrentCourts:
+        rule.maxConcurrentCourts === null ||
+        rule.maxConcurrentCourts === undefined ||
+        rule.maxConcurrentCourts === ""
+          ? null
+          : Math.max(1, Number(rule.maxConcurrentCourts)),
     };
   });
 }
@@ -1799,6 +1855,7 @@ export function buildPublicStructure(snapshot: TournamentDayReformSnapshot) {
   return {
     schemaVersion: 1,
     kind: "structure",
+    qaFixture: Boolean(meta.qaFixture),
     tournament: {
       id: String(tournament.id ?? snapshot.tournamentId),
       slug: String(tournament.slug ?? ""),
@@ -1822,7 +1879,26 @@ export function buildPublicStructure(snapshot: TournamentDayReformSnapshot) {
     revision: meta.publicDirty.structureRevision + 1,
     generatedAt: Date.now(),
     categories: (snapshot.workspace.core.categories as any[]).map((category) => ({
-      id: String(category.id), name: String(category.name ?? ""), entryType: String(category.entryType ?? "individual"), competitionGender: String(category.competitionGender ?? "open"), scheduledDate: meta.schedule.categoryDates[String(category.id)] ?? category.scheduledDate ?? null,
+      id: String(category.id),
+      name: String(category.name ?? ""),
+      entryType: String(category.entryType ?? "individual"),
+      competitionGender: String(category.competitionGender ?? "open"),
+      scheduledDate:
+        (snapshot.workspace.core.settings as any).schedulePolicy?.categories?.[String(category.id)]?.groupDate ??
+        meta.schedule.categoryDates[String(category.id)] ??
+        category.scheduledDate ??
+        null,
+      groupDate:
+        (snapshot.workspace.core.settings as any).schedulePolicy?.categories?.[String(category.id)]?.groupDate ??
+        meta.schedule.categoryDates[String(category.id)] ??
+        category.scheduledDate ??
+        null,
+      finalDate:
+        (snapshot.workspace.core.settings as any).schedulePolicy?.categories?.[String(category.id)]?.finalDate ??
+        (snapshot.workspace.core.settings as any).schedulePolicy?.categories?.[String(category.id)]?.groupDate ??
+        meta.schedule.categoryDates[String(category.id)] ??
+        category.scheduledDate ??
+        null,
     })),
     players: (snapshot.workspace.participants.players as any[])
       .filter(
@@ -1846,13 +1922,46 @@ export function buildPublicStructure(snapshot: TournamentDayReformSnapshot) {
 
 function competitionCompleteLocal(snapshot: TournamentDayReformSnapshot) {
   const terminal = new Set(["finished", "bye", "skipped"]);
-  const standard = (snapshot.workspace.standard.competitions as any[]).every(
-    (competition) => !(competition.encounters ?? []).length || (competition.encounters ?? []).every((encounter: any) => terminal.has(String(encounter.status))),
-  );
-  const team = (snapshot.team.categories as any[]).every(
-    (category) => !(category.encounters ?? []).length || (category.encounters ?? []).every((encounter: any) => terminal.has(String(encounter.status))),
-  );
-  return standard && team;
+  const inactiveEntry = new Set(["withdrawn", "rejected", "no_show"]);
+  const coreCategories = snapshot.workspace.core.categories as any[];
+  if (!coreCategories.length) return false;
+
+  let materializedCategory = false;
+
+  for (const coreCategory of coreCategories) {
+    if (String(coreCategory.entryType) === "team") {
+      const category = (snapshot.team.categories as any[]).find(
+        (candidate) => String(candidate.id) === String(coreCategory.id),
+      );
+      const activeEntries = (category?.entries ?? []).filter(
+        (entry: any) => !inactiveEntry.has(String(entry.status ?? "confirmed")),
+      );
+      if (!activeEntries.length) continue;
+      materializedCategory = true;
+      const encounters = category?.encounters ?? [];
+      if (!encounters.length || !encounters.every(
+        (encounter: any) => terminal.has(String(encounter.status)),
+      )) return false;
+      continue;
+    }
+
+    const activeEntries = (snapshot.workspace.standard.entries as any[]).filter(
+      (entry) =>
+        String(entry.categoryId) === String(coreCategory.id) &&
+        !inactiveEntry.has(String(entry.status ?? "ready")),
+    );
+    if (!activeEntries.length) continue;
+    materializedCategory = true;
+    const competition = (snapshot.workspace.standard.competitions as any[]).find(
+      (candidate) => String(candidate.categoryId) === String(coreCategory.id),
+    );
+    const encounters = competition?.encounters ?? [];
+    if (!encounters.length || !encounters.every(
+      (encounter: any) => terminal.has(String(encounter.status)),
+    )) return false;
+  }
+
+  return materializedCategory;
 }
 
 function publicTeamLineupNames(
@@ -1883,11 +1992,30 @@ function publicTeamLineupNames(
 export function buildPublicLive(snapshot: TournamentDayReformSnapshot) {
   const tournament = snapshot.workspace.core.tournament as any;
   const meta = ensureDayLocalMeta(snapshot);
-  const standardResults = (snapshot.workspace.standard.matches as any[]).filter((match) => match.status === "finished").map((match) => ({ id: String(match.matchId ?? match.encounterId), categoryId: String(match.categoryId), encounterId: String(match.encounterId), sideA: match.sideA ?? null, sideB: match.sideB ?? null, scoreA: match.scoreA ?? null, scoreB: match.scoreB ?? null, sets: cloneDay(match.sets ?? []), status: "finished" }));
+  const standardResults = (snapshot.workspace.standard.matches as any[])
+    .filter((match) => match.status === "finished")
+    .map((match) => ({
+      id: String(match.matchId ?? match.encounterId),
+      categoryId: String(match.categoryId),
+      encounterId: String(match.encounterId),
+      stage: String(match.stage ?? "group"),
+      groupId: match.groupId ? String(match.groupId) : null,
+      groupName: match.groupName ? String(match.groupName) : null,
+      roundLabel: match.roundLabel ? String(match.roundLabel) : null,
+      roundNumber: match.roundNumber == null ? null : Number(match.roundNumber),
+      sideA: match.sideA ?? null,
+      sideB: match.sideB ?? null,
+      scoreA: match.scoreA ?? null,
+      scoreB: match.scoreB ?? null,
+      sets: cloneDay(match.sets ?? []),
+      status: "finished",
+    }));
   const teamResults = (snapshot.team.categories as any[]).flatMap((category) =>
     (category.encounters ?? []).map((encounter: any) => ({
       categoryId: String(category.id),
       encounterId: String(encounter.id),
+      stage: String(encounter.stage ?? "group"),
+      roundLabel: encounter.roundLabel ? String(encounter.roundLabel) : null,
       groupId: encounter.groupId ? String(encounter.groupId) : null,
       groupName: encounter.groupName ? String(encounter.groupName) : null,
       roundNumber: encounter.roundNumber == null ? null : Number(encounter.roundNumber),
@@ -1927,6 +2055,7 @@ export function buildPublicLive(snapshot: TournamentDayReformSnapshot) {
   return {
     schemaVersion: 1,
     kind: "live",
+    qaFixture: Boolean(meta.qaFixture),
     tournament: { id: String(tournament.id ?? snapshot.tournamentId), slug: String(tournament.slug ?? ""), name: String(tournament.name ?? "Torneo") },
     revision: meta.publicDirty.liveRevision + 1,
     generatedAt: Date.now(),
@@ -2573,10 +2702,8 @@ export function createNationalCircuitQaFixture(
         ],
         rating: Number(
           (
-            (
-              Number(first.duprDoubles ?? 0) +
-              Number(second.duprDoubles ?? 0)
-            ) / 2
+            Number(first.duprDoubles ?? 0) +
+            Number(second.duprDoubles ?? 0)
           ).toFixed(3),
         ),
       });
@@ -2856,6 +2983,31 @@ export function rebuildDayStandardFinalPhase(
   });
 
   replaceAndSyncStandardCompetition(snapshot, rebuilt);
+
+  const encounterById = new Map(
+    rebuilt.encounters.map((encounter) => [String(encounter.id), encounter] as const),
+  );
+  snapshot.workspace.schedule.schedule = (snapshot.workspace.schedule.schedule as any[])
+    .filter((row) => {
+      if (String(row.categoryId) !== String(categoryId)) return true;
+      if (String(row.stage) === "group") return true;
+      return encounterById.has(String(row.encounterId ?? ""));
+    })
+    .map((row) => {
+      if (String(row.categoryId) !== String(categoryId)) return row;
+      const encounter = encounterById.get(String(row.encounterId ?? ""));
+      if (!encounter) return row;
+      return {
+        ...row,
+        entryAId: encounter.entryA?.id ?? null,
+        sideA: encounter.entryA?.name ?? null,
+        entryBId: encounter.entryB?.id ?? null,
+        sideB: encounter.entryB?.name ?? null,
+        status: encounter.status === "finished" ? "completed" : "bound",
+        provisional: false,
+      };
+    });
+
   markStructureDirty(snapshot);
   markLiveDirty(snapshot);
 

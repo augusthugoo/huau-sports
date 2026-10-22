@@ -43,7 +43,7 @@ export function TournamentLiveTicker({ locale, go }: { locale: Locale; go: Go })
     return () => { active = false; };
   }, []);
   const visible = useMemo(
-    () => items.filter((item) => item.status !== "finished" && item.showOnLanding === true),
+    () => items.filter((item) => item.showOnLanding === true),
     [items],
   );
   if (!visible.length) return null;
@@ -52,7 +52,7 @@ export function TournamentLiveTicker({ locale, go }: { locale: Locale; go: Go })
     <div className="huau-live-ticker-track">
       {repeated.map((item,index)=><button key={`${item.tournamentId}-${index}`} onClick={()=>go(`/tournaments/${item.slug}/live`)}>
         <span className={`huau-live-ticker-dot ${item.status}`} />
-        <b>{item.status === "live" ? "LIVE" : tr(locale,"PROGRAMADO","SCHEDULED")}</b>
+        <b>{item.status === "live" ? "LIVE" : item.status === "finished" ? tr(locale,"FINALIZADO","FINISHED") : tr(locale,"PROGRAMADO","SCHEDULED")}</b>
         <span>{item.name}</span>
         <em>{tr(locale,"Seguir torneo →","Follow tournament →")}</em>
       </button>)}
