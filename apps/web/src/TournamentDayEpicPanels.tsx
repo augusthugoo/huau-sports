@@ -1346,29 +1346,37 @@ function parseCourtList(value: string) {
   return [...new Set(value.split(/[,;\s]+/).map((item) => Number(item)).filter((item) => Number.isInteger(item) && item > 0))];
 }
 
-function policySummary(locale: Locale, policy: any, categories: any[]) {
-  const mode = String(policy?.mode ?? "efficiency");
-  if (mode === "efficiency") return tr(locale,"Máxima eficiencia: todas las categorías pueden compartir canchas y horarios.","Maximum efficiency: every category may share courts and time slots.");
-  const ordered = [...categories].sort((a,b)=>Number(policy?.categories?.[String(a.id)]?.order??999)-Number(policy?.categories?.[String(b.id)]?.order??999));
-  if (mode === "categories") return tr(locale,`Por categorías: ${ordered.map((row)=>row.name).join(" → ")}.`,`By category: ${ordered.map((row)=>row.name).join(" → ")}.`);
-  if (mode === "blocks") {
-    const phases = new Map<number,string[]>();
-    for (const category of categories) {
-      const phase = Number(policy?.categories?.[String(category.id)]?.phase ?? 1);
-      const list = phases.get(phase) ?? [];
-      list.push(category.name);
-      phases.set(phase,list);
-    }
-    return [...phases.entries()].sort(([a],[b])=>a-b).map(([phase,names])=>`${tr(locale,"Bloque","Block")} ${phase}: ${names.join(" + ")}`).join(" · ");
+function scheduleClockMinutes(value: string) {
+  const [h = Number.NaN, m = Number.NaN] = value.split(":").map(Number);
+  return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null;
+}
+
+function categoryParticipantIds(snapshot: TournamentDayReformSnapshot, categoryId: string) {
+  const ids = new Set<string>();
+  for (const row of snapshot.workspace.participants.playerCategories as any[]) {
+    if (String(row.categoryId) !== categoryId) continue;
+    for (const value of [row.playerProfileId, row.partnerProfileId]) if (value) ids.add(String(value));
   }
-  return tr(locale,`Prioridad manual: ${ordered.map((row)=>row.name).join(" → ")}.`,`Manual priority: ${ordered.map((row)=>row.name).join(" → ")}.`);
+  for (const entry of snapshot.workspace.standard.entries as any[]) {
+    if (String(entry.categoryId) !== categoryId) continue;
+    for (const value of entry.localProfileIds ?? []) ids.add(String(value));
+  }
+  return ids;
+}
+
+function sharedParticipantCount(snapshot: TournamentDayReformSnapshot, a: string | null, b: string) {
+  if (!a) return 0;
+  const left = categoryParticipantIds(snapshot, a);
+  const right = categoryParticipantIds(snapshot, b);
+  let count = 0;
+  for (const value of left) if (right.has(value)) count += 1;
+  return count;
 }
 
 export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: Locale; snapshot: TournamentDayReformSnapshot; mutate: EpicDayMutate }) {
   const settings = snapshot.workspace.core.settings as any;
   const categories = snapshot.workspace.core.categories as any[];
-  const existing = settings.schedulePolicy ?? { mode: "efficiency", categories: {} };
-  const [mode, setMode] = useState(String(existing.mode ?? "efficiency"));
+  const existing = settings.schedulePolicy ?? { mode: "manual_flow", categories: {} };
 
   const fallbackDate = (category: any) => {
     const local = ensureDayLocalMeta(snapshot).schedule.categoryDates?.[String(category.id)];
@@ -1378,40 +1386,140 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
     return new Date(raw < 10_000_000_000 ? raw * 1000 : raw).toISOString().slice(0, 10);
   };
 
+  const sortedIds = (phase: "group" | "final") =>
+    [...categories]
+      .sort((a, b) => {
+        const ar = existing.categories?.[String(a.id)] ?? {};
+        const br = existing.categories?.[String(b.id)] ?? {};
+        const ak = phase === "group" ? ar.groupOrder ?? ar.order : ar.finalOrder ?? ar.order;
+        const bk = phase === "group" ? br.groupOrder ?? br.order : br.finalOrder ?? br.order;
+        return Number(ak ?? 999) - Number(bk ?? 999);
+      })
+      .map((category) => String(category.id));
+
+  const [groupOrder, setGroupOrder] = useState<string[]>(() => sortedIds("group"));
+  const [finalOrder, setFinalOrder] = useState<string[]>(() => sortedIds("final"));
+
+  useEffect(() => {
+    const ids = new Set(categories.map((category) => String(category.id)));
+    setGroupOrder((current) => [
+      ...current.filter((id) => ids.has(id)),
+      ...categories.map((category) => String(category.id)).filter((id) => !current.includes(id)),
+    ]);
+    setFinalOrder((current) => [
+      ...current.filter((id) => ids.has(id)),
+      ...categories.map((category) => String(category.id)).filter((id) => !current.includes(id)),
+    ]);
+  }, [categories.length]);
+
+  const move = (list: string[], setList: (value: string[]) => void, dragged: string, target: string) => {
+    if (!dragged || dragged === target) return;
+    const next = list.filter((id) => id !== dragged);
+    const targetIndex = next.indexOf(target);
+    next.splice(targetIndex < 0 ? next.length : targetIndex, 0, dragged);
+    setList(next);
+  };
+
+  const realGroupMatches = (categoryId: string) =>
+    (snapshot.workspace.standard.matches as any[]).filter(
+      (row) =>
+        String(row.categoryId) === categoryId &&
+        String(row.stage ?? "group") === "group" &&
+        !["bye", "skipped", "finished"].includes(String(row.status)),
+    ).length +
+    (snapshot.team.categories as any[])
+      .filter((category) => String(category.id) === categoryId)
+      .reduce(
+        (sum, category) =>
+          sum +
+          (category.encounters ?? []).filter(
+            (encounter: any) =>
+              String(encounter.stage ?? "group") === "group" &&
+              !["bye", "finished"].includes(String(encounter.status)),
+          ).length,
+        0,
+      );
+
+  const categoryById = new Map(categories.map((category) => [String(category.id), category] as const));
+  const capacityRows = (() => {
+    const byDay = new Map<string, { minutes: number; matches: number; earliest: number }>();
+    for (const id of groupOrder) {
+      const category = categoryById.get(id);
+      if (!category) continue;
+      const rule = existing.categories?.[id] ?? {};
+      const day = String(rule.groupDate ?? fallbackDate(category));
+      const minutes = Math.max(5, Number(rule.groupMatchMinutes ?? settings.defaultMatchMinutes ?? 30));
+      const matches = realGroupMatches(id);
+      const startMinute = scheduleClockMinutes(String(rule.groupNotBefore ?? settings.dailyStart ?? "09:00")) ?? 540;
+      const row = byDay.get(day) ?? { minutes: 0, matches: 0, earliest: startMinute };
+      row.minutes += matches * minutes;
+      row.matches += matches;
+      row.earliest = Math.min(row.earliest, startMinute);
+      byDay.set(day, row);
+    }
+    const endMinute = scheduleClockMinutes(String(settings.dailyEnd ?? "20:00")) ?? 1200;
+    const courts = Math.max(1, Number(snapshot.workspace.core.tournament.courtCount ?? 1));
+    return [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([day, row]) => {
+      const capacity = Math.max(0, endMinute - row.earliest) * courts;
+      const occupancy = capacity > 0 ? Math.round((row.minutes / capacity) * 100) : 999;
+      return { day, ...row, capacity, occupancy };
+    });
+  })();
+
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const clockMinutes=(value:string)=>{const [h=Number.NaN,m=Number.NaN]=value.split(":").map(Number);return Number.isFinite(h)&&Number.isFinite(m)?h*60+m:null};
-    for(const category of categories){
-      const id=String(category.id);
-      const groupDate=String(data.get(`groupDate:${id}`)??"");
-      const finalDate=String(data.get(`finalDate:${id}`)??"");
-      if(groupDate&&finalDate&&finalDate<groupDate){
+
+    for (const category of categories) {
+      const id = String(category.id);
+      const groupDate = String(data.get(`groupDate:${id}`) ?? "");
+      const finalDate = String(data.get(`finalDate:${id}`) ?? "");
+      if (groupDate && finalDate && finalDate < groupDate) {
         window.alert(tr(locale,`La fase final de ${category.name} no puede quedar antes que sus grupos.`,`The final phase for ${category.name} cannot be before its groups.`));
         return;
       }
-      for(const [label,startKey,endKey] of [
-        [tr(locale,"grupos","groups"),`groupStart:${id}`,`groupEnd:${id}`],
-        [tr(locale,"fase final","final phase"),`finalStart:${id}`,`finalEnd:${id}`],
-      ] as const){
-        const start=String(data.get(startKey)??"");
-        const end=String(data.get(endKey)??"");
-        const startMinutes=start?clockMinutes(start):null;
-        const endMinutes=end?clockMinutes(end):null;
-        if(startMinutes!==null&&endMinutes!==null&&endMinutes<=startMinutes){
-          window.alert(tr(locale,`En ${category.name}, el fin de ${label} debe ser posterior al inicio.`,`For ${category.name}, the ${label} end must be after its start.`));
+      for (const [label, startKey, endKey] of [
+        [tr(locale,"grupos","groups"), `groupStart:${id}`, `groupEnd:${id}`],
+        [tr(locale,"fase final","final phase"), `finalStart:${id}`, `finalEnd:${id}`],
+      ] as const) {
+        const startValue = String(data.get(startKey) ?? "");
+        const endValue = String(data.get(endKey) ?? "");
+        const startMinutes = startValue ? scheduleClockMinutes(startValue) : null;
+        const endMinutes = endValue ? scheduleClockMinutes(endValue) : null;
+        if (startMinutes !== null && endMinutes !== null && endMinutes <= startMinutes) {
+          window.alert(tr(locale,`En ${category.name}, el fin de ${label} debe ser posterior al inicio.`,`For ${category.name}, the ${label} end must be after the start.`));
+          return;
+        }
+      }
+      for (const phase of ["group", "final"] as const) {
+        const minimum = Math.max(0, Number(data.get(`${phase}MinRest:${id}`) ?? 0));
+        const preferred = Math.max(0, Number(data.get(`${phase}PreferredRest:${id}`) ?? minimum));
+        if (preferred < minimum) {
+          window.alert(tr(locale,`En ${category.name}, el descanso objetivo no puede ser menor al mínimo.`,`For ${category.name}, target rest cannot be lower than minimum rest.`));
           return;
         }
       }
     }
+
     await mutate((next) => {
+      const targetSettings = next.workspace.core.settings as any;
+      const previous = targetSettings.schedulePolicy?.categories ?? {};
       const categoryRules: Record<string, any> = {};
+
       for (const category of categories) {
         const id = String(category.id);
+        const old = previous[id] ?? {};
+        const groupIndex = Math.max(0, groupOrder.indexOf(id));
+        const finalIndex = Math.max(0, finalOrder.indexOf(id));
+        const groupMinimumRestMinutes = Math.max(0, Number(data.get(`groupMinRest:${id}`) ?? 0));
+        const finalMinimumRestMinutes = Math.max(0, Number(data.get(`finalMinRest:${id}`) ?? 0));
+
         categoryRules[id] = {
-          order: Math.max(1, Number(data.get(`order:${id}`) ?? categories.indexOf(category) + 1)),
-          phase: Math.max(1, Number(data.get(`phase:${id}`) ?? 1)),
-          sequence: String(data.get(`sequence:${id}`) ?? "rounds"),
+          ...old,
+          order: groupIndex + 1,
+          groupOrder: groupIndex + 1,
+          finalOrder: finalIndex + 1,
+          phase: 1,
           groupDate: String(data.get(`groupDate:${id}`) ?? "").trim() || null,
           finalDate: String(data.get(`finalDate:${id}`) ?? "").trim() || null,
           groupNotBefore: String(data.get(`groupStart:${id}`) ?? "").trim() || null,
@@ -1420,71 +1528,150 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
           finalNotAfter: String(data.get(`finalEnd:${id}`) ?? "").trim() || null,
           groupMatchMinutes: Math.max(5, Number(data.get(`groupMinutes:${id}`) ?? settings.defaultMatchMinutes ?? 30)),
           finalMatchMinutes: Math.max(5, Number(data.get(`finalMinutes:${id}`) ?? data.get(`groupMinutes:${id}`) ?? settings.defaultMatchMinutes ?? 30)),
-          preferredRestSlots: Math.max(0, Number(data.get(`preferredRest:${id}`) ?? settings.preferredRestSlots ?? settings.minimumRestSlots ?? 1)),
+          groupMinimumRestMinutes,
+          groupPreferredRestMinutes: Math.max(groupMinimumRestMinutes, Number(data.get(`groupPreferredRest:${id}`) ?? groupMinimumRestMinutes)),
+          finalMinimumRestMinutes,
+          finalPreferredRestMinutes: Math.max(finalMinimumRestMinutes, Number(data.get(`finalPreferredRest:${id}`) ?? finalMinimumRestMinutes)),
+          groupMaxConcurrentCourts: String(data.get(`groupMax:${id}`) ?? "").trim()
+            ? Math.max(1, Number(data.get(`groupMax:${id}`)))
+            : null,
+          finalMaxConcurrentCourts: String(data.get(`finalMax:${id}`) ?? "").trim()
+            ? Math.max(1, Number(data.get(`finalMax:${id}`)))
+            : null,
+          groupSequence: String(data.get(`groupSequence:${id}`) ?? old.groupSequence ?? old.sequence ?? "rounds"),
+          finalSequence: String(data.get(`finalSequence:${id}`) ?? old.finalSequence ?? old.sequence ?? "rounds"),
           allowedCourts: parseCourtList(String(data.get(`allowed:${id}`) ?? "")),
           preferredCourts: parseCourtList(String(data.get(`preferred:${id}`) ?? "")),
           exclusiveCourts: parseCourtList(String(data.get(`exclusive:${id}`) ?? "")),
-          maxConcurrentCourts: String(data.get(`max:${id}`) ?? "").trim()
-            ? Math.max(1, Number(data.get(`max:${id}`)))
-            : null,
         };
       }
-      (next.workspace.core.settings as any).schedulePolicy = { mode, categories: categoryRules };
+
+      targetSettings.schedulePolicy = { mode: "manual_flow", categories: categoryRules };
+      targetSettings.schedulePlanRevision = Number(targetSettings.schedulePlanRevision ?? 0) + 1;
       markStructureDirty(next);
-    }, tr(locale,"Plan operativo guardado. Regenerá para aplicarlo.","Operational plan saved. Regenerate to apply it."),"structure");
+    }, tr(locale,"Plan operativo guardado. El cronograma quedó pendiente de regenerar.","Operational plan saved. Schedule regeneration is pending."),"structure");
   };
+
+  const renderPhaseRows = (
+    phase: "group" | "final",
+    order: string[],
+    setOrder: (value: string[]) => void,
+  ) => order.map((id, index) => {
+    const category = categoryById.get(id);
+    if (!category) return null;
+    const rule = existing.categories?.[id] ?? {};
+    const previousId = index > 0 ? order[index - 1] ?? null : null;
+    const shared = sharedParticipantCount(snapshot, previousId, id);
+    const isGroup = phase === "group";
+    const baseDate = fallbackDate(category);
+    const date = String(isGroup ? rule.groupDate ?? baseDate : rule.finalDate ?? rule.groupDate ?? baseDate);
+    const startValue = String(isGroup ? rule.groupNotBefore ?? "" : rule.finalNotBefore ?? "");
+    const endValue = String(isGroup ? rule.groupNotAfter ?? "" : rule.finalNotAfter ?? "");
+    const minutes = Number(
+      isGroup
+        ? rule.groupMatchMinutes ?? settings.defaultMatchMinutes ?? 30
+        : rule.finalMatchMinutes ?? rule.groupMatchMinutes ?? settings.defaultMatchMinutes ?? 30,
+    );
+    const minRest = Number(
+      isGroup
+        ? rule.groupMinimumRestMinutes ?? settings.scheduleMinimumRestMinutes ?? 0
+        : rule.finalMinimumRestMinutes ?? settings.scheduleMinimumRestMinutes ?? 0,
+    );
+    const preferredRest = Number(
+      isGroup
+        ? rule.groupPreferredRestMinutes ?? settings.schedulePreferredRestMinutes ?? Math.max(minRest, 25)
+        : rule.finalPreferredRestMinutes ?? settings.schedulePreferredRestMinutes ?? Math.max(minRest, 25),
+    );
+    const maxCourts = isGroup
+      ? rule.groupMaxConcurrentCourts ?? rule.maxConcurrentCourts ?? ""
+      : rule.finalMaxConcurrentCourts ?? rule.maxConcurrentCourts ?? "";
+
+    return <div
+      className="epic-flow-row"
+      key={`${phase}:${id}`}
+      draggable
+      onDragStart={(event)=>event.dataTransfer.setData("text/plain",id)}
+      onDragOver={(event)=>event.preventDefault()}
+      onDrop={(event)=>{event.preventDefault();move(order,setOrder,event.dataTransfer.getData("text/plain"),id)}}
+    >
+      <span className="epic-flow-handle" title={tr(locale,"Arrastrá para ordenar","Drag to reorder")}>☰</span>
+      <div className="epic-flow-category">
+        <strong>{index + 1}. {category.name}</strong>
+        <small>
+          {isGroup
+            ? `${realGroupMatches(id)} ${tr(locale,"partidos/series de grupos","group matches/series")}`
+            : tr(locale,"fase final · orden independiente","final phase · independent order")}
+          {shared > 0 ? ` · ${shared} ${tr(locale,"jug. compartidos con anterior","players shared with previous")}` : ""}
+        </small>
+      </div>
+      <label><span>{tr(locale,"Día","Day")}</span><input name={`${phase}Date:${id}`} type="date" defaultValue={date}/></label>
+      <label><span>{tr(locale,"No antes de","Not before")}</span><input name={`${phase}Start:${id}`} type="time" defaultValue={startValue}/></label>
+      <label><span>{tr(locale,"Hasta","Until")}</span><input name={`${phase}End:${id}`} type="time" defaultValue={endValue}/></label>
+      <label><span>{tr(locale,"Min/partido","Min/match")}</span><input name={`${phase}Minutes:${id}`} type="number" min="5" defaultValue={minutes}/></label>
+      <label><span>{tr(locale,"Desc. mín.","Min rest")}</span><input name={`${phase}MinRest:${id}`} type="number" min="0" defaultValue={minRest}/></label>
+      <label><span>{tr(locale,"Desc. objetivo","Target rest")}</span><input name={`${phase}PreferredRest:${id}`} type="number" min="0" defaultValue={preferredRest}/></label>
+      <label><span>{tr(locale,"Máx. canchas","Max courts")}</span><input name={`${phase}Max:${id}`} type="number" min="1" placeholder="—" defaultValue={maxCourts}/></label>
+    </div>;
+  });
 
   return <article className="panel epic-policy-panel">
     <div className="panel-title"><div>
-      <div className="eyebrow">{tr(locale,"PLAN OPERATIVO","OPERATIONAL PLAN")}</div>
-      <h2>{tr(locale,"Días, fases y ritmo de cada categoría","Days, phases and rhythm per category")}</h2>
-      <p className="muted">{tr(locale,"Formato define cómo se compite. Acá Tournament Day define cuándo entra cada fase; Administración queda como referencia inicial.","Format defines how competition works. Tournament Day defines when each phase enters play; Admin remains the initial reference.")}</p>
+      <div className="eyebrow">{tr(locale,"PLAN OPERATIVO · CONTROL MANUAL","OPERATIONAL PLAN · MANUAL CONTROL")}</div>
+      <h2>{tr(locale,"Vos definís el torneo; HUAU resuelve las canchas","You define the tournament; HUAU resolves the courts")}</h2>
+      <p className="muted">{tr(locale,"El orden no es una barrera: una categoría posterior puede entrar apenas haya cancha y jugadores legales. Para forzar una espera, usá “No antes de”. Dos categorías con la misma hora y máximo 2 canchas pueden arrancar 2+2.","Order is not a barrier: a later category may enter as soon as a court and eligible players are available. To force a wait, use “Not before”. Two categories at the same time with max 2 courts may start 2+2.")}</p>
     </div></div>
+
     <div className="epic-policy-legend">
-      <span><b>{tr(locale,"DURO","HARD")}</b>{tr(locale,"día de fase · inicio/fin de fase · descanso mínimo · canchas cerradas","phase day · phase start/end · minimum rest · closed courts")}</span>
-      <span><b>{tr(locale,"RITMO","RHYTHM")}</b>{tr(locale,"bloques · continuidad · rondas · máximo de canchas simultáneas","blocks · continuity · rounds · max simultaneous courts")}</span>
+      <span><b>{tr(locale,"DURO","HARD")}</b>{tr(locale,"día · no antes de · hasta · descanso mínimo · máximo de canchas","day · not before · until · minimum rest · max courts")}</span>
+      <span><b>{tr(locale,"PREFERENCIA","PREFERENCE")}</b>{tr(locale,"orden visual · continuidad · descanso objetivo; nunca inventa otro día","visual order · continuity · target rest; never invents another day")}</span>
     </div>
+
+    <div className="epic-capacity-grid">
+      {capacityRows.map((row)=><span key={row.day} className={row.occupancy > 100 ? "over" : row.occupancy >= 85 ? "tight" : ""}>
+        <b>{row.day}</b>
+        <strong>{row.matches} {tr(locale,"partidos/series","matches/series")} · {Math.floor(row.minutes/60)}h {row.minutes%60}m</strong>
+        <small>{tr(locale,"Capacidad teórica","Theoretical capacity")}: {Math.floor(row.capacity/60)}h {row.capacity%60}m · {row.occupancy}%</small>
+      </span>)}
+    </div>
+
     <form onSubmit={save} className="td-stack">
-      <label className="epic-policy-mode"><span>{tr(locale,"Modo general","Global mode")}</span><select value={mode} onChange={(event)=>setMode(event.target.value)}>
-        <option value="efficiency">{tr(locale,"Eficiencia libre · mezclar categorías","Free efficiency · mix categories")}</option>
-        <option value="categories">{tr(locale,"Por categorías · completar una antes de la siguiente","By category · complete one before the next")}</option>
-        <option value="blocks">{tr(locale,"Bloques operativos · coexistencia controlada","Operational blocks · controlled coexistence")}</option>
-        <option value="priority">{tr(locale,"Prioridad manual","Manual priority")}</option>
-      </select></label>
-      <div className="epic-policy-summary"><strong>{tr(locale,"Política actual","Current policy")}</strong><span>{policySummary(locale,{...existing,mode},categories)}</span></div>
-      <div className="epic-policy-table">
-        {categories.map((category,index)=>{
-          const id=String(category.id);
-          const rule=existing.categories?.[id]??{};
-          const baseDate=fallbackDate(category);
-          const baseMinutes=Math.max(5,Number(category.entryType === "team" ? settings.teamRubberMinutes ?? settings.defaultMatchMinutes ?? 30 : settings.defaultMatchMinutes ?? 30));
-          return <div className="epic-policy-row" key={category.id}>
-            <header><strong>{category.name}</strong><span>{category.entryType === "team" ? "TEAM" : "STANDARD"}</span></header>
-            <label><span>{tr(locale,"Orden","Order")}</span><input name={`order:${id}`} type="number" min="1" defaultValue={Number(rule.order??index+1)} /></label>
-            {mode==="blocks"?<label><span>{tr(locale,"Bloque","Block")}</span><input name={`phase:${id}`} type="number" min="1" defaultValue={Number(rule.phase??1)} /></label>:<input type="hidden" name={`phase:${id}`} value={mode==="categories"?Number(rule.order??index+1):1} />}
-            <label><span>{tr(locale,"Día grupos","Group day")}</span><input name={`groupDate:${id}`} type="date" defaultValue={String(rule.groupDate??baseDate)} /></label>
-            <label><span>{tr(locale,"Grupos no antes de","Groups not before")}</span><input name={`groupStart:${id}`} type="time" defaultValue={String(rule.groupNotBefore??rule.notBefore??"")} /></label>
-            <label><span>{tr(locale,"Grupos hasta","Groups until")}</span><input name={`groupEnd:${id}`} type="time" defaultValue={String(rule.groupNotAfter??"")} /></label>
-            <label><span>{category.entryType==="team"?tr(locale,"Min/rubber · grupos","Min/rubber · groups"):tr(locale,"Min/partido · grupos","Min/match · groups")}</span><input name={`groupMinutes:${id}`} type="number" min="5" defaultValue={Number(rule.groupMatchMinutes??baseMinutes)} /></label>
-            <label><span>{tr(locale,"Día fase final","Final-phase day")}</span><input name={`finalDate:${id}`} type="date" defaultValue={String(rule.finalDate??rule.groupDate??baseDate)} /></label>
-            <label><span>{tr(locale,"Final no antes de","Final not before")}</span><input name={`finalStart:${id}`} type="time" defaultValue={String(rule.finalNotBefore??"")} /></label>
-            <label><span>{tr(locale,"Final hasta","Final until")}</span><input name={`finalEnd:${id}`} type="time" defaultValue={String(rule.finalNotAfter??"")} /></label>
-            <label><span>{category.entryType==="team"?tr(locale,"Min/rubber · final","Min/rubber · final"):tr(locale,"Min/partido · final","Min/match · final")}</span><input name={`finalMinutes:${id}`} type="number" min="5" defaultValue={Number(rule.finalMatchMinutes??rule.groupMatchMinutes??baseMinutes)} /></label>
-            <label><span>{category.entryType==="team"?tr(locale,"Descanso preferido (rubbers)","Preferred rest (rubbers)"):tr(locale,"Descanso preferido (partidos)","Preferred rest (matches)")}</span><input name={`preferredRest:${id}`} type="number" min="0" defaultValue={Number(rule.preferredRestSlots??settings.preferredRestSlots??settings.minimumRestSlots??1)} /></label>
-            <label><span>{tr(locale,"Ritmo interno","Within category")}</span><select name={`sequence:${id}`} defaultValue={String(rule.sequence??"rounds")}>
-              <option value="rounds">{tr(locale,"Por rondas compactas","Compact rounds")}</option>
-              <option value="free">{tr(locale,"Libre / optimizado","Free / optimized")}</option>
-              <option value="groups">{tr(locale,"Grupo por grupo","Group by group")}</option>
-              <option value="group_pairs">{tr(locale,"Grupos de a 2","Groups in pairs")}</option>
-            </select></label>
-            <label><span>{tr(locale,"Canchas permitidas","Allowed courts")}</span><input name={`allowed:${id}`} placeholder="1,2,3" defaultValue={(rule.allowedCourts??[]).join(",")} /></label>
-            <label><span>{tr(locale,"Canchas preferidas","Preferred courts")}</span><input name={`preferred:${id}`} placeholder="1,2" defaultValue={(rule.preferredCourts??[]).join(",")} /></label>
-            <label><span>{tr(locale,"Canchas exclusivas","Exclusive courts")}</span><input name={`exclusive:${id}`} placeholder="—" defaultValue={(rule.exclusiveCourts??[]).join(",")} /></label>
-            <label><span>{tr(locale,"Máx. canchas simultáneas","Max simultaneous courts")}</span><input name={`max:${id}`} type="number" min="1" placeholder="—" defaultValue={rule.maxConcurrentCourts??""} /></label>
-          </div>;
-        })}
-      </div>
-      <button className="light">{tr(locale,"Guardar plan operativo","Save operational plan")}</button>
+      <section className="epic-flow-phase">
+        <header><div><span>1</span><div><strong>{tr(locale,"Grupos","Groups")}</strong><small>{tr(locale,"Arrastrá para definir la cola de entrada del día.","Drag to define the day's entry queue.")}</small></div></div></header>
+        <div className="epic-flow-table">{renderPhaseRows("group",groupOrder,setGroupOrder)}</div>
+      </section>
+
+      <section className="epic-flow-phase">
+        <header><div><span>2</span><div><strong>{tr(locale,"Fases finales","Final phases")}</strong><small>{tr(locale,"Orden totalmente independiente de los grupos.","Order fully independent from groups.")}</small></div></div></header>
+        <div className="epic-flow-table">{renderPhaseRows("final",finalOrder,setFinalOrder)}</div>
+      </section>
+
+      <details className="epic-advanced">
+        <summary>{tr(locale,"Opciones avanzadas de canchas y ritmo interno","Advanced court and internal-rhythm options")}</summary>
+        <div className="epic-flow-advanced-grid">
+          {categories.map((category)=>{
+            const id=String(category.id);
+            const rule=existing.categories?.[id]??{};
+            return <section key={`advanced:${id}`}>
+              <strong>{category.name}</strong>
+              <label><span>{tr(locale,"Ritmo grupos","Group rhythm")}</span><select name={`groupSequence:${id}`} defaultValue={String(rule.groupSequence??rule.sequence??"rounds")}>
+                <option value="rounds">{tr(locale,"Rondas compactas","Compact rounds")}</option>
+                <option value="free">{tr(locale,"Libre","Free")}</option>
+                <option value="groups">{tr(locale,"Grupo por grupo","Group by group")}</option>
+                <option value="group_pairs">{tr(locale,"Grupos de a 2","Groups in pairs")}</option>
+              </select></label>
+              <label><span>{tr(locale,"Ritmo finales","Final rhythm")}</span><select name={`finalSequence:${id}`} defaultValue={String(rule.finalSequence??rule.sequence??"rounds")}>
+                <option value="rounds">{tr(locale,"Rondas compactas","Compact rounds")}</option>
+                <option value="free">{tr(locale,"Libre","Free")}</option>
+              </select></label>
+              <label><span>{tr(locale,"Canchas permitidas","Allowed courts")}</span><input name={`allowed:${id}`} placeholder={tr(locale,"vacío = todas","empty = all")} defaultValue={(rule.allowedCourts??[]).join(",")}/></label>
+              <label><span>{tr(locale,"Canchas preferidas","Preferred courts")}</span><input name={`preferred:${id}`} placeholder="1,2" defaultValue={(rule.preferredCourts??[]).join(",")}/></label>
+              <label><span>{tr(locale,"Canchas exclusivas","Exclusive courts")}</span><input name={`exclusive:${id}`} placeholder="—" defaultValue={(rule.exclusiveCourts??[]).join(",")}/></label>
+            </section>;
+          })}
+        </div>
+      </details>
+
+      <button className="light epic-primary">{tr(locale,"Guardar plan operativo","Save operational plan")}</button>
     </form>
   </article>;
 }

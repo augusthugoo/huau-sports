@@ -300,3 +300,39 @@ it("keeps continuity without leaving earlier courts idle", () => {
   expect(result.assignments.find((row) => row.unitId === "a3")!.startAt).toBeGreaterThan(firstStart);
   expect(result.complete).toBe(true);
 });
+
+it("supports explicit hard and target rest in minutes across categories", () => {
+  const result = generateGlobalTournamentSchedule({
+    settings: { ...base, courtCount: 1, minimumRestSlots: 0, preferredRestSlots: 0 },
+    units: [
+      standard("a1", "A", ["shared", "a"], { durationMinutes: 20, minimumRestMinutes: 0, preferredRestMinutes: 25, priority: -1 }),
+      standard("b1", "B", ["b", "c"], { durationMinutes: 15, notBefore: "09:20", priority: -2 }),
+      standard("a2", "A", ["shared", "d"], { durationMinutes: 20, minimumRestMinutes: 0, preferredRestMinutes: 25, dependencyIds: ["a1"], priority: -1 }),
+    ],
+  });
+  const first = result.assignments.find((row) => row.unitId === "a1")!;
+  const filler = result.assignments.find((row) => row.unitId === "b1")!;
+  const second = result.assignments.find((row) => row.unitId === "a2")!;
+  expect(filler.startAt).toBe(first.endAt);
+  expect(second.startAt).toBe(filler.endAt);
+});
+
+it("releases courts from a short anchored category to the next queue item", () => {
+  const result = generateGlobalTournamentSchedule({
+    settings: { ...base, dailyStart: "09:00", dailyEnd: "12:00", courtCount: 4, minimumRestSlots: 0, preferredRestSlots: 0 },
+    units: [
+      standard("a1", "A", ["a1","a2"], { durationMinutes: 30, notBefore: "09:00", maxConcurrentCourts: 2, priority: -1, continuityKey: "A" }),
+      standard("a2", "A", ["a3","a4"], { durationMinutes: 30, notBefore: "09:00", maxConcurrentCourts: 2, priority: -1, continuityKey: "A" }),
+      standard("a3", "A", ["a5","a6"], { durationMinutes: 30, notBefore: "09:00", maxConcurrentCourts: 2, priority: -1, continuityKey: "A" }),
+      standard("b1", "B", ["b1","b2"], { durationMinutes: 15, notBefore: "09:00", maxConcurrentCourts: 2, priority: -2, continuityKey: "B" }),
+      standard("b2", "B", ["b3","b4"], { durationMinutes: 15, notBefore: "09:00", maxConcurrentCourts: 2, priority: -2, continuityKey: "B" }),
+      standard("c1", "C", ["c1","c2"], { durationMinutes: 20, notBefore: "09:00", maxConcurrentCourts: 2, priority: -3, continuityKey: "C" }),
+      standard("c2", "C", ["c3","c4"], { durationMinutes: 20, notBefore: "09:00", maxConcurrentCourts: 2, priority: -3, continuityKey: "C" }),
+    ],
+  });
+  const atNine = result.assignments.filter((row) => row.startAt === new Date("2026-11-15T09:00:00").getTime());
+  expect(atNine.filter((row) => row.categoryId === "A")).toHaveLength(2);
+  expect(atNine.filter((row) => row.categoryId === "B")).toHaveLength(2);
+  const cStart = Math.min(...result.assignments.filter((row) => row.categoryId === "C").map((row) => row.startAt));
+  expect(cStart).toBe(new Date("2026-11-15T09:15:00").getTime());
+});

@@ -1304,3 +1304,79 @@ describe("definitive Tournament Day QA regressions", () => {
     expect(teamLive.results.team[0].roundLabel).toBeTruthy();
   });
 });
+
+describe("manual-first operational scheduling", () => {
+  it("starts two explicitly anchored categories together without a hard category barrier", () => {
+    const local = snapshot();
+    ensureDayLocalMeta(local);
+    (local.workspace.core.tournament as any).courtCount = 2;
+    (local.workspace.core.settings as any).dailyStart = "09:00";
+    (local.workspace.core.settings as any).dailyEnd = "12:00";
+    (local.workspace.core.settings as any).minimumRestSlots = 0;
+    (local.workspace.core.settings as any).preferredRestSlots = 0;
+
+    local.workspace.core.categories = [
+      { id: "c1", name: "A", entryType: "individual" },
+      { id: "c2", name: "B", entryType: "individual" },
+    ] as any[];
+
+    local.workspace.participants.players = ["p1","p2","p3","p4"].map((id) => ({
+      id,
+      organizationPersonId: `person-${id}`,
+      displayName: id,
+      sportGender: "unspecified",
+      playerStatus: "confirmed",
+    })) as any[];
+
+    local.workspace.participants.playerCategories = [
+      { playerProfileId: "p1", categoryId: "c1", partnerProfileId: null },
+      { playerProfileId: "p2", categoryId: "c1", partnerProfileId: null },
+      { playerProfileId: "p3", categoryId: "c2", partnerProfileId: null },
+      { playerProfileId: "p4", categoryId: "c2", partnerProfileId: null },
+    ] as any[];
+
+    local.workspace.standard.entries = [
+      { id: "e1", categoryId: "c1", displayName: "p1", sourceKey: "p1", localProfileIds: ["p1"], status: "ready" },
+      { id: "e2", categoryId: "c1", displayName: "p2", sourceKey: "p2", localProfileIds: ["p2"], status: "ready" },
+      { id: "e3", categoryId: "c2", displayName: "p3", sourceKey: "p3", localProfileIds: ["p3"], status: "ready" },
+      { id: "e4", categoryId: "c2", displayName: "p4", sourceKey: "p4", localProfileIds: ["p4"], status: "ready" },
+    ] as any[];
+
+    const competitionA = buildCompetitionFromGroups({
+      id: "competition:c1",
+      categoryId: "c1",
+      groups: [{ id: "g1", name: "A", entries: [
+        { id: "e1", name: "p1", participantIds: ["p1"], rating: 0 },
+        { id: "e2", name: "p2", participantIds: ["p2"], rating: 0 },
+      ] }],
+      format: { playoffMode: "league_only" },
+    });
+    const competitionB = buildCompetitionFromGroups({
+      id: "competition:c2",
+      categoryId: "c2",
+      groups: [{ id: "g2", name: "A", entries: [
+        { id: "e3", name: "p3", participantIds: ["p3"], rating: 0 },
+        { id: "e4", name: "p4", participantIds: ["p4"], rating: 0 },
+      ] }],
+      format: { playoffMode: "league_only" },
+    });
+
+    local.workspace.standard.competitions = [competitionA, competitionB];
+    syncStandardCompetition(local, competitionA);
+    syncStandardCompetition(local, competitionB);
+
+    (local.workspace.core.settings as any).schedulePolicy = {
+      mode: "manual_flow",
+      categories: {
+        c1: { groupOrder: 1, groupDate: "2026-11-15", groupNotBefore: "09:00", groupMatchMinutes: 25, groupMinimumRestMinutes: 0, groupPreferredRestMinutes: 0, groupMaxConcurrentCourts: 1 },
+        c2: { groupOrder: 2, groupDate: "2026-11-15", groupNotBefore: "09:00", groupMatchMinutes: 25, groupMinimumRestMinutes: 0, groupPreferredRestMinutes: 0, groupMaxConcurrentCourts: 1 },
+      },
+    };
+
+    regenerateGlobalSchedule(local);
+    const rows = (local.workspace.schedule.schedule as QaScheduleRow[]).filter((row) => row.stage === "group" && !row.provisional);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.startAt).toBe(rows[1]?.startAt);
+    expect(rows[0]?.courtLabel).not.toBe(rows[1]?.courtLabel);
+  });
+});

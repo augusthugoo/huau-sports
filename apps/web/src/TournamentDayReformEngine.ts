@@ -773,7 +773,8 @@ function applySchedulePolicy(
   snapshot: TournamentDayReformSnapshot,
   units: GlobalScheduleUnit[],
 ): GlobalScheduleUnit[] {
-  const policy = (snapshot.workspace.core.settings as any).schedulePolicy as
+  const settings = snapshot.workspace.core.settings as any;
+  const policy = settings.schedulePolicy as
     | { mode?: string; categories?: Record<string, any> }
     | undefined;
   if (!policy || !policy.categories) return units;
@@ -792,26 +793,26 @@ function applySchedulePolicy(
 
   return units.map((unit) => {
     const rule = policy.categories?.[unit.categoryId] ?? {};
-    const order = Math.max(1, Number(rule.order ?? 999));
-    const phase = mode === "categories"
-      ? order
-      : mode === "blocks"
-        ? Math.max(1, Number(rule.phase ?? 1))
-        : 0;
     const postGroup = unit.stage !== "group";
-    const dateCandidate = String(
-      postGroup ? rule.finalDate ?? "" : rule.groupDate ?? "",
-    ).trim();
+    const legacyOrder = Math.max(1, Number(rule.order ?? 999));
+    const operationalOrder = Math.max(
+      1,
+      Number(postGroup ? rule.finalOrder ?? legacyOrder : rule.groupOrder ?? legacyOrder),
+    );
+    const phase =
+      mode === "manual_flow"
+        ? 0
+        : mode === "categories"
+          ? legacyOrder
+          : mode === "blocks"
+            ? Math.max(1, Number(rule.phase ?? 1))
+            : 0;
+
+    const dateCandidate = String(postGroup ? rule.finalDate ?? "" : rule.groupDate ?? "").trim();
     const notBeforeCandidate = String(
-      postGroup
-        ? rule.finalNotBefore ?? rule.notBefore ?? ""
-        : rule.groupNotBefore ?? rule.notBefore ?? "",
+      postGroup ? rule.finalNotBefore ?? rule.notBefore ?? "" : rule.groupNotBefore ?? rule.notBefore ?? "",
     ).trim();
-    const notAfterCandidate = String(
-      postGroup
-        ? rule.finalNotAfter ?? ""
-        : rule.groupNotAfter ?? "",
-    ).trim();
+    const notAfterCandidate = String(postGroup ? rule.finalNotAfter ?? "" : rule.groupNotAfter ?? "").trim();
     const durationCandidate = Math.max(
       5,
       Number(
@@ -820,11 +821,29 @@ function applySchedulePolicy(
           : rule.groupMatchMinutes ?? (unit.kind === "team" ? unit.rubbers?.[0]?.durationMinutes ?? unit.durationMinutes : unit.durationMinutes),
       ),
     );
+
+    const minimumRestMinutes = Math.max(
+      0,
+      Number(postGroup
+        ? rule.finalMinimumRestMinutes ?? settings.scheduleMinimumRestMinutes ?? 0
+        : rule.groupMinimumRestMinutes ?? settings.scheduleMinimumRestMinutes ?? 0),
+    );
+    const preferredRestMinutes = Math.max(
+      minimumRestMinutes,
+      Number(postGroup
+        ? rule.finalPreferredRestMinutes ?? settings.schedulePreferredRestMinutes ?? minimumRestMinutes
+        : rule.groupPreferredRestMinutes ?? settings.schedulePreferredRestMinutes ?? minimumRestMinutes),
+    );
+
     const preferredRestSlots = Math.max(
       Number(unit.minimumRestSlots ?? 0),
       Number(rule.preferredRestSlots ?? unit.preferredRestSlots ?? 0),
     );
-    const sequence = String(rule.sequence ?? "free");
+    const sequence = String(
+      postGroup
+        ? rule.finalSequence ?? rule.sequence ?? "rounds"
+        : rule.groupSequence ?? rule.sequence ?? "rounds",
+    );
     let sequenceKey: string | null = null;
     let sequenceIndex: number | null = null;
 
@@ -841,47 +860,49 @@ function applySchedulePolicy(
       sequenceIndex = sequence === "group_pairs" ? Math.ceil(groupIndex / 2) : groupIndex;
     }
 
+    const phaseMaxCourtsRaw = postGroup
+      ? rule.finalMaxConcurrentCourts ?? rule.maxConcurrentCourts
+      : rule.groupMaxConcurrentCourts ?? rule.maxConcurrentCourts;
+
     return {
       ...unit,
-      date: /^\d{4}-\d{2}-\d{2}$/.test(dateCandidate)
-        ? dateCandidate
-        : unit.date,
+      date: /^\d{4}-\d{2}-\d{2}$/.test(dateCandidate) ? dateCandidate : unit.date,
       durationMinutes: durationCandidate,
       ...(unit.rubbers
-        ? {
-            rubbers: unit.rubbers.map((rubber) => ({
-              ...rubber,
-              durationMinutes: durationCandidate,
-            })),
-          }
+        ? { rubbers: unit.rubbers.map((rubber) => ({ ...rubber, durationMinutes: durationCandidate })) }
         : {}),
       policyPhase: phase || null,
       policySequenceKey: sequenceKey,
       policySequenceIndex: sequenceIndex,
       continuityKey:
-        mode === "blocks" || mode === "categories"
-          ? `${unit.categoryId}:${phase || order}`
-          : null,
-      notBefore: /^\d{2}:\d{2}$/.test(notBeforeCandidate)
-        ? notBeforeCandidate
-        : null,
-      notAfter: /^\d{2}:\d{2}$/.test(notAfterCandidate)
-        ? notAfterCandidate
-        : null,
+        mode === "manual_flow"
+          ? `manual:${postGroup ? "final" : "group"}:${unit.categoryId}`
+          : mode === "blocks" || mode === "categories"
+            ? `${unit.categoryId}:${phase || legacyOrder}`
+            : null,
+      notBefore: /^\d{2}:\d{2}$/.test(notBeforeCandidate) ? notBeforeCandidate : null,
+      notAfter: /^\d{2}:\d{2}$/.test(notAfterCandidate) ? notAfterCandidate : null,
       priority:
-        mode === "priority" || mode === "blocks"
-          ? -order
-          : unit.priority ?? 0,
+        mode === "manual_flow"
+          ? -operationalOrder
+          : mode === "priority" || mode === "blocks"
+            ? -legacyOrder
+            : unit.priority ?? 0,
+      ...(mode === "manual_flow"
+        ? {
+            minimumRestMinutes,
+            preferredRestMinutes,
+            ...(postGroup ? { dependencyRestMinutes: minimumRestMinutes } : {}),
+          }
+        : {}),
       preferredRestSlots,
       allowedCourts: Array.isArray(rule.allowedCourts) ? rule.allowedCourts.map(Number) : [],
       preferredCourts: Array.isArray(rule.preferredCourts) ? rule.preferredCourts.map(Number) : [],
       exclusiveCourts: Array.isArray(rule.exclusiveCourts) ? rule.exclusiveCourts.map(Number) : [],
       maxConcurrentCourts:
-        rule.maxConcurrentCourts === null ||
-        rule.maxConcurrentCourts === undefined ||
-        rule.maxConcurrentCourts === ""
+        phaseMaxCourtsRaw === null || phaseMaxCourtsRaw === undefined || phaseMaxCourtsRaw === ""
           ? null
-          : Math.max(1, Number(rule.maxConcurrentCourts)),
+          : Math.max(1, Number(phaseMaxCourtsRaw)),
     };
   });
 }
@@ -1385,6 +1406,7 @@ export function regenerateGlobalSchedule(snapshot: TournamentDayReformSnapshot, 
     breaks: meta.schedule.breaks,
   });
   meta.schedule.lastConflicts = result.conflicts;
+  settings.scheduleGeneratedPlanRevision = Number(settings.schedulePlanRevision ?? 0);
   const old = snapshot.workspace.schedule.schedule as any[];
   const preserved = options.onlyUnlocked ? old.filter((row) => meta.schedule.lockedUnitIds.includes(row.scheduleUnitId)) : old.filter((row) => row.status === "completed");
   const generated: any[] = [];
