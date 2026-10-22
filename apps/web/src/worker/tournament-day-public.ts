@@ -66,6 +66,7 @@ function publicModelShape(value: unknown, kind: "structure" | "live", tournament
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("PUBLIC_MODEL_INVALID");
   const model = value as Record<string, unknown>;
   if (model.schemaVersion !== 1 || model.kind !== kind) throw new Error("PUBLIC_MODEL_INVALID");
+  if (model.qaFixture === true) throw new Error("TOURNAMENT_DAY_QA_PUBLISH_BLOCKED");
   const tournament = model.tournament as Record<string, unknown> | undefined;
   if (!tournament || String(tournament.id ?? "") !== tournamentId) throw new Error("PUBLIC_MODEL_TOURNAMENT_MISMATCH");
   if (hasPrivateKey(model)) throw new Error("PUBLIC_MODEL_PRIVATE_FIELD");
@@ -103,8 +104,63 @@ export async function setTournamentLandingPromotion(
   enabled: boolean,
 ): Promise<boolean> {
   const manifest = await readManifest(env);
-  const entry = manifest.tournaments.find((candidate) => candidate.tournamentId === tournamentId);
-  if (!entry) return false;
+  let entry = manifest.tournaments.find((candidate) => candidate.tournamentId === tournamentId);
+
+  if (!entry) {
+    if (!enabled) return true;
+
+    const [tournament, structureObject, liveObject] = await Promise.all([
+      env.HUAU_DB.prepare(
+        `SELECT id,slug,name,sport,start_at as startAt,end_at as endAt
+           FROM tournaments WHERE id=?`,
+      ).bind(tournamentId).first<{
+        id: string;
+        slug: string;
+        name: string;
+        sport: string;
+        startAt: number;
+        endAt: number | null;
+      }>(),
+      env.HUAU_ASSETS.head(`public/tournaments/${tournamentId}/structure.json`),
+      env.HUAU_ASSETS.get(`public/tournaments/${tournamentId}/live.json`),
+    ]);
+
+    // No mostramos un ticker que lleve a una página todavía no publicada.
+    if (!tournament || !structureObject) return false;
+
+    let status: ManifestEntry["status"] = "scheduled";
+    let liveRevision = 0;
+    if (liveObject) {
+      try {
+        const live = JSON.parse(await liveObject.text()) as Record<string, unknown>;
+        if (["scheduled", "live", "finished"].includes(String(live.status))) {
+          status = String(live.status) as ManifestEntry["status"];
+        } else {
+          status = "live";
+        }
+        liveRevision = Number(live.revision ?? liveObject.customMetadata?.revision ?? 0);
+      } catch {
+        status = "live";
+        liveRevision = Number(liveObject.customMetadata?.revision ?? 0);
+      }
+    }
+
+    entry = {
+      tournamentId: tournament.id,
+      slug: tournament.slug,
+      name: tournament.name,
+      sport: tournament.sport,
+      startAt: Number(tournament.startAt),
+      endAt: tournament.endAt === null ? null : Number(tournament.endAt),
+      status,
+      showOnLanding: true,
+      structureRevision: Number(structureObject.customMetadata?.revision ?? 0),
+      liveRevision,
+      updatedAt: Date.now(),
+    };
+    manifest.tournaments.push(entry);
+  }
+
   entry.showOnLanding = enabled;
   entry.updatedAt = Date.now();
   await writeManifest(env, manifest);

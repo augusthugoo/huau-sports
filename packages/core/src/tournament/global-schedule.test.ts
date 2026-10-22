@@ -170,3 +170,133 @@ it("does not schedule leg 2 before every leg 1 unit in the same barrier", () => 
   const leg1End = Math.max(...result.assignments.filter((row) => row.unitId.startsWith("l1")).map((row) => row.endAt));
   expect(l2.startAt).toBeGreaterThanOrEqual(leg1End);
 });
+
+it("uses effective match duration for rest slots", () => {
+  const result = generateGlobalTournamentSchedule({
+    settings: {
+      ...base,
+      courtCount: 2,
+      defaultMatchMinutes: 30,
+      minimumRestSlots: 1,
+      preferredRestSlots: 1,
+    },
+    units: [
+      standard("short", "A", ["p1", "p2"], { durationMinutes: 20 }),
+      standard("long", "B", ["p1", "p3"], {
+        durationMinutes: 40,
+        dependencyIds: ["short"],
+      }),
+    ],
+  });
+
+  const first = result.assignments.find((row) => row.unitId === "short")!;
+  const second = result.assignments.find((row) => row.unitId === "long")!;
+  expect(second.startAt - first.endAt).toBeGreaterThanOrEqual(40 * 60_000);
+});
+
+it("uses another ready category to buy preferred rest when both can start in the same wave", () => {
+  const result = generateGlobalTournamentSchedule({
+    settings: {
+      ...base,
+      courtCount: 1,
+      minimumRestSlots: 0,
+      preferredRestSlots: 1,
+    },
+    units: [
+      standard("a1", "A", ["p1", "p2"], { durationMinutes: 30, priority: -1 }),
+      standard("a2", "A", ["p1", "p3"], { durationMinutes: 30, dependencyIds: ["a1"], priority: -1 }),
+      standard("b1", "B", ["p4", "p5"], { durationMinutes: 30, notBefore: "09:30", priority: -2 }),
+    ],
+  });
+
+  const a1 = result.assignments.find((row) => row.unitId === "a1")!;
+  const b1 = result.assignments.find((row) => row.unitId === "b1")!;
+  const a2 = result.assignments.find((row) => row.unitId === "a2")!;
+  expect(b1.startAt).toBe(a1.endAt);
+  expect(a2.startAt).toBe(b1.endAt);
+});
+
+it("does not idle a legal earlier slot only to chase preferred rest", () => {
+  const result = generateGlobalTournamentSchedule({
+    settings: {
+      ...base,
+      courtCount: 1,
+      minimumRestSlots: 0,
+      preferredRestSlots: 1,
+    },
+    units: [
+      standard("r1", "A", ["p1", "p2"], { durationMinutes: 30 }),
+      standard("r2", "A", ["p1", "p3"], { durationMinutes: 30, dependencyIds: ["r1"] }),
+    ],
+  });
+  const first = result.assignments.find((row) => row.unitId === "r1")!;
+  const second = result.assignments.find((row) => row.unitId === "r2")!;
+  expect(second.startAt).toBe(first.endAt);
+});
+
+it("honors a phase-specific hard end before the global daily end", () => {
+  const result = generateGlobalTournamentSchedule({
+    settings: {
+      ...base,
+      dailyStart: "09:00",
+      dailyEnd: "12:00",
+      courtCount: 1,
+      minimumRestSlots: 0,
+      preferredRestSlots: 0,
+    },
+    units: [
+      standard("p1", "A", ["a", "b"], { durationMinutes: 20, notAfter: "09:30" }),
+      standard("p2", "A", ["c", "d"], { durationMinutes: 20, notAfter: "09:30", dependencyIds: ["p1"] }),
+    ],
+  });
+
+  expect(result.assignments.some((row) => row.unitId === "p1")).toBe(true);
+  expect(result.assignments.some((row) => row.unitId === "p2")).toBe(false);
+  expect(result.unscheduledUnitIds).toContain("p2");
+});
+
+it("scopes exclusive courts to their operational day", () => {
+  const dayOne = standard("exclusive-day-1", "A", ["a", "b"], {
+    date: "2026-11-15",
+    exclusiveCourts: [2],
+  });
+  const dayTwo = standard("allowed-day-2", "B", ["c", "d"], {
+    date: "2026-11-16",
+    allowedCourts: [2],
+  });
+  const result = generateGlobalTournamentSchedule({
+    settings: { ...base, courtCount: 2 },
+    units: [dayOne, dayTwo],
+  });
+  expect(result.assignments.find((row) => row.unitId === "exclusive-day-1")!.court).toBe(2);
+  expect(result.assignments.find((row) => row.unitId === "allowed-day-2")!.court).toBe(2);
+});
+
+it("keeps continuity without leaving earlier courts idle", () => {
+  const result = generateGlobalTournamentSchedule({
+    settings: {
+      ...base,
+      courtCount: 4,
+      minimumRestSlots: 0,
+      preferredRestSlots: 0,
+    },
+    units: [
+      standard("a1", "A", ["a1", "a2"], { continuityKey: "block:A", maxConcurrentCourts: 2, priority: -1 }),
+      standard("a2", "A", ["a3", "a4"], { continuityKey: "block:A", maxConcurrentCourts: 2, priority: -1 }),
+      standard("a3", "A", ["a5", "a6"], { continuityKey: "block:A", maxConcurrentCourts: 2, priority: -1 }),
+      standard("b1", "B", ["b1", "b2"], { continuityKey: "block:B", maxConcurrentCourts: 2, priority: -2 }),
+      standard("b2", "B", ["b3", "b4"], { continuityKey: "block:B", maxConcurrentCourts: 2, priority: -2 }),
+      standard("c1", "C", ["c1", "c2"], { continuityKey: "block:C", maxConcurrentCourts: 2, priority: -3 }),
+      standard("c2", "C", ["c3", "c4"], { continuityKey: "block:C", maxConcurrentCourts: 2, priority: -3 }),
+    ],
+  });
+
+  const firstStart = Math.min(...result.assignments.map((row) => row.startAt));
+  const firstWave = result.assignments.filter((row) => row.startAt === firstStart);
+  expect(firstWave).toHaveLength(4);
+  expect(firstWave.filter((row) => row.categoryId === "A")).toHaveLength(2);
+  expect(firstWave.filter((row) => row.categoryId === "B")).toHaveLength(2);
+  expect(firstWave.filter((row) => row.categoryId === "C")).toHaveLength(0);
+  expect(result.assignments.find((row) => row.unitId === "a3")!.startAt).toBeGreaterThan(firstStart);
+  expect(result.complete).toBe(true);
+});

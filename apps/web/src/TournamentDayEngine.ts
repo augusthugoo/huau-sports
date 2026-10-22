@@ -60,20 +60,30 @@ function categoryById(snapshot: TournamentDaySnapshot, categoryId: string) {
 
 function standardEntryModel(snapshot: TournamentDaySnapshot, row: any): TournamentEntry {
   const profiles = snapshot.workspace.participants.players as any[];
-  const byProfileId = new Map(profiles.map((profile) => [String(profile.id), profile] as const));
-  const resolved = new Set<string>();
+  const byAnyId = new Map<string, any>();
 
-  const addProfile = (profileId: string) => {
-    const profile = byProfileId.get(profileId);
+  for (const profile of profiles) {
+    for (const key of [profile.id, profile.organizationPersonId, profile.userId]) {
+      if (key) byAnyId.set(String(key), profile);
+    }
+  }
+
+  const resolved = new Set<string>();
+  const ratingProfiles = new Map<string, any>();
+
+  const addProfile = (value: string) => {
+    const profile = byAnyId.get(String(value));
     if (!profile) return false;
-    resolved.add(
-      String(
-        profile.organizationPersonId ||
-          profile.userId ||
-          profile.id ||
-          `profile:${profileId}`,
-      ),
+
+    const canonical = String(
+      profile.organizationPersonId ||
+        profile.userId ||
+        profile.id ||
+        `profile:${value}`,
     );
+
+    resolved.add(canonical);
+    ratingProfiles.set(String(profile.id ?? canonical), profile);
     return true;
   };
 
@@ -82,7 +92,9 @@ function standardEntryModel(snapshot: TournamentDaySnapshot, row: any): Tourname
       .split("|")
       .map((value: string) => value.trim())
       .filter(Boolean)
-      .forEach((value: string) => resolved.add(value));
+      .forEach((value: string) => {
+        if (!addProfile(value)) resolved.add(value);
+      });
   }
 
   if (Array.isArray(row.localProfileIds)) {
@@ -95,7 +107,9 @@ function standardEntryModel(snapshot: TournamentDaySnapshot, row: any): Tourname
   const sourceKey = typeof row.sourceKey === "string" ? row.sourceKey : "";
   if (sourceKey && !resolved.size) {
     if (!addProfile(sourceKey) && row.sourceKind === "legacy_pair") {
-      sourceKey.split(":").filter(Boolean).forEach(addProfile);
+      sourceKey.split(":").filter(Boolean).forEach((value: string) => {
+        if (!addProfile(value)) resolved.add(value);
+      });
     }
   }
 
@@ -109,11 +123,30 @@ function standardEntryModel(snapshot: TournamentDaySnapshot, row: any): Tourname
       .forEach((name: string) => resolved.add(`local-name:${name}`));
   }
 
+  const category = categoryById(snapshot, String(row.categoryId ?? ""));
+  const ratingRows = [...ratingProfiles.values()];
+  let effectiveRating = Number(row.seedRating ?? 0);
+
+  if (category?.entryType === "pair" && ratingRows.length >= 2) {
+    // Para una pareja de 2 jugadores, suma y promedio ordenan igual.
+    // La suma es más clara para mostrar el "DUPR de pareja".
+    effectiveRating = ratingRows
+      .slice(0, 2)
+      .reduce((sum, profile) => sum + Number(profile.duprDoubles ?? 0), 0);
+  } else if (category?.entryType === "individual" && ratingRows.length) {
+    effectiveRating = Number(
+      ratingRows[0]?.duprSingles ??
+        ratingRows[0]?.duprDoubles ??
+        row.seedRating ??
+        0,
+    );
+  }
+
   return {
     id: row.id,
     name: row.displayName,
     participantIds: [...resolved],
-    rating: Number(row.seedRating ?? 0),
+    rating: Number(effectiveRating.toFixed(3)),
   };
 }
 
@@ -549,6 +582,47 @@ export function saveLocalStandardFormat(
   }
 }
 
+function distributeStandardWithOptionalHeads(
+  snapshot: TournamentDaySnapshot,
+  categoryId: string,
+  models: TournamentEntry[],
+  sizes: number[],
+  method: "snake" | "random",
+) {
+  const category = categoryById(snapshot, categoryId);
+  const useHeads = Boolean(category?.daySeedHeads) && sizes.length > 1;
+
+  if (!useHeads) {
+    return method === "random"
+      ? distributeEntriesRandomly(models, sizes)
+      : distributeEntriesSnake(models, sizes);
+  }
+
+  const ordered = [...models].sort(
+    (a, b) =>
+      b.rating - a.rating ||
+      a.name.localeCompare(b.name) ||
+      a.id.localeCompare(b.id),
+  );
+  const heads = ordered.slice(0, sizes.length);
+  const headIds = new Set(heads.map((entry) => entry.id));
+  const rest = models.filter((entry) => !headIds.has(entry.id));
+  const remainingSizes = sizes.map((size, index) =>
+    Math.max(0, size - (heads[index] ? 1 : 0)),
+  );
+  const distributedRest =
+    method === "random"
+      ? distributeEntriesRandomly(rest, remainingSizes)
+      : distributeEntriesSnake(rest, remainingSizes);
+
+  return distributedRest.map((group, index) => ({
+    ...group,
+    entries: heads[index]
+      ? [heads[index]!, ...group.entries]
+      : [...group.entries],
+  }));
+}
+
 export function generateLocalStandardStructure(
   snapshot: TournamentDaySnapshot,
   categoryId: string,
@@ -569,10 +643,13 @@ export function generateLocalStandardStructure(
   const groups = Math.max(1, Math.min(Math.trunc(groupCount || 1), Math.max(1, Math.floor(rows.length / 2))));
   const sizes = balancedGroupSizes(rows.length, groups);
   const models = rows.map((row) => standardEntryModel(snapshot, row));
-  const distributed =
-    method === "random"
-      ? distributeEntriesRandomly(models, sizes)
-      : distributeEntriesSnake(models, sizes);
+  const distributed = distributeStandardWithOptionalHeads(
+    snapshot,
+    categoryId,
+    models,
+    sizes,
+    method,
+  );
   const competition = buildCompetitionFromGroups({
     id: standardCompetitionByCategory(snapshot, categoryId)?.id ?? localId("local-standard-competition"),
     categoryId,
@@ -610,11 +687,42 @@ export function startLocalLiveDraw(
     Math.min(Math.trunc(groupCount || 1), Math.max(1, Math.floor(rows.length / 2))),
   );
   const sizes = balancedGroupSizes(rows.length, groups);
-  const state = createLiveDrawState(rows.map((row) => String(row.id)), sizes);
+  const models = rows.map((row) => standardEntryModel(snapshot, row));
+  const category = categoryById(snapshot, categoryId);
+  const useHeads = Boolean(category?.daySeedHeads) && groups > 1;
+  const ordered = [...models].sort(
+    (a, b) =>
+      b.rating - a.rating ||
+      a.name.localeCompare(b.name) ||
+      a.id.localeCompare(b.id),
+  );
+  const heads = useHeads ? ordered.slice(0, groups) : [];
+  const headIds = new Set(heads.map((entry) => entry.id));
+  const remaining = models.filter((entry) => !headIds.has(entry.id));
+  const remainingSizes = sizes.map((size, index) =>
+    Math.max(0, size - (heads[index] ? 1 : 0)),
+  );
+  const state = createLiveDrawState(
+    remaining.map((entry) => entry.id),
+    remainingSizes,
+  );
+
+  if (heads.length) {
+    const labels = Object.keys(state.assignments).sort((a, b) => a.localeCompare(b));
+    labels.forEach((label, index) => {
+      const head = heads[index];
+      if (head) state.assignments[label] = [head.id];
+    });
+  }
+
   const session = {
     categoryId,
     status: state.status,
-    stateJson: JSON.stringify({ ...state, groupSizes: sizes }),
+    stateJson: JSON.stringify({
+      ...state,
+      groupSizes: sizes,
+      seededHeadIds: heads.map((entry) => entry.id),
+    }),
     updatedAt: Date.now(),
   };
   const drawSessions = snapshot.workspace.standard.drawSessions as any[];
@@ -668,18 +776,70 @@ export function advanceLocalLiveDraw(
   return next;
 }
 
+function downstreamStandardEncounterIds(
+  competition: Competition,
+  encounterId: string,
+) {
+  const descendants = new Set<string>();
+  const queue = [encounterId];
+
+  while (queue.length) {
+    const sourceId = queue.shift()!;
+    for (const candidate of competition.encounters) {
+      if (
+        candidate.sourceEncounterAId === sourceId ||
+        candidate.sourceEncounterBId === sourceId ||
+        candidate.sourceLoserAId === sourceId ||
+        candidate.sourceLoserBId === sourceId
+      ) {
+        if (!descendants.has(candidate.id)) {
+          descendants.add(candidate.id);
+          queue.push(candidate.id);
+        }
+      }
+    }
+  }
+
+  return descendants;
+}
+
+function resetStandardEncounterForReprogress(
+  encounter: Competition["encounters"][number],
+) {
+  const copy: Competition["encounters"][number] = {
+    ...encounter,
+    winnerEntryId: null,
+    scoreA: null,
+    scoreB: null,
+    sets: [],
+  };
+
+  if (copy.sourceEncounterAId || copy.sourceLoserAId) copy.entryA = null;
+  if (copy.sourceEncounterBId || copy.sourceLoserBId) copy.entryB = null;
+
+  if (copy.entryA && copy.entryB) copy.status = "ready";
+  else if (copy.entryA || copy.entryB) {
+    copy.status = "bye";
+    copy.winnerEntryId = copy.entryA?.id ?? copy.entryB?.id ?? null;
+  } else copy.status = "pending";
+
+  return copy;
+}
+
 export function setLocalStandardResult(
   snapshot: TournamentDaySnapshot,
   categoryId: string,
   encounterId: string,
   result: StandardResultInput,
+  options: { cascade?: boolean } = {},
 ) {
   const competition = standardCompetitionByCategory(snapshot, categoryId);
   if (!competition) throw new Error("COMPETITION_NOT_FOUND");
   const target = competition.encounters.find((encounter) => encounter.id === encounterId);
   if (!target) throw new Error("ENCOUNTER_NOT_FOUND");
 
-  if (
+  const cascade = Boolean(options.cascade);
+  const finalAlreadyStarted =
     target.stage === "group" &&
     target.status === "finished" &&
     competition.finalGenerated &&
@@ -687,49 +847,48 @@ export function setLocalStandardResult(
       (encounter) =>
         encounter.stage !== "group" &&
         (encounter.status === "finished" || encounter.status === "in_progress"),
-    )
-  ) {
+    );
+
+  if (finalAlreadyStarted && !cascade) {
     throw new Error("STANDARD_RESULT_HAS_DOWNSTREAM_FINAL");
   }
 
-  if (target.stage !== "group" && target.status === "finished") {
-    const descendants = new Set<string>();
-    const queue = [target.id];
-    while (queue.length) {
-      const sourceId = queue.shift()!;
-      for (const candidate of competition.encounters) {
-        if (
-          candidate.sourceEncounterAId === sourceId ||
-          candidate.sourceEncounterBId === sourceId ||
-          candidate.sourceLoserAId === sourceId ||
-          candidate.sourceLoserBId === sourceId
-        ) {
-          if (!descendants.has(candidate.id)) {
-            descendants.add(candidate.id);
-            queue.push(candidate.id);
-          }
-        }
-      }
-    }
-    if (
-      competition.encounters.some(
-        (candidate) =>
-          descendants.has(candidate.id) &&
-          (candidate.status === "finished" || candidate.status === "in_progress"),
-      )
-    ) {
-      throw new Error("STANDARD_RESULT_HAS_DOWNSTREAM_ENCOUNTER");
-    }
+  const descendants =
+    target.stage !== "group" && target.status === "finished"
+      ? downstreamStandardEncounterIds(competition, target.id)
+      : new Set<string>();
+
+  const playedDescendants = competition.encounters.filter(
+    (candidate) =>
+      descendants.has(candidate.id) &&
+      (candidate.status === "finished" || candidate.status === "in_progress"),
+  );
+
+  if (playedDescendants.length && !cascade) {
+    throw new Error("STANDARD_RESULT_HAS_DOWNSTREAM_ENCOUNTER");
   }
 
-  const base =
-    target.stage === "group" && target.status === "finished" && competition.finalGenerated
-      ? {
-          ...competition,
-          encounters: competition.encounters.filter((encounter) => encounter.stage === "group"),
-          finalGenerated: false,
-        }
-      : competition;
+  let base: Competition = competition;
+
+  if (target.stage === "group" && target.status === "finished" && competition.finalGenerated) {
+    // Un cambio de grupo puede alterar puestos, clasificados, seeds y byes.
+    // Conservamos todos los grupos y reconstruimos la fase final completa.
+    base = {
+      ...competition,
+      encounters: competition.encounters.filter((encounter) => encounter.stage === "group"),
+      finalGenerated: false,
+    };
+  } else if (playedDescendants.length && cascade) {
+    // En eliminación directa sólo se invalida la rama que depende del partido corregido.
+    base = {
+      ...competition,
+      encounters: competition.encounters.map((encounter) =>
+        descendants.has(encounter.id)
+          ? resetStandardEncounterForReprogress(encounter)
+          : encounter,
+      ),
+    };
+  }
 
   let next = withEncounterResult(base, encounterId, result);
   const groups = next.encounters.filter((encounter) => encounter.stage === "group");
@@ -741,6 +900,7 @@ export function setLocalStandardResult(
   ) {
     next = generateFinalPhase(next);
   }
+
   setStandardCompetition(snapshot, next);
 }
 
@@ -1687,10 +1847,22 @@ export function setLocalTeamResult(
     coreCategory.competitionStatus = category.competitionStatus;
   }
 
+  const scheduleStatusByMatch = new Map(
+    (encounter.matches ?? []).map((candidate: any) => [
+      String(candidate.id),
+      String(candidate.scheduleStatus ?? "bound"),
+    ] as const),
+  );
   snapshot.workspace.schedule.schedule = (snapshot.workspace.schedule.schedule as any[]).map(
     (row) => {
-      if (row.matchId !== matchId) return row;
-      return { ...row, status: "completed" };
+      if (
+        String(row.categoryId) !== String(categoryId) ||
+        String(row.encounterId) !== String(encounterId)
+      ) return row;
+      const status = scheduleStatusByMatch.get(String(row.matchId ?? ""));
+      if (status === "completed") return { ...row, status: "completed" };
+      if (status === "cancelled") return { ...row, status: "cancelled" };
+      return row;
     },
   );
 }
