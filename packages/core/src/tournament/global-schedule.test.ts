@@ -574,3 +574,94 @@ it("handles a national-sized strict-reservation plan with event-driven search", 
   );
   expect(elapsedMs).toBeLessThan(5000);
 }, 8000);
+
+it("shrinks an adaptive strict reservation by structural round without leaking temporary gaps", () => {
+  const date = "2026-11-27";
+  const a = (id: string, round: number, deps: string[] = []) =>
+    standard(id, "A", [`${id}-1`, `${id}-2`], {
+      date,
+      durationMinutes: 15,
+      dependencyIds: deps,
+      reservationKey: "manual:final:A",
+      reservationMode: "strict",
+      reservedCourts: 4,
+      reservationBlock: 1,
+      reservationOrder: 1,
+      reservationAdaptive: true,
+      reservationRoundKey: `final:${round}`,
+      reservationRoundOrder: 1000 + round,
+      roundNumber: round,
+      maxConcurrentCourts: 4,
+      minimumRestMinutes: 0,
+      preferredRestMinutes: 0,
+    });
+  const b = (id: string) =>
+    standard(id, "B", [`${id}-1`, `${id}-2`], {
+      date,
+      durationMinutes: 15,
+      reservationKey: "manual:final:B",
+      reservationMode: "strict",
+      reservedCourts: 4,
+      reservationBlock: 1,
+      reservationOrder: 2,
+      reservationAdaptive: true,
+      reservationRoundKey: "final:1",
+      reservationRoundOrder: 1001,
+      roundNumber: 1,
+      maxConcurrentCourts: 4,
+      minimumRestMinutes: 0,
+      preferredRestMinutes: 0,
+    });
+
+  const quarterIds = ["q1", "q2", "q3", "q4"];
+  const result = generateGlobalTournamentSchedule({
+    settings: {
+      ...base,
+      dailyStart: "09:00",
+      dailyEnd: "11:00",
+      courtCount: 4,
+      minimumRestSlots: 0,
+      preferredRestSlots: 0,
+      stepMinutes: 1,
+    },
+    units: [
+      ...quarterIds.map((id) => a(id, 1)),
+      a("s1", 2, quarterIds),
+      a("s2", 2, quarterIds),
+      a("f1", 3, ["s1", "s2"]),
+      b("b1"),
+      b("b2"),
+      b("b3"),
+      b("b4"),
+    ],
+  });
+
+  expect(result.complete).toBe(true);
+
+  const start = (id: string) =>
+    result.assignments.find((row) => row.unitId === id)!.startAt;
+
+  const qStart = start("q1");
+  expect(quarterIds.every((id) => start(id) === qStart)).toBe(true);
+  expect(start("b1")).toBeGreaterThan(qStart);
+
+  const semiStart = start("s1");
+  expect(start("s2")).toBe(semiStart);
+  expect(
+    result.assignments.filter(
+      (row) =>
+        row.categoryId === "B" &&
+        row.startAt === semiStart,
+    ),
+  ).toHaveLength(2);
+
+  const finalStart = start("f1");
+  expect(finalStart).toBeGreaterThan(semiStart);
+  expect(
+    result.assignments.some(
+      (row) =>
+        row.categoryId === "B" &&
+        row.startAt === finalStart,
+    ),
+  ).toBe(true);
+});

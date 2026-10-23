@@ -286,3 +286,19 @@
 .td-schedule-fine-edit>summary{cursor:pointer;font-weight:700;color:#aaa}
 .td-schedule-fine-edit[open]>summary{margin-bottom:12px}
 @media (max-width:900px){.epic-day-windows article{grid-template-columns:1fr}.epic-day-windows article>b{grid-column:auto}.td-reservation-note{margin-left:0}}
+
+/* HUAU schedule closeout hotfix */
+.epic-day-windows article{grid-template-columns:repeat(4,minmax(0,1fr))}
+.epic-flow-row{grid-template-columns:30px minmax(215px,1.55fr) repeat(8,minmax(92px,.7fr))}
+.epic-final-plan{display:grid!important;gap:2px!important;margin-top:5px;padding:6px 8px;border:1px solid rgba(255,255,255,.08);border-radius:9px;background:#050505;opacity:1!important}
+.epic-final-plan b{font-size:.62rem;color:#ddd}
+.epic-final-plan span{font-size:.6rem;color:#888}
+.epic-reservation-warning{display:block!important;margin-top:5px;padding:5px 7px;border:1px solid rgba(220,167,73,.32);border-radius:8px;background:rgba(220,167,73,.06);color:#d8b56d;opacity:1!important}
+.td-court-grid-day{display:grid;gap:6px;padding-top:4px}
+.td-court-grid-day+.td-court-grid-day{margin-top:16px;padding-top:18px;border-top:1px solid rgba(255,255,255,.14)}
+.td-court-grid-day-separator{position:sticky;left:0;display:flex;align-items:baseline;justify-content:space-between;gap:12px;min-width:760px;padding:10px 12px;border:1px solid rgba(255,255,255,.1);border-radius:11px;background:#111}
+.td-court-grid-day-separator b{text-transform:uppercase;letter-spacing:.08em;font-size:.74rem}
+.td-court-grid-day-separator span{color:#777;font-size:.68rem;font-variant-numeric:tabular-nums}
+@media(max-width:1250px){.epic-flow-row{grid-template-columns:30px minmax(190px,1.2fr) repeat(4,minmax(95px,1fr))}}
+@media(max-width:900px){.epic-day-windows article{grid-template-columns:1fr 1fr}}
+@media(max-width:560px){.epic-day-windows article{grid-template-columns:1fr}.td-court-grid-day-separator{min-width:760px}}

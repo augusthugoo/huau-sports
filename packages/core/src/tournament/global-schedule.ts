@@ -45,6 +45,9 @@ export type GlobalScheduleUnit = {
   reservedCourts?: number | null;
   reservationBlock?: number | null;
   reservationOrder?: number | null;
+  reservationAdaptive?: boolean | null;
+  reservationRoundKey?: string | null;
+  reservationRoundOrder?: number | null;
   rubbers?: GlobalScheduleRubber[];
 };
 
@@ -574,6 +577,15 @@ function categoryConcurrencyOk(
   return true;
 }
 
+type StrictReservationRoundState = {
+  key: string;
+  order: number;
+  requested: number;
+  totalUnits: number;
+  assignedUnits: number;
+  lastEnd: number;
+};
+
 type StrictReservationState = {
   key: string;
   date: string;
@@ -584,6 +596,8 @@ type StrictReservationState = {
   totalUnits: number;
   assignedUnits: number;
   lastEnd: number;
+  adaptive: boolean;
+  rounds: Map<string, StrictReservationRoundState>;
 };
 
 type ReservationContext = {
@@ -631,6 +645,8 @@ function buildReservationContext(
         totalUnits: 0,
         assignedUnits: 0,
         lastEnd: 0,
+        adaptive: false,
+        rounds: new Map(),
       };
 
     group.block = Math.min(group.block, block);
@@ -638,6 +654,33 @@ function buildReservationContext(
     group.requested = Math.max(group.requested, requested);
     group.gateAt = Math.min(group.gateAt, gateAt);
     group.totalUnits += 1;
+    group.adaptive = group.adaptive || Boolean(unit.reservationAdaptive);
+
+    const roundKey = String(
+      unit.reservationRoundKey ??
+        `${unit.stage}:${Math.max(1, Number(unit.roundNumber ?? 1))}`,
+    );
+    const roundOrder = Math.max(
+      1,
+      Number(
+        unit.reservationRoundOrder ??
+          unit.roundNumber ??
+          1,
+      ),
+    );
+    const round =
+      group.rounds.get(roundKey) ?? {
+        key: roundKey,
+        order: roundOrder,
+        requested,
+        totalUnits: 0,
+        assignedUnits: 0,
+        lastEnd: 0,
+      };
+    round.order = Math.min(round.order, roundOrder);
+    round.requested = Math.max(round.requested, requested);
+    round.totalUnits += 1;
+    group.rounds.set(roundKey, round);
 
     byDateAndKey.set(mapKey, group);
     strictGroupByUnitId.set(unit.id, group);
@@ -682,7 +725,48 @@ function indexReservationAssignment(
   if (group) {
     group.assignedUnits += 1;
     group.lastEnd = Math.max(group.lastEnd, assignment.endAt);
+
+    const roundKey = String(
+      unit.reservationRoundKey ??
+        `${unit.stage}:${Math.max(1, Number(unit.roundNumber ?? 1))}`,
+    );
+    const round = group.rounds.get(roundKey);
+    if (round) {
+      round.assignedUnits += 1;
+      round.lastEnd = Math.max(round.lastEnd, assignment.endAt);
+    }
   }
+}
+
+function reservationRequestedAt(
+  group: StrictReservationState,
+  startAt: number,
+) {
+  if (!group.adaptive) return group.requested;
+
+  const activeRound = [...group.rounds.values()]
+    .sort(
+      (a, b) =>
+        a.order - b.order ||
+        a.key.localeCompare(b.key),
+    )
+    .find(
+      (round) =>
+        !(
+          round.assignedUnits >= round.totalUnits &&
+          round.lastEnd <= startAt
+        ),
+    );
+
+  if (!activeRound) return 0;
+
+  return Math.max(
+    0,
+    Math.min(
+      activeRound.requested,
+      activeRound.totalUnits,
+    ),
+  );
 }
 
 function reservationCapacityOk(
@@ -711,9 +795,12 @@ function reservationCapacityOk(
       continue;
     }
 
+    const requested = reservationRequestedAt(group, startAt);
+    if (requested <= 0) continue;
+
     const allocation = Math.max(
       0,
-      Math.min(group.requested, remaining),
+      Math.min(requested, remaining),
     );
     allocations.set(group.key, allocation);
     remaining -= allocation;

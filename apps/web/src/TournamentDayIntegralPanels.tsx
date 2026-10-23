@@ -284,6 +284,25 @@ export function IntegralStandardGroupEditor({ locale, snapshot, mutate }: { loca
   return <article className="panel wide td-dense-panel"><div className="panel-title"><div><div className="eyebrow">STANDARD · GRUPOS EDITABLES</div><h2>{tr(locale,"Asignación manual","Manual assignment")}</h2></div></div><div className="td-category-tabs">{competitions.map((candidate)=><button key={candidate.categoryId} className={String(candidate.categoryId)===String(competition.categoryId)?"light small":"ghost small"} onClick={()=>setCategoryId(String(candidate.categoryId))}>{(snapshot.workspace.core.categories as any[]).find((c)=>String(c.id)===String(candidate.categoryId))?.name??candidate.categoryId}</button>)}</div><div className="td-group-grid">{competition.groups.map((group:any)=><div key={group.id}><strong>{tr(locale,"Grupo","Group")} {group.name}</strong>{group.entries.map((entry:any,index:number)=><span key={entry.id}><b>{index+1}.</b> {entry.name}<select value={group.id} onChange={(e)=>void mutate(next=>moveLocalStandardEntryToGroup(next,String(competition.categoryId),String(entry.id),e.target.value),tr(locale,"Entrada movida y grupo recalculado.","Entry moved and group rebuilt."))}>{competition.groups.map((target:any)=><option key={target.id} value={target.id}>{tr(locale,"Grupo","Group")} {target.name}</option>)}</select></span>)}</div>)}</div></article>;
 }
 
+function scheduleDayKey(seconds: number) {
+  const date = new Date(seconds * 1000);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function scheduleDayHeading(locale: Locale, day: string) {
+  const date = new Date(`${day}T12:00:00`);
+  return date.toLocaleDateString(
+    locale === "es" ? "es-UY" : "en-US",
+    {
+      weekday: "long",
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    },
+  );
+}
+
 export function IntegralSchedulePanel({ locale, snapshot, mutate }: { locale: Locale; snapshot: TournamentDayReformSnapshot; mutate: DayMutate }) {
   const schedule=[...(snapshot.workspace.schedule.schedule as any[])].sort((a,b)=>Number(a.startAt)-Number(b.startAt)||String(a.courtLabel).localeCompare(String(b.courtLabel)));
   const scheduleMeta=ensureDayLocalMeta(snapshot).schedule;
@@ -300,7 +319,17 @@ export function IntegralSchedulePanel({ locale, snapshot, mutate }: { locale: Lo
   const conflicts=scheduleMeta.lastConflicts;
   const blocks=useMemo(()=>{const map=new Map<string,any[]>();for(const row of schedule){const key=String(row.scheduleUnitId??row.id);const list=map.get(key)??[];list.push(row);map.set(key,list)}return [...map.entries()]},[schedule]);
   const courtCount=Math.max(1,Number(snapshot.workspace.core.tournament.courtCount??1));
-  const waveTimes=useMemo(()=>[...new Set(schedule.flatMap((row:any)=>[Number(row.startAt),Number(row.endAt)]).filter((value)=>Number.isFinite(value)&&value>0))].sort((a,b)=>a-b),[schedule]);
+  const waveDays=useMemo(()=>{
+    const times=[...new Set(schedule.flatMap((row:any)=>[Number(row.startAt),Number(row.endAt)]).filter((value)=>Number.isFinite(value)&&value>0))].sort((a,b)=>a-b);
+    const byDay=new Map<string,number[]>();
+    for(const at of times){
+      const day=scheduleDayKey(at);
+      const rows=byDay.get(day)??[];
+      rows.push(at);
+      byDay.set(day,rows);
+    }
+    return [...byDay.entries()].map(([day,times])=>({day,times}));
+  },[schedule]);
   const reservationNotes=(at:number)=>{
     const notes:string[]=[];
     const policy=settings.schedulePolicy?.categories??{};
@@ -312,13 +341,33 @@ export function IntegralSchedulePanel({ locale, snapshot, mutate }: { locale: Lo
         if(!strict)continue;
         const reserved=Number(phase==="group"?rule.groupReservedCourts??rule.groupMaxConcurrentCourts??0:rule.finalReservedCourts??rule.finalMaxConcurrentCourts??0);
         if(!reserved)continue;
-        const rows=schedule.filter((row:any)=>String(row.categoryId)===id&&(phase==="group"?String(row.stage??"group")==="group":String(row.stage??"group")!=="group"));
+        const day=scheduleDayKey(at);
+        const rows=schedule.filter((row:any)=>
+          String(row.categoryId)===id&&
+          (phase==="group"?String(row.stage??"group")==="group":String(row.stage??"group")!=="group")&&
+          scheduleDayKey(Number(row.startAt))===day
+        );
         if(!rows.length)continue;
         const first=Math.min(...rows.map((row:any)=>Number(row.startAt)));
         const last=Math.max(...rows.map((row:any)=>Number(row.endAt)));
         if(at<first||at>=last)continue;
+
+        const rounds=new Map<number,any[]>();
+        for(const row of rows){
+          const round=Math.max(1,Number(row.roundNumber??1));
+          const list=rounds.get(round)??[];
+          list.push(row);
+          rounds.set(round,list);
+        }
+        const activeRound=[...rounds.entries()]
+          .sort(([a],[b])=>a-b)
+          .find(([,roundRows])=>Math.max(...roundRows.map((row:any)=>Number(row.endAt)))>at);
+        const structuralUnits=activeRound
+          ? new Set(activeRound[1].map((row:any)=>String(row.scheduleUnitId??row.id))).size
+          : reserved;
+        const effectiveReserved=Math.max(1,Math.min(reserved,structuralUnits));
         const occupied=rows.filter((row:any)=>Number(row.startAt)<=at&&Number(row.endAt)>at).length;
-        const idle=Math.max(0,reserved-occupied);
+        const idle=Math.max(0,effectiveReserved-occupied);
         if(idle>0)notes.push(`${category.name}: ${idle} ${tr(locale,idle===1?"cancha libre reservada":"canchas libres reservadas",idle===1?"reserved idle court":"reserved idle courts")}`);
       }
     }
@@ -347,26 +396,32 @@ export function IntegralSchedulePanel({ locale, snapshot, mutate }: { locale: Lo
     </article>
     <article className="panel td-court-grid-panel">
       <div className="panel-title"><div><div className="eyebrow">VISTA OPERATIVA</div><h2>{tr(locale,"Grilla cancha × hora","Court × time grid")}</h2></div></div>
-      {!waveTimes.length?<p className="muted">{tr(locale,"Regenerá el cronograma para ver la grilla.","Regenerate the schedule to see the grid.")}</p>:<div className="td-court-grid">
+      {!waveDays.length?<p className="muted">{tr(locale,"Regenerá el cronograma para ver la grilla.","Regenerate the schedule to see the grid.")}</p>:<div className="td-court-grid">
         <div className="td-court-grid-head" style={{gridTemplateColumns:`82px repeat(${courtCount}, minmax(150px,1fr))`}}><b>{tr(locale,"Hora","Time")}</b>{Array.from({length:courtCount},(_,index)=><b key={index}>Cancha {index+1}</b>)}</div>
-        {waveTimes.map((at)=>{
-          const active=schedule.filter((row:any)=>Number(row.startAt)<=at&&Number(row.endAt)>at);
-          const notes=reservationNotes(at);
-          if(!active.length&&!notes.length)return null;
-          return <div className="td-court-grid-wave" key={at}>
-            <div className="td-court-grid-row" style={{gridTemplateColumns:`82px repeat(${courtCount}, minmax(150px,1fr))`}}>
-              <time>{new Date(at*1000).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</time>
-              {Array.from({length:courtCount},(_,index)=>{
-                const court=index+1;
-                const row=active.find((candidate:any)=>Number(String(candidate.courtLabel).match(/\d+/)?.[0]??0)===court);
-                return <div className={`td-court-grid-cell ${row?"busy":"idle"}`} key={court}>
-                  {row?<><strong>{row.categoryName}</strong><span>{row.sideA&&row.sideB?`${row.sideA} vs ${row.sideB}`:row.roundLabel??row.stage}</span>{Number(row.startAt)<at?<small>{tr(locale,"en curso","in progress")}</small>:null}</>:<span>—</span>}
-                </div>;
-              })}
-            </div>
-            {notes.length?<small className="td-reservation-note">{tr(locale,"Reserva activa","Active reservation")}: {notes.join(" · ")}</small>:null}
-          </div>;
-        })}
+        {waveDays.map(({day,times})=><section className="td-court-grid-day" key={day}>
+          <header className="td-court-grid-day-separator">
+            <b>{scheduleDayHeading(locale,day)}</b>
+            <span>{day}</span>
+          </header>
+          {times.map((at)=>{
+            const active=schedule.filter((row:any)=>Number(row.startAt)<=at&&Number(row.endAt)>at);
+            const notes=reservationNotes(at);
+            if(!active.length&&!notes.length)return null;
+            return <div className="td-court-grid-wave" key={at}>
+              <div className="td-court-grid-row" style={{gridTemplateColumns:`82px repeat(${courtCount}, minmax(150px,1fr))`}}>
+                <time>{new Date(at*1000).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</time>
+                {Array.from({length:courtCount},(_,index)=>{
+                  const court=index+1;
+                  const row=active.find((candidate:any)=>Number(String(candidate.courtLabel).match(/\d+/)?.[0]??0)===court);
+                  return <div className={`td-court-grid-cell ${row?"busy":"idle"}`} key={court}>
+                    {row?<><strong>{row.categoryName}</strong><span>{row.sideA&&row.sideB?`${row.sideA} vs ${row.sideB}`:row.roundLabel??row.stage}</span>{Number(row.startAt)<at?<small>{tr(locale,"en curso","in progress")}</small>:null}</>:<span>—</span>}
+                  </div>;
+                })}
+              </div>
+              {notes.length?<small className="td-reservation-note">{tr(locale,"Reserva activa","Active reservation")}: {notes.join(" · ")}</small>:null}
+            </div>;
+          })}
+        </section>)}
       </div>}
     </article>
     <article className="panel td-schedule-constraints">

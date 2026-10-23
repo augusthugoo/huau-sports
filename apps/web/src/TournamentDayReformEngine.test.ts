@@ -27,6 +27,7 @@ import {
   rebuildDayStandardFinalPhase,
   removeParticipantFromCategory,
   setParticipantNoShow,
+  standardFinalPlan,
   swapDayStandardFirstRoundEntry,
   updateDayParticipant,
   type TournamentDayReformSnapshot,
@@ -1397,5 +1398,138 @@ describe("manual-first operational scheduling", () => {
     );
     expect(rows.every((row) => Number(row.startAt) === expectedStart)).toBe(true);
     expect(new Set(rows.map((row) => row.courtLabel)).size).toBe(3);
+  });
+});
+
+describe("Tournament Day schedule closeout regressions", () => {
+  it("describes the planned Standard final phase before qualifiers are known", () => {
+    const local = snapshot();
+    ensureDayLocalMeta(local);
+
+    local.workspace.participants.players = ["A", "B", "C", "D"].map((name, index) => ({
+      id: `p${index + 1}`,
+      organizationPersonId: `person${index + 1}`,
+      displayName: name,
+      sportGender: "female",
+      duprSingles: 4 - index * 0.1,
+      duprDoubles: 4 - index * 0.1,
+      playerStatus: "confirmed",
+    }));
+    local.workspace.standard.entries = ["A", "B", "C", "D"].map((name, index) => ({
+      id: `e${index + 1}`,
+      categoryId: "c1",
+      displayName: name,
+      localProfileIds: [`p${index + 1}`],
+      sourceKey: `p${index + 1}`,
+      status: "ready",
+    }));
+
+    generateLocalStandardStructure(local, "c1", 1, "snake");
+    const competition = (local.workspace.standard.competitions as Competition[])[0]!;
+    competition.format.playoffMode = "top4_semis";
+    syncStandardCompetition(local, competition);
+
+    const plan = standardFinalPlan(local, "c1");
+    expect(plan).not.toBeNull();
+    expect(plan!.qualifierCount).toBe(4);
+    expect(plan!.totalMatches).toBe(4);
+    expect(plan!.peakUsefulCourts).toBe(2);
+    expect(plan!.rounds.map((row) => row.matches)).toEqual([2, 2]);
+    expect(plan!.rounds[1]?.label).toContain("Third place");
+    expect(plan!.rounds[1]?.label).toContain("Final");
+  });
+
+  it("splits a final phase from a chosen round and serializes the championship final on the TV court", () => {
+    const local = snapshot();
+    ensureDayLocalMeta(local);
+    (local.workspace.core.tournament as any).courtCount = 3;
+
+    local.workspace.participants.players = ["A", "B", "C", "D"].map((name, index) => ({
+      id: `p${index + 1}`,
+      organizationPersonId: `person${index + 1}`,
+      displayName: name,
+      sportGender: "female",
+      duprSingles: 4 - index * 0.1,
+      duprDoubles: 4 - index * 0.1,
+      playerStatus: "confirmed",
+    }));
+    local.workspace.standard.entries = ["A", "B", "C", "D"].map((name, index) => ({
+      id: `e${index + 1}`,
+      categoryId: "c1",
+      displayName: name,
+      localProfileIds: [`p${index + 1}`],
+      sourceKey: `p${index + 1}`,
+      status: "ready",
+    }));
+
+    generateLocalStandardStructure(local, "c1", 1, "snake");
+    const competition = (local.workspace.standard.competitions as Competition[])[0]!;
+    competition.format.playoffMode = "top4_semis";
+    syncStandardCompetition(local, competition);
+
+    local.workspace.core.settings.schedulePolicy = {
+      mode: "manual_flow",
+      days: {
+        "2027-01-10": {
+          start: "09:00",
+          end: "20:00",
+          courts: 3,
+          finalCourt: 3,
+        },
+        "2027-01-11": {
+          start: "09:00",
+          end: "20:00",
+          courts: 3,
+          finalCourt: 3,
+        },
+      },
+      categories: {
+        c1: {
+          groupOrder: 1,
+          finalOrder: 1,
+          groupDate: "2027-01-10",
+          finalDate: "2027-01-11",
+          finalSplitRound: 2,
+          groupReservedCourts: 2,
+          finalReservedCourts: 2,
+          groupReservationMode: "strict",
+          finalReservationMode: "strict",
+          groupMatchMinutes: 20,
+          finalMatchMinutes: 20,
+          groupMinimumRestMinutes: 0,
+          groupPreferredRestMinutes: 0,
+          finalMinimumRestMinutes: 0,
+          finalPreferredRestMinutes: 0,
+          groupSequence: "rounds",
+          finalSequence: "rounds",
+        },
+      },
+    };
+
+    regenerateGlobalSchedule(local);
+
+    const rows = local.workspace.schedule.schedule as QaScheduleRow[];
+    const semifinals = rows.filter(
+      (row) => String(row.roundLabel) === "Semifinal",
+    );
+    const final = rows.find(
+      (row) => String(row.roundLabel) === "Final",
+    );
+
+    const dateKey = (seconds: number | null | undefined) => {
+      const date = new Date(Number(seconds ?? 0) * 1000);
+      const pad = (value: number) => String(value).padStart(2, "0");
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+    };
+
+    expect(semifinals).toHaveLength(2);
+    expect(
+      semifinals.every(
+        (row) => dateKey(row.startAt) === "2027-01-10",
+      ),
+    ).toBe(true);
+    expect(final).toBeTruthy();
+    expect(dateKey(final!.startAt)).toBe("2027-01-11");
+    expect(final!.courtLabel).toBe("Cancha 3");
   });
 });
