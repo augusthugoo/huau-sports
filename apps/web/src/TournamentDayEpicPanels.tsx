@@ -1884,7 +1884,8 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
       <span><b>{tr(locale,"FLEXIBLE","FLEXIBLE")}</b>{tr(locale,"permite prestar huecos de una reserva; usalo sólo cuando realmente quieras mezclar categorías","allows reservation gaps to be lent; use only when you really want categories mixed")}</span>
     </div>
 
-    <section className="epic-day-windows">
+    <form onSubmit={save} onWheelCapture={preventScheduleWheelMutation} className="td-stack">
+      <section className="epic-day-windows">
       <header><strong>{tr(locale,"Ventana y canchas por día","Window and courts by day")}</strong><small>{tr(locale,"Ésta es la autoridad operativa. No hay otro “inicio global” que tengas que mantener a mano.","This is the operating authority. There is no second “global start” to maintain manually.")}</small></header>
       <div>
         {operationalDays.map((day)=>{
@@ -1907,7 +1908,6 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
       </span>)}
     </div>
 
-    <form onSubmit={save} onWheelCapture={preventScheduleWheelMutation} className="td-stack">
       <section className="epic-flow-phase">
         <header><div><span>1</span><div><strong>{tr(locale,"Grupos","Groups")}</strong><small>{tr(locale,"Arrastrá para definir la cola de entrada del día.","Drag to define the day's entry queue.")}</small></div></div></header>
         <div className="epic-flow-table">{renderPhaseRows("group",groupOrder,setGroupOrder)}</div>
