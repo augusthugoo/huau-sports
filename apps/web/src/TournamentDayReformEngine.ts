@@ -806,7 +806,12 @@ function applySchedulePolicy(
     | {
         mode?: string;
         categories?: Record<string, any>;
-        days?: Record<string, { start?: string; end?: string; courts?: number }>;
+        days?: Record<string, {
+          start?: string;
+          end?: string;
+          courts?: number;
+          finalCourt?: number | null;
+        }>;
       }
     | undefined;
   if (!policy || !policy.categories) return units;
@@ -927,6 +932,21 @@ function applySchedulePolicy(
   return units.map((unit) => {
     const rule = policy.categories?.[unit.categoryId] ?? {};
     const postGroup = unit.stage !== "group";
+    const unitRound = Math.max(1, Number(unit.roundNumber ?? 1));
+    const configuredFinalSplitRound = Math.max(
+      1,
+      Number(rule.finalSplitRound ?? 1),
+    );
+    const splitFinals =
+      postGroup &&
+      !rule.finalFollowsGroups &&
+      configuredFinalSplitRound > 1;
+    const finalStaysWithGroups =
+      splitFinals &&
+      unitRound < configuredFinalSplitRound;
+    const attachedToGroupDay =
+      postGroup &&
+      (Boolean(rule.finalFollowsGroups) || finalStaysWithGroups);
     const legacyOrder = Math.max(1, Number(rule.order ?? 999));
     const operationalOrder = Math.max(
       1,
@@ -943,7 +963,7 @@ function applySchedulePolicy(
 
     const dateCandidate = String(
       postGroup
-        ? rule.finalFollowsGroups
+        ? attachedToGroupDay
           ? rule.groupDate ?? ""
           : rule.finalDate ?? ""
         : rule.groupDate ?? "",
@@ -953,7 +973,7 @@ function applySchedulePolicy(
       : unit.date;
     const explicitNotBefore = String(
       postGroup
-        ? rule.finalFollowsGroups
+        ? attachedToGroupDay
           ? ""
           : rule.finalNotBefore ?? rule.notBefore ?? ""
         : rule.groupNotBefore ?? rule.notBefore ?? "",
@@ -961,7 +981,7 @@ function applySchedulePolicy(
     const flowMeta =
       mode === "manual_flow"
         ? manualFlowMeta.get(
-            `${postGroup ? "final" : "group"}:${unit.categoryId}`,
+            `${postGroup && !attachedToGroupDay ? "final" : "group"}:${unit.categoryId}`,
           )
         : undefined;
     const inheritedNotBefore = flowMeta?.notBefore ?? "";
@@ -973,7 +993,11 @@ function applySchedulePolicy(
       dayStart,
     );
     const phaseNotAfter = String(
-      postGroup ? rule.finalNotAfter ?? "" : rule.groupNotAfter ?? "",
+      postGroup
+        ? attachedToGroupDay
+          ? ""
+          : rule.finalNotAfter ?? ""
+        : rule.groupNotAfter ?? "",
     ).trim();
     const notAfterCandidate = earlierScheduleClock(phaseNotAfter, dayEnd);
     const durationCandidate = Math.max(
@@ -1050,32 +1074,63 @@ function applySchedulePolicy(
       : "strict";
     const phaseName = postGroup ? "final" : "group";
     const attachedFinals = Boolean(rule.finalFollowsGroups);
+    const splitPackage =
+      !attachedFinals &&
+      configuredFinalSplitRound > 1;
+    const reservationScope =
+      attachedFinals
+        ? "full"
+        : splitPackage && (!postGroup || finalStaysWithGroups)
+          ? "early"
+          : phaseName;
     const reservationKey =
       mode === "manual_flow"
-        ? `manual:${attachedFinals ? "full" : phaseName}:${unit.categoryId}`
+        ? `manual:${reservationScope}:${unit.categoryId}`
         : null;
+    const reservationRoundKey =
+      `${postGroup ? "final" : "group"}:${unitRound}`;
+    const reservationRoundOrder =
+      (postGroup ? 1000 : 0) + unitRound;
     const configuredAllowedCourts = Array.isArray(rule.allowedCourts)
       ? rule.allowedCourts.map(Number)
       : [];
     const dayAllowedCourts = dayCourtCount > 0
       ? Array.from({ length: dayCourtCount }, (_, index) => index + 1)
       : [];
-    const allowedCourts = dayAllowedCourts.length
-      ? configuredAllowedCourts.length
-        ? configuredAllowedCourts.filter((court: number) =>
-            dayAllowedCourts.includes(court),
-          )
-        : dayAllowedCourts
-      : configuredAllowedCourts;
-    const preferredCourts = Array.isArray(rule.preferredCourts)
-      ? rule.preferredCourts
-          .map(Number)
-          .filter((court: number) => !allowedCourts.length || allowedCourts.includes(court))
-      : [];
+    const dayFinalCourtRaw = Math.trunc(Number(dayPolicy.finalCourt ?? 0));
+    const dayFinalCourt =
+      dayFinalCourtRaw >= 1 &&
+      (!dayAllowedCourts.length || dayAllowedCourts.includes(dayFinalCourtRaw))
+        ? dayFinalCourtRaw
+        : 0;
+    const forceFinalCourt =
+      unit.stage === "final" &&
+      dayFinalCourt > 0;
+
+    const allowedCourts = forceFinalCourt
+      ? [dayFinalCourt]
+      : dayAllowedCourts.length
+        ? configuredAllowedCourts.length
+          ? configuredAllowedCourts.filter((court: number) =>
+              dayAllowedCourts.includes(court),
+            )
+          : dayAllowedCourts
+        : configuredAllowedCourts;
+    const preferredCourts = forceFinalCourt
+      ? [dayFinalCourt]
+      : Array.isArray(rule.preferredCourts)
+        ? rule.preferredCourts
+            .map(Number)
+            .filter((court: number) => !allowedCourts.length || allowedCourts.includes(court))
+        : [];
     const exclusiveCourts = Array.isArray(rule.exclusiveCourts)
       ? rule.exclusiveCourts
           .map(Number)
-          .filter((court: number) => !allowedCourts.length || allowedCourts.includes(court))
+          .filter(
+            (court: number) =>
+              (!allowedCourts.length || allowedCourts.includes(court)) &&
+              (!dayFinalCourt || court !== dayFinalCourt),
+          )
       : [];
 
     return {
@@ -1101,6 +1156,14 @@ function applySchedulePolicy(
         mode === "manual_flow" ? flowMeta?.reservationBlock ?? operationalOrder : null,
       reservationOrder:
         mode === "manual_flow" ? flowMeta?.reservationOrder ?? operationalOrder : null,
+      reservationAdaptive:
+        mode === "manual_flow" && reservationMode === "strict"
+          ? true
+          : null,
+      reservationRoundKey:
+        mode === "manual_flow" ? reservationRoundKey : null,
+      reservationRoundOrder:
+        mode === "manual_flow" ? reservationRoundOrder : null,
       notBefore: /^\d{2}:\d{2}$/.test(notBeforeCandidate) ? notBeforeCandidate : null,
       notAfter: /^\d{2}:\d{2}$/.test(notAfterCandidate) ? notAfterCandidate : null,
       priority:
@@ -1334,6 +1397,65 @@ function provisionalStandardFinalSpecs(
   }
 
   return specs;
+}
+
+export type StandardFinalPlanSummary = {
+  qualifierCount: number;
+  totalMatches: number;
+  peakUsefulCourts: number;
+  rounds: Array<{
+    roundNumber: number;
+    label: string;
+    matches: number;
+  }>;
+};
+
+export function standardFinalPlan(
+  snapshot: TournamentDayReformSnapshot,
+  categoryId: string,
+): StandardFinalPlanSummary | null {
+  const competition = (snapshot.workspace.standard.competitions as Competition[])
+    .find((row) => String(row.categoryId) === String(categoryId));
+  if (!competition) return null;
+
+  const specs = provisionalStandardFinalSpecs(competition);
+  if (!specs.length) return null;
+
+  const byRound = new Map<
+    number,
+    { labels: string[]; matches: number }
+  >();
+
+  for (const spec of specs) {
+    const roundNumber = Math.max(1, Number(spec.roundNumber ?? 1));
+    const row = byRound.get(roundNumber) ?? {
+      labels: [],
+      matches: 0,
+    };
+    if (!row.labels.includes(spec.roundLabel)) {
+      row.labels.push(spec.roundLabel);
+    }
+    row.matches += 1;
+    byRound.set(roundNumber, row);
+  }
+
+  const rounds = [...byRound.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([roundNumber, row]) => ({
+      roundNumber,
+      label: row.labels.join(" + "),
+      matches: row.matches,
+    }));
+
+  return {
+    qualifierCount: expectedStandardQualifierCount(competition),
+    totalMatches: specs.length,
+    peakUsefulCourts: Math.max(
+      1,
+      ...rounds.map((round) => round.matches),
+    ),
+    rounds,
+  };
 }
 
 function standardRoundPairKey(
@@ -1659,6 +1781,7 @@ export function regenerateGlobalSchedule(snapshot: TournamentDayReformSnapshot, 
         matchId: match?.matchId ?? null,
         stage: unit.stage,
         roundLabel: unit.roundLabel,
+        roundNumber: unit.roundNumber,
         courtLabel,
         startAt: Math.floor(assignment.startAt / 1000),
         endAt: Math.floor(assignment.endAt / 1000),
@@ -1695,6 +1818,7 @@ export function regenerateGlobalSchedule(snapshot: TournamentDayReformSnapshot, 
           matchId: match.id,
           stage: unit.stage,
           roundLabel: unit.roundLabel,
+          roundNumber: unit.roundNumber,
           courtLabel,
           startAt: Math.floor(rubber.startAt / 1000),
           endAt: Math.floor(rubber.endAt / 1000),

@@ -24,6 +24,7 @@ import {
   moveLocalStandardEntryToGroup,
   moveLocalTeamEntryToGroup,
   swapDayStandardFirstRoundEntry,
+  standardFinalPlan,
   teamEntryRating,
   type TournamentDayReformSnapshot,
 } from "./TournamentDayReformEngine";
@@ -1404,6 +1405,43 @@ function sharedParticipantSummary(snapshot: TournamentDayReformSnapshot, categor
     .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
 
+function standardGroupPeakUsefulCourts(
+  snapshot: TournamentDayReformSnapshot,
+  categoryId: string,
+) {
+  const competition = (snapshot.workspace.standard.competitions as any[])
+    .find((row) => String(row.categoryId) === categoryId);
+  if (!competition) return null;
+
+  return Math.max(
+    1,
+    (competition.groups ?? []).reduce(
+      (sum: number, group: any) =>
+        sum + Math.floor((group.entries ?? []).length / 2),
+      0,
+    ),
+  );
+}
+
+function finalRoundLabel(locale: Locale, value: string) {
+  const labelOne = (part: string) => {
+    const key = part.trim().toLowerCase();
+    if (key.includes("preliminary")) return tr(locale, "Ronda previa", "Preliminary round");
+    if (key.includes("round of 32")) return tr(locale, "Ronda de 32", "Round of 32");
+    if (key.includes("round of 16")) return tr(locale, "Octavos", "Round of 16");
+    if (key.includes("quarter")) return tr(locale, "Cuartos", "Quarterfinal");
+    if (key.includes("semi")) return tr(locale, "Semifinal", "Semifinal");
+    if (key.includes("third") || key.includes("bronze")) return tr(locale, "3.er puesto", "Third place");
+    if (key.includes("final")) return tr(locale, "Final", "Final");
+    return part.trim();
+  };
+
+  return value
+    .split(" + ")
+    .map(labelOne)
+    .join(" + ");
+}
+
 function preventScheduleWheelMutation(event: any) {
   const target = event.target;
   if (
@@ -1668,17 +1706,29 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
       const dayRules: Record<string, any> = {};
 
       for (const day of operationalDays) {
+        const courts = Math.max(
+          1,
+          Number(
+            data.get(`dayCourts:${day}`) ??
+              (next.workspace.core.tournament as any).courtCount ??
+              1,
+          ),
+        );
+        const finalCourtRaw = String(
+          data.get(`dayFinalCourt:${day}`) ?? "",
+        ).trim();
+        const finalCourt = finalCourtRaw
+          ? Math.max(
+              1,
+              Math.min(courts, Number(finalCourtRaw)),
+            )
+          : null;
+
         dayRules[day] = {
           start: String(data.get(`dayStart:${day}`) ?? targetSettings.dailyStart ?? "09:00"),
           end: String(data.get(`dayEnd:${day}`) ?? targetSettings.dailyEnd ?? "20:00"),
-          courts: Math.max(
-            1,
-            Number(
-              data.get(`dayCourts:${day}`) ??
-                (next.workspace.core.tournament as any).courtCount ??
-                1,
-            ),
-          ),
+          courts,
+          finalCourt,
         };
       }
 
@@ -1714,6 +1764,16 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
           finalDate: finalFollowsGroups
             ? groupDate
             : String(data.get(`finalDate:${id}`) ?? "").trim() || null,
+          finalSplitRound: finalFollowsGroups
+            ? null
+            : Math.max(
+                1,
+                Number(
+                  data.get(`finalSplitRound:${id}`) ??
+                    old.finalSplitRound ??
+                    1,
+                ),
+              ),
           groupNotBefore: String(data.get(`groupStart:${id}`) ?? "").trim() || null,
           groupNotAfter: String(data.get(`groupEnd:${id}`) ?? "").trim() || null,
           finalNotBefore: finalFollowsGroups
@@ -1818,6 +1878,40 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
         ? rule.groupReservationMode ?? rule.reservationMode ?? "strict"
         : rule.finalReservationMode ?? rule.reservationMode ?? "strict",
     );
+    const finalPlan = !isGroup
+      ? standardFinalPlan(snapshot, id)
+      : null;
+    const groupPeakUseful = isGroup
+      ? standardGroupPeakUsefulCourts(snapshot, id)
+      : null;
+    const peakUsefulCourts =
+      finalPlan?.peakUsefulCourts ??
+      groupPeakUseful;
+    const reservedNumber = Number(reservedCourts || 0);
+    const overReserved =
+      Boolean(peakUsefulCourts) &&
+      reservedNumber > Number(peakUsefulCourts);
+    const splitRound = Math.max(
+      1,
+      Number(rule.finalSplitRound ?? 1),
+    );
+    const estimatedFinalMinutes =
+      finalPlan && reservedNumber > 0
+        ? finalPlan.rounds.reduce(
+            (sum, round, roundIndex) =>
+              sum +
+              Math.ceil(
+                round.matches /
+                  Math.max(
+                    1,
+                    Math.min(reservedNumber, round.matches),
+                  ),
+              ) *
+                minutes +
+              (roundIndex > 0 ? minRest : 0),
+            0,
+          )
+        : null;
 
     return <div
       className="epic-flow-row"
@@ -1844,6 +1938,14 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
             ? ` · ${tr(locale,"Comparte jugadores con","Shares players with")}: ${shared.map((row) => `${row.name} (${row.count})`).join(", ")}`
             : ` · ${tr(locale,"sin cruces detectados","no overlaps detected")}`}
         </small>
+        {finalPlan ? <small className="epic-final-plan">
+          <b>{finalPlan.qualifierCount} {tr(locale,"clasificados","qualifiers")}</b>
+          <span>{finalPlan.rounds.map((round)=>`${finalRoundLabel(locale,round.label)} ${round.matches}`).join(" → ")}</span>
+          <span>{finalPlan.totalMatches} {tr(locale,"partidos","matches")} · {tr(locale,"pico útil","useful peak")} {finalPlan.peakUsefulCourts} {tr(locale,"canchas","courts")}{estimatedFinalMinutes!==null?` · ~${estimatedFinalMinutes} min`:""}</span>
+        </small> : null}
+        {overReserved ? <small className="epic-reservation-warning">
+          {tr(locale,"Reserva sobredimensionada","Oversized reservation")}: {reservedNumber} {tr(locale,"canchas","courts")} · {tr(locale,"máximo estructural útil","structural useful maximum")} {peakUsefulCourts}
+        </small> : null}
         {isGroup ? <label className="epic-final-link">
           <span>{tr(locale,"Finales","Finals")}</span>
           <select
@@ -1859,6 +1961,9 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
         </label> : null}
       </div>
       <label><span>{tr(locale,"Día","Day")}</span><input name={`${phase}Date:${id}`} type="date" defaultValue={date}/></label>
+      {!isGroup && finalPlan ? <label><span>{tr(locale,"Mover a este día desde","Move to this day from")}</span><select name={`finalSplitRound:${id}`} defaultValue={String(splitRound)}>
+        {finalPlan.rounds.map((round)=><option key={round.roundNumber} value={round.roundNumber}>{finalRoundLabel(locale,round.label)}</option>)}
+      </select></label> : null}
       <label className="epic-flow-start-field"><span>{tr(locale,"No antes de","Not before")}</span><input name={`${phase}Start:${id}`} type="time" defaultValue={startValue}/><small>{startValue ? tr(locale,"ancla manual","manual anchor") : tr(locale,`vacío = continúa la cola desde ${effectiveStart}`,`blank = continue queue from ${effectiveStart}`)}</small></label>
       <label><span>{tr(locale,"Hasta","Until")}</span><input name={`${phase}End:${id}`} type="time" defaultValue={endValue}/></label>
       <label><span>{tr(locale,"Min/partido","Min/match")}</span><input name={`${phase}Minutes:${id}`} type="number" min="5" defaultValue={minutes}/></label>
@@ -1876,7 +1981,7 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
     <div className="panel-title"><div>
       <div className="eyebrow">{tr(locale,"PLAN OPERATIVO · CONTROL MANUAL","OPERATIONAL PLAN · MANUAL CONTROL")}</div>
       <h2>{tr(locale,"Vos definís el torneo; HUAU resuelve las canchas","You define the tournament; HUAU resolves the courts")}</h2>
-      <p className="muted">{tr(locale,"Pensalo como bloques de operación. Las canchas reservadas quedan protegidas para esa categoría mientras siga viva: un hueco por descanso no se presta en modo estricto. Cuando la categoría termina, su reserva se libera inmediatamente a la siguiente prioridad.","Think in operating blocks. Reserved courts stay protected while that category is alive: a rest gap is not lent in strict mode. When the category finishes, its reservation is released immediately to the next priority.")}</p>
+      <p className="muted">{tr(locale,"Pensalo como bloques de operación. En modo estricto HUAU no presta un hueco temporal por descanso, pero adapta la reserva cuando cambia estructuralmente la ronda: por ejemplo 4 cuartos → 2 semifinales → 1 final. Cuando una ronda o categoría libera capacidad real, la siguiente prioridad puede usarla.","Think in operating blocks. In strict mode HUAU does not lend a temporary rest gap, but it adapts the reservation when the round structurally changes: for example 4 quarterfinals → 2 semifinals → 1 final. When a round or category releases real capacity, the next priority can use it.")}</p>
     </div></div>
 
     <div className="epic-policy-legend">
@@ -1895,6 +2000,7 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
             <label><span>{tr(locale,"Inicio","Start")}</span><input name={`dayStart:${day}`} type="time" defaultValue={String(dayRule.start??settings.dailyStart??"09:00")} required/></label>
             <label><span>{tr(locale,"Fin duro","Hard end")}</span><input name={`dayEnd:${day}`} type="time" defaultValue={String(dayRule.end??settings.dailyEnd??"20:00")} required/></label>
             <label><span>{tr(locale,"Canchas","Courts")}</span><input name={`dayCourts:${day}`} type="number" min="1" defaultValue={Math.max(1,Number(dayRule.courts??snapshot.workspace.core.tournament.courtCount??1))}/></label>
+            <label><span>{tr(locale,"Cancha finales / TV","Finals / TV court")}</span><input name={`dayFinalCourt:${day}`} type="number" min="1" max={Math.max(1,Number(dayRule.courts??snapshot.workspace.core.tournament.courtCount??1))} placeholder="—" defaultValue={dayRule.finalCourt??""}/></label>
           </article>;
         })}
       </div>
