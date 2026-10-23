@@ -513,3 +513,64 @@ it("releases a finished strict reservation progressively to the next queue item"
     ),
   ).toHaveLength(2);
 });
+
+it("handles a national-sized strict-reservation plan with event-driven search", () => {
+  const units: GlobalScheduleUnit[] = [];
+  const date = "2026-11-27";
+  const categoryCount = 12;
+  const matchesPerCategory = 18;
+
+  for (let categoryIndex = 0; categoryIndex < categoryCount; categoryIndex += 1) {
+    const categoryId = `stress-${categoryIndex + 1}`;
+    const block = Math.floor(categoryIndex / 2) + 1;
+
+    for (let matchIndex = 0; matchIndex < matchesPerCategory; matchIndex += 1) {
+      units.push(
+        standard(
+          `${categoryId}-m${matchIndex + 1}`,
+          categoryId,
+          [
+            `${categoryId}-p${matchIndex * 2 + 1}`,
+            `${categoryId}-p${matchIndex * 2 + 2}`,
+          ],
+          {
+            date,
+            durationMinutes: 15,
+            notBefore: "08:00",
+            minimumRestMinutes: 0,
+            preferredRestMinutes: 0,
+            maxConcurrentCourts: 2,
+            reservationKey: `manual:group:${categoryId}`,
+            reservationMode: "strict",
+            reservedCourts: 2,
+            reservationBlock: block,
+            reservationOrder: categoryIndex + 1,
+            priority: -(categoryIndex + 1),
+          },
+        ),
+      );
+    }
+  }
+
+  const startedAt = Date.now();
+  const result = generateGlobalTournamentSchedule({
+    settings: {
+      ...base,
+      dailyStart: "08:00",
+      dailyEnd: "22:30",
+      courtCount: 4,
+      defaultMatchMinutes: 15,
+      minimumRestSlots: 0,
+      preferredRestSlots: 0,
+      stepMinutes: 1,
+    },
+    units,
+  });
+  const elapsedMs = Date.now() - startedAt;
+
+  expect(result.complete).toBe(true);
+  expect(result.assignments).toHaveLength(
+    categoryCount * matchesPerCategory,
+  );
+  expect(elapsedMs).toBeLessThan(5000);
+}, 8000);
