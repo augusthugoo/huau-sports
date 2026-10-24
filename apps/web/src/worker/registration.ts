@@ -12,6 +12,7 @@ import {
   type TeamAdditionalParticipationMode,
   type TeamRosterMember,
 } from "@huau/core";
+import { sendTransactionalEmailOnce } from "./email";
 
 type CurrentUser = { id: string; name: string; email: string };
 type AccessHelpers = {
@@ -132,6 +133,72 @@ function parseJsonOrNull(value: string | null): unknown | null {
   } catch {
     return null;
   }
+}
+
+type RegistrationEmailItem = {
+  registrationId: string;
+  categoryName: string;
+  status: string;
+  waitlistPosition: number | null;
+  finalAmountMinor: number;
+  currency: string;
+};
+
+function registrationEmailStatus(item: RegistrationEmailItem) {
+  if (item.status === "waitlisted") {
+    return item.waitlistPosition
+      ? `Lista de espera · posición ${item.waitlistPosition}`
+      : "Lista de espera";
+  }
+  if (item.status === "awaiting_payment") {
+    return `Pendiente de pago · ${registrationMoney(item.finalAmountMinor, item.currency)}`;
+  }
+  if (item.status === "confirmed") return "Confirmada";
+  return item.status.replaceAll("_", " ");
+}
+
+function registrationMoney(minor: number, currency: string) {
+  return `${(Math.max(0, Math.trunc(minor)) / 100).toFixed(2)} ${currency}`;
+}
+
+async function sendRegistrationCreatedEmail(
+  env: Env,
+  tournament: TournamentRow,
+  user: CurrentUser,
+  items: RegistrationEmailItem[],
+) {
+  if (!items.length) return;
+
+  const hasWaitlist = items.some((item) => item.status === "waitlisted");
+  const hasPendingPayment = items.some((item) => item.status === "awaiting_payment");
+  const body = hasWaitlist
+    ? "Recibimos tu inscripción. Una o más categorías quedaron en lista de espera."
+    : hasPendingPayment
+      ? "Recibimos tu inscripción. Tenés pagos pendientes para completar la confirmación."
+      : "Tu inscripción quedó confirmada.";
+
+  await sendTransactionalEmailOnce(env, {
+    eventKey: `registration-created:${items.map((item) => item.registrationId).sort().join(":")}`,
+    kind: "tournament_registration_created",
+    email: {
+      to: user.email,
+      toName: user.name,
+      subject: `Inscripción recibida · ${tournament.name}`,
+      heading: "Recibimos tu inscripción",
+      body,
+      actionLabel: "Ver mis inscripciones",
+      actionUrl: `${env.BETTER_AUTH_URL.replace(/\/$/, "")}/app/registrations`,
+      footer: "Podés consultar el estado actualizado de tu inscripción desde Mi HUAU.",
+      tag: "huau-tournament-registration",
+      details: [
+        { label: "Torneo", value: tournament.name },
+        ...items.map((item) => ({
+          label: item.categoryName,
+          value: registrationEmailStatus(item),
+        })),
+      ],
+    },
+  });
 }
 
 async function tournamentBySlug(env: Env, slug: string) {
@@ -825,7 +892,7 @@ async function createPersonalRegistration(
       ).bind(registrationId, tournament.id, category.id, entryId, user.id, number, status, 1, pricing.priceScope, amount, amount, category.currency ?? "UYU", waitlistPosition, stamp, stamp, regulationsVersionAccepted, regulationsAcceptedAt),
     ]);
     await syncLegacyAssignment(env, identity.playerProfileId, category.id, null);
-    return { registrationId, entryId, status, waitlistPosition };
+    return { registrationId, entryId, status, waitlistPosition, finalAmountMinor: amount, currency: category.currency ?? "UYU" };
   }
 
   if (category.entryType === "team" && teamChoice === "create") {
@@ -851,7 +918,7 @@ async function createPersonalRegistration(
       ).bind(registrationId, tournament.id, category.id, entryId, user.id, number, status, 1, pricing.priceScope, amount, amount, category.currency ?? "UYU", waitlistPosition, stamp, stamp, regulationsVersionAccepted, regulationsAcceptedAt),
     ]);
     await recalcCompetitiveEntry(env, entryId);
-    return { registrationId, entryId, status, waitlistPosition };
+    return { registrationId, entryId, status, waitlistPosition, finalAmountMinor: amount, currency: category.currency ?? "UYU" };
   }
 
   await env.HUAU_DB.prepare(
@@ -859,7 +926,7 @@ async function createPersonalRegistration(
      VALUES (?,?,?,NULL,?,?,?,?,?,?,0,?,?,NULL,?,?,1,NULL,?,?)`,
   ).bind(registrationId, tournament.id, category.id, user.id, number, status, 1, pricing.priceScope, amount, amount, category.currency ?? "UYU", stamp, stamp, regulationsVersionAccepted, regulationsAcceptedAt).run();
   if (category.entryType === "pair") await syncLegacyAssignment(env, identity.playerProfileId, category.id, null);
-  return { registrationId, entryId: null, status, waitlistPosition: null };
+  return { registrationId, entryId: null, status, waitlistPosition: null, finalAmountMinor: amount, currency: category.currency ?? "UYU" };
 }
 
 async function compactWaitlist(env: Env, categoryId: string) {
@@ -1214,7 +1281,15 @@ async function batchRegistration(tournamentId: string, request: Request, env: En
     return json({ ok: false, code: error instanceof Error ? error.message : "REGISTRATION_FAILED" }, { status: 409 });
   }
 
-  const created: Array<{ registrationId: string; entryId: string | null; categoryId: string; status: string; waitlistPosition: number | null }> = [];
+  const created: Array<{
+    registrationId: string;
+    entryId: string | null;
+    categoryId: string;
+    status: string;
+    waitlistPosition: number | null;
+    finalAmountMinor: number;
+    currency: string;
+  }> = [];
   try {
     for (let index = 0; index < selections.length; index += 1) {
       const result = await createPersonalRegistration(env, tournament, categories[index]!, user, { ...selections[index]!, regulationsVersionAccepted: acceptedRegulationsVersion });
@@ -1224,6 +1299,19 @@ async function batchRegistration(tournamentId: string, request: Request, env: En
     for (const item of created.reverse()) await cancelRegistrationInternal(env, item.registrationId, user.id, true);
     return json({ ok: false, code: error instanceof Error ? error.message : "REGISTRATION_FAILED" }, { status: 409 });
   }
+  await sendRegistrationCreatedEmail(
+    env,
+    tournament,
+    user,
+    created.map((item, index) => ({
+      registrationId: item.registrationId,
+      categoryName: categories[index]!.name,
+      status: item.status,
+      waitlistPosition: item.waitlistPosition,
+      finalAmountMinor: item.finalAmountMinor,
+      currency: item.currency,
+    })),
+  );
   return json({ ok: true, registrations: created }, { status: 201 });
 }
 
@@ -1255,6 +1343,14 @@ async function createRegistration(tournamentId: string, categoryId: string, requ
       teamPaymentMode: "individual",
       regulationsVersionAccepted: acceptedRegulationsVersion,
     });
+    await sendRegistrationCreatedEmail(env, tournament, user, [{
+      registrationId: result.registrationId,
+      categoryName: category.name,
+      status: result.status,
+      waitlistPosition: result.waitlistPosition,
+      finalAmountMinor: result.finalAmountMinor,
+      currency: result.currency,
+    }]);
     return json({ ok: true, ...result }, { status: 201 });
   } catch (error) {
     return json({ ok: false, code: error instanceof Error ? error.message : "REGISTRATION_FAILED" }, { status: 409 });

@@ -7,6 +7,7 @@ import {
   type TeamAdditionalParticipationMode,
 } from "@huau/core";
 import { cancelRegistrationForPaymentAdmin, recalcCompetitiveEntry, repairOnlineIndividualCompetitiveEntries } from "./registration";
+import { sendTransactionalEmailOnce } from "./email";
 
 type CurrentUser = { id: string; name: string; email: string };
 type AccessHelpers = {
@@ -135,6 +136,45 @@ const now = () => Math.floor(Date.now() / 1000);
 const clean = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : null);
 const boolInt = (value: unknown, fallback: boolean) => value === undefined ? (fallback ? 1 : 0) : value ? 1 : 0;
 const moneyString = (minor: number) => (Math.max(0, Math.trunc(minor)) / 100).toFixed(2);
+
+async function sendPaymentValidatedEmail(
+  env: Env,
+  order: PaymentOrderRow,
+  attemptId: string,
+  itemLabels: string[],
+) {
+  if (!order.payerEmail) return;
+  const tournament = await tournamentById(env, order.tournamentId);
+  if (!tournament) return;
+  const labels = [...new Set(itemLabels.filter(Boolean))];
+  const concepts = labels.length <= 3
+    ? labels.join(", ")
+    : `${labels.slice(0, 3).join(", ")} +${labels.length - 3}`;
+
+  await sendTransactionalEmailOnce(env, {
+    eventKey: `payment-approved:${order.id}:${attemptId}`,
+    kind: "tournament_payment_validated",
+    email: {
+      to: order.payerEmail,
+      toName: order.payerName,
+      subject: `Pago validado · ${tournament.name}`,
+      heading: "Tu pago fue validado",
+      body: "El pago de tu inscripción quedó confirmado en HUAU.",
+      actionLabel: order.payerKind === "user" ? "Ver mis inscripciones" : "Ver torneo",
+      actionUrl: order.payerKind === "user"
+        ? `${env.BETTER_AUTH_URL.replace(/\/$/, "")}/app/registrations`
+        : `${env.BETTER_AUTH_URL.replace(/\/$/, "")}/tournaments/${encodeURIComponent(tournament.slug)}`,
+      footer: "Guardá este correo como confirmación del pago registrado en HUAU.",
+      tag: "huau-payment-validated",
+      details: [
+        { label: "Torneo", value: tournament.name },
+        ...(concepts ? [{ label: "Inscripción", value: concepts }] : []),
+        { label: "Importe", value: `${moneyString(order.totalAmountMinor)} ${order.currency}` },
+        { label: "Estado", value: "Pago validado" },
+      ],
+    },
+  });
+}
 
 async function tournamentById(env: Env, tournamentId: string) {
   return env.HUAU_DB.prepare(
@@ -1028,7 +1068,7 @@ async function applyOrderPaid(env: Env, orderId: string, attemptId: string, paid
   const attempt = await env.HUAU_DB.prepare(`SELECT status FROM payment_attempts WHERE id=?`).bind(attemptId).first<{ status: string }>();
   if (!attempt) throw new Error("PAYMENT_ATTEMPT_NOT_FOUND");
   if (attempt.status === "approved") return;
-  const items = await env.HUAU_DB.prepare(`SELECT registration_id as registrationId,player_profile_id as playerProfileId,amount_minor as amountMinor FROM payment_order_items WHERE order_id=?`).bind(order.id).all<{ registrationId: string | null; playerProfileId: string | null; amountMinor: number }>();
+  const items = await env.HUAU_DB.prepare(`SELECT registration_id as registrationId,player_profile_id as playerProfileId,label,amount_minor as amountMinor FROM payment_order_items WHERE order_id=?`).bind(order.id).all<{ registrationId: string | null; playerProfileId: string | null; label: string; amountMinor: number }>();
   const stamp = now();
   const statements: D1PreparedStatement[] = [
     env.HUAU_DB.prepare(`UPDATE payment_attempts SET status='approved',external_status=COALESCE(?,external_status),reviewed_by_user_id=COALESCE(?,reviewed_by_user_id),reviewed_at=?,updated_at=? WHERE id=?`).bind(externalStatus ?? null, actorUserId, stamp, stamp, attemptId),
@@ -1044,6 +1084,7 @@ async function applyOrderPaid(env: Env, orderId: string, attemptId: string, paid
   const profiles = [...new Set(items.results.map((item) => item.playerProfileId).filter((value): value is string => Boolean(value)))];
   for (const profileId of profiles) await refreshManualProfilePaymentStatus(env, profileId);
   await addEvent(env, { tournamentId: order.tournamentId, orderId: order.id, attemptId, eventType: "payment.approved", actorUserId, summary: `Pago aprobado: ${moneyString(order.totalAmountMinor)} ${order.currency}` });
+  await sendPaymentValidatedEmail(env, order, attemptId, items.results.map((item) => item.label));
 }
 
 async function rejectAttempt(env: Env, attemptId: string, actorUserId: string | null, note: string | null) {
