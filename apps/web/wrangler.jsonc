@@ -26,6 +26,8 @@
     "APP_ENV": "development",
     "APP_VERSION": "0.8.0-phase7-payments",
     "BETTER_AUTH_URL": "http://localhost:5173",
+    "BREVO_FROM_EMAIL": "no-reply@huau.app",
+    "BREVO_FROM_NAME": "HUAU",
     "PLATFORM_ADMIN_EMAILS": ""
   },
   "env": {
@@ -49,6 +51,8 @@
         "APP_ENV": "staging",
         "APP_VERSION": "0.8.0-phase7-payments",
         "BETTER_AUTH_URL": "https://huau.app",
+        "BREVO_FROM_EMAIL": "no-reply@huau.app",
+        "BREVO_FROM_NAME": "HUAU",
         "PLATFORM_ADMIN_EMAILS": ""
       }
     }

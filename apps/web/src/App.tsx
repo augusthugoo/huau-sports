@@ -152,6 +152,8 @@ export function App() {
 
   if (isPending) return <LoadingScreen />;
   if (path === "/") return <Landing locale={locale} setLocale={changeLocale} go={go} authenticated={Boolean(session?.user)} />;
+  if (path === "/verify-email") return <EmailVerificationScreen locale={locale} go={go} authenticated={Boolean(session?.user)} onDone={refreshMe} />;
+  if (path === "/reset-password") return <ResetPasswordScreen locale={locale} go={go} />;
   if (path === "/login" && !session?.user) return <AuthScreen mode="login" locale={locale} go={go} onDone={refreshMe} />;
   if (path === "/signup" && !session?.user) return <AuthScreen mode="signup" locale={locale} go={go} onDone={refreshMe} />;
   if (path === "/recover" && !session?.user) return <RecoveryScreen locale={locale} go={go} />;
@@ -241,11 +243,21 @@ function AuthScreen({ mode, locale, go, onDone }: { mode: "login"|"signup"; loca
       if(mode==="signup"){
         if(password!==confirmPassword) throw new Error(copy(locale,"Las contraseñas no coinciden.","Passwords do not match."));
         const firstName=String(form.get("firstName")||"").trim(); const lastName=String(form.get("lastName")||"").trim();
-        const result=await authClient.signUp.email({email,password,name:`${firstName} ${lastName}`.trim()});
+        const result=await authClient.signUp.email({email,password,name:`${firstName} ${lastName}`.trim(),callbackURL:`${window.location.origin}/verify-email?verified=1`});
         if(result.error) throw new Error(result.error.message || "SIGNUP_FAILED");
-        await api("/api/me/profile",{method:"PUT",body:JSON.stringify({firstName,lastName,preferredLocale:locale==="es"?"es-UY":"en"})});
-      } else {
-        const result=await authClient.signIn.email({email,password}); if(result.error) throw new Error(result.error.message || "SIGNIN_FAILED");
+        localStorage.setItem("huau.pendingSignupProfile",JSON.stringify({email,firstName,lastName,preferredLocale:locale==="es"?"es-UY":"en"}));
+        localStorage.setItem("huau.pendingVerification",JSON.stringify({email,sent:true}));
+        go("/verify-email");
+        return;
+      }
+      const result=await authClient.signIn.email({email,password});
+      if(result.error){
+        if(result.error.status===403 || String(result.error.code||"").includes("EMAIL_NOT_VERIFIED")){
+          localStorage.setItem("huau.pendingVerification",JSON.stringify({email,sent:false}));
+          go("/verify-email");
+          return;
+        }
+        throw new Error(result.error.message || "SIGNIN_FAILED");
       }
       await onDone(); const next=sessionStorage.getItem("huau.afterAuth"); if(next)sessionStorage.removeItem("huau.afterAuth"); go(next||"/app");
     } catch (e) { setError(e instanceof Error?e.message:"AUTH_FAILED"); } finally { setBusy(false); }
@@ -253,7 +265,72 @@ function AuthScreen({ mode, locale, go, onDone }: { mode: "login"|"signup"; loca
   return <main className="auth-page"><button className="back-link" onClick={()=>go("/")}>← {t(locale,"back")}</button><section className="auth-card"><HuauBrand center /><h1>{mode==="login"?t(locale,"signIn"):t(locale,"createAccount")}</h1><form onSubmit={submit}>{mode==="signup"&&<div className="two"><Field name="firstName" label={t(locale,"firstName")}/><Field name="lastName" label={t(locale,"lastName")}/></div>}<Field name="email" label={t(locale,"email")} type="email"/><PasswordField name="password" label={t(locale,"password")} locale={locale} autoComplete={mode==="login"?"current-password":"new-password"}/>{mode==="signup"&&<PasswordField name="confirmPassword" label={copy(locale,"Repetir contraseña","Repeat password")} locale={locale} autoComplete="new-password"/>}<button className="light full" disabled={busy}>{busy?"…":mode==="login"?t(locale,"signIn"):t(locale,"signUp")}</button>{error&&<p className="error">{error}</p>}</form>{mode==="login"?<><button className="text-button" onClick={()=>go("/recover")}>{t(locale,"recover")}</button><button className="text-button" onClick={()=>go("/signup")}>{copy(locale,"¿No tenés cuenta? Crear cuenta","No account yet? Create one")}</button></>:<button className="text-button" onClick={()=>go("/login")}>{copy(locale,"Ya tengo cuenta","I already have an account")}</button>}</section></main>;
 }
 
-function RecoveryScreen({locale,go}:{locale:Locale;go:(p:string)=>void}) { return <main className="auth-page"><button className="back-link" onClick={()=>go("/login")}>← {t(locale,"back")}</button><section className="auth-card"><HuauBrand center /><h1>{t(locale,"recover")}</h1><p className="muted">{t(locale,"recoverySoon")}</p></section></main>; }
+function EmailVerificationScreen({locale,go,authenticated,onDone}:{locale:Locale;go:(p:string)=>void;authenticated:boolean;onDone:()=>Promise<void>}) {
+  const params=new URLSearchParams(window.location.search); const verified=params.get("verified")==="1"; const verificationError=params.get("error");
+  const [message,setMessage]=useState(""); const [busy,setBusy]=useState(false);
+  const pending=useMemo(()=>{try{return JSON.parse(localStorage.getItem("huau.pendingVerification")||"null") as {email?:string;sent?:boolean}|null;}catch{return null;}},[]);
+  useEffect(()=>{
+    if(!verified||verificationError||!authenticated)return;
+    const raw=localStorage.getItem("huau.pendingSignupProfile");
+    if(!raw){localStorage.removeItem("huau.pendingVerification");void onDone();return;}
+    try{
+      const profile=JSON.parse(raw) as {firstName?:string;lastName?:string;preferredLocale?:string};
+      void api("/api/me/profile",{method:"PUT",body:JSON.stringify({firstName:profile.firstName,lastName:profile.lastName,preferredLocale:profile.preferredLocale})}).then(async()=>{
+        localStorage.removeItem("huau.pendingSignupProfile"); localStorage.removeItem("huau.pendingVerification"); await onDone();
+      }).catch(()=>undefined);
+    }catch{localStorage.removeItem("huau.pendingSignupProfile");void onDone();}
+  },[verified,verificationError,authenticated,onDone]);
+  const resend=async()=>{
+    const email=String(pending?.email||"").trim();
+    if(!email){setMessage(copy(locale,"Volvé a iniciar sesión para reenviar la verificación.","Sign in again to resend verification."));return;}
+    setBusy(true);setMessage("");
+    try{
+      const result=await authClient.sendVerificationEmail({email,callbackURL:`${window.location.origin}/verify-email?verified=1`});
+      if(result.error)throw new Error(result.error.message||"EMAIL_VERIFICATION_FAILED");
+      localStorage.setItem("huau.pendingVerification",JSON.stringify({email,sent:true}));
+      setMessage(copy(locale,"Te reenviamos el correo de verificación.","We resent the verification email."));
+    }catch(error){setMessage(error instanceof Error?error.message:"EMAIL_VERIFICATION_FAILED");}
+    finally{setBusy(false);}
+  };
+  if(verificationError)return <main className="auth-page"><section className="auth-card"><HuauBrand center /><h1>{copy(locale,"No pudimos verificar el email","We couldn't verify your email")}</h1><p className="muted">{copy(locale,"El enlace puede haber vencido o ya no ser válido. Podés pedir uno nuevo.","The link may have expired or no longer be valid. You can request a new one.")}</p><button className="light full" disabled={busy} onClick={()=>void resend()}>{busy?"…":copy(locale,"Reenviar verificación","Resend verification")}</button>{message&&<p className="muted">{message}</p>}<button className="text-button" onClick={()=>go("/login")}>{copy(locale,"Volver al login","Back to sign in")}</button></section></main>;
+  if(verified)return <main className="auth-page"><section className="auth-card"><HuauBrand center /><h1>{copy(locale,"Email confirmado","Email verified")}</h1><p className="muted">{copy(locale,"Tu cuenta HUAU ya está activa. Podés continuar con tu perfil o volver al torneo donde estabas.","Your HUAU account is active. You can continue with your profile or return to the tournament you were viewing.")}</p><button className="light full" onClick={()=>{const next=sessionStorage.getItem("huau.afterAuth");if(next)sessionStorage.removeItem("huau.afterAuth");go(next||"/app");}}>{copy(locale,"Continuar","Continue")}</button></section></main>;
+  return <main className="auth-page"><section className="auth-card"><HuauBrand center /><h1>{copy(locale,"Revisá tu correo","Check your email")}</h1><p className="muted">{pending?.sent?copy(locale,"Te enviamos un enlace para confirmar tu cuenta HUAU. Revisá también Spam o Promociones.","We sent you a link to confirm your HUAU account. Check Spam or Promotions too."):copy(locale,"Tu email todavía no está verificado. Pedí un nuevo enlace para continuar.","Your email is not verified yet. Request a new link to continue.")}</p><button className="light full" disabled={busy} onClick={()=>void resend()}>{busy?"…":copy(locale,"Reenviar correo","Resend email")}</button>{message&&<p className="muted">{message}</p>}<button className="text-button" onClick={()=>go("/login")}>{copy(locale,"Volver al login","Back to sign in")}</button></section></main>;
+}
+
+function RecoveryScreen({locale,go}:{locale:Locale;go:(p:string)=>void}) {
+  const [busy,setBusy]=useState(false); const [sent,setSent]=useState(false); const [error,setError]=useState("");
+  const submit=async(event:FormEvent<HTMLFormElement>)=>{
+    event.preventDefault();setBusy(true);setError("");
+    const form=new FormData(event.currentTarget);const email=String(form.get("email")||"").trim();
+    try{
+      const result=await authClient.requestPasswordReset({email,redirectTo:`${window.location.origin}/reset-password`});
+      if(result.error)throw new Error(result.error.message||"PASSWORD_RESET_REQUEST_FAILED");
+      setSent(true);
+    }catch(e){setError(e instanceof Error?e.message:"PASSWORD_RESET_REQUEST_FAILED");}
+    finally{setBusy(false);}
+  };
+  return <main className="auth-page"><button className="back-link" onClick={()=>go("/login")}>← {t(locale,"back")}</button><section className="auth-card"><HuauBrand center /><h1>{t(locale,"recover")}</h1>{sent?<><p className="muted">{copy(locale,"Si existe una cuenta con ese email, te enviamos un enlace para crear una nueva contraseña. Revisá también Spam o Promociones.","If an account exists for that email, we sent a link to create a new password. Check Spam or Promotions too.")}</p><button className="light full" onClick={()=>go("/login")}>{copy(locale,"Volver al login","Back to sign in")}</button></>:<form onSubmit={submit}><p className="muted">{copy(locale,"Ingresá el email de tu cuenta HUAU y te enviaremos un enlace de recuperación.","Enter your HUAU account email and we'll send you a recovery link.")}</p><Field name="email" label={t(locale,"email")} type="email"/><button className="light full" disabled={busy}>{busy?"…":copy(locale,"Enviar enlace","Send reset link")}</button>{error&&<p className="error">{error}</p>}</form>}</section></main>;
+}
+
+function ResetPasswordScreen({locale,go}:{locale:Locale;go:(p:string)=>void}) {
+  const params=new URLSearchParams(window.location.search); const token=params.get("token"); const tokenError=params.get("error");
+  const [busy,setBusy]=useState(false); const [done,setDone]=useState(false); const [error,setError]=useState("");
+  const submit=async(event:FormEvent<HTMLFormElement>)=>{
+    event.preventDefault();setBusy(true);setError("");
+    const form=new FormData(event.currentTarget);const password=String(form.get("password")||"");const confirm=String(form.get("confirmPassword")||"");
+    try{
+      if(!token)throw new Error("INVALID_TOKEN");
+      if(password!==confirm)throw new Error(copy(locale,"Las contraseñas no coinciden.","Passwords do not match."));
+      const result=await authClient.resetPassword({newPassword:password,token});
+      if(result.error)throw new Error(result.error.message||"PASSWORD_RESET_FAILED");
+      setDone(true);
+    }catch(e){setError(e instanceof Error?e.message:"PASSWORD_RESET_FAILED");}
+    finally{setBusy(false);}
+  };
+  if(tokenError||!token)return <main className="auth-page"><section className="auth-card"><HuauBrand center /><h1>{copy(locale,"Enlace inválido o vencido","Invalid or expired link")}</h1><p className="muted">{copy(locale,"Pedí un nuevo correo de recuperación para continuar.","Request a new password recovery email to continue.")}</p><button className="light full" onClick={()=>go("/recover")}>{copy(locale,"Pedir otro enlace","Request another link")}</button></section></main>;
+  if(done)return <main className="auth-page"><section className="auth-card"><HuauBrand center /><h1>{copy(locale,"Contraseña actualizada","Password updated")}</h1><p className="muted">{copy(locale,"Tu contraseña cambió correctamente. Por seguridad, cerramos las sesiones anteriores.","Your password was changed successfully. For security, previous sessions were signed out.")}</p><button className="light full" onClick={()=>go("/login")}>{copy(locale,"Iniciar sesión","Sign in")}</button></section></main>;
+  return <main className="auth-page"><button className="back-link" onClick={()=>go("/login")}>← {t(locale,"back")}</button><section className="auth-card"><HuauBrand center /><h1>{copy(locale,"Nueva contraseña","New password")}</h1><form onSubmit={submit}><PasswordField name="password" label={copy(locale,"Nueva contraseña","New password")} locale={locale} autoComplete="new-password"/><PasswordField name="confirmPassword" label={copy(locale,"Repetir contraseña","Repeat password")} locale={locale} autoComplete="new-password"/><button className="light full" disabled={busy}>{busy?"…":copy(locale,"Guardar contraseña","Save password")}</button>{error&&<p className="error">{error}</p>}</form></section></main>;
+}
 
 function MyHuau({locale,setLocale,go,me,loading,refreshMe}:{locale:Locale;setLocale:(l:Locale)=>void;go:(p:string)=>void;me:Me|null;loading:boolean;refreshMe:()=>Promise<void>}) {
   const [organizations,setOrganizations]=useState<Organization[]>([]);

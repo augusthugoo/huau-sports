@@ -5,6 +5,9 @@ interface Env {
   APP_VERSION: string;
   BETTER_AUTH_SECRET: string;
   BETTER_AUTH_URL: string;
+  BREVO_API_KEY?: string;
+  BREVO_FROM_EMAIL?: string;
+  BREVO_FROM_NAME?: string;
   PLATFORM_ADMIN_EMAILS?: string;
   MERCADO_PAGO_CLIENT_ID?: string;
   MERCADO_PAGO_CLIENT_SECRET?: string;
