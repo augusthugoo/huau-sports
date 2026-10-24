@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildHuauEmailHtml, sendTransactionalEmail } from "./email";
+import { buildHuauEmailHtml, sendTransactionalEmail, sendTransactionalEmailOnce } from "./email";
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
 describe("HUAU transactional email", () => {
-  it("escapes copy in the HTML body", () => {
+  it("uses the HUAU logo, no eyebrow label, and escapes copy", () => {
     const html = buildHuauEmailHtml({
       to: "player@example.com",
       subject: "Test",
@@ -14,11 +14,15 @@ describe("HUAU transactional email", () => {
       body: "A&B",
       actionLabel: "Abrir",
       actionUrl: "https://huau.app/?a=1&b=2",
+      details: [{ label: "Torneo", value: "Open <HUAU>" }],
     });
+    expect(html).toContain('src="https://huau.app/huau-email-logo.png"');
+    expect(html).not.toContain("HUAU ·");
     expect(html).not.toContain("<script>alert(1)</script>");
     expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(html).toContain("A&amp;B");
     expect(html).toContain("a=1&amp;b=2");
+    expect(html).toContain("Open &lt;HUAU&gt;");
   });
 
   it("sends the expected Brevo payload", async () => {
@@ -34,6 +38,7 @@ describe("HUAU transactional email", () => {
       BREVO_API_KEY: "test-secret",
       BREVO_FROM_EMAIL: "no-reply@huau.app",
       BREVO_FROM_NAME: "HUAU",
+      BETTER_AUTH_URL: "https://huau.app",
     } as Env, {
       to: "player@example.com",
       toName: "Jugador",
@@ -53,10 +58,13 @@ describe("HUAU transactional email", () => {
     expect(payload.sender).toEqual({ name: "HUAU", email: "no-reply@huau.app" });
     expect(payload.to).toEqual([{ email: "player@example.com", name: "Jugador" }]);
     expect(payload.tags).toEqual(["huau-test"]);
+    expect(payload.htmlContent).toContain("https://huau.app/huau-email-logo.png");
   });
 
   it("fails closed when Brevo is missing", async () => {
-    await expect(sendTransactionalEmail({} as Env, {
+    await expect(sendTransactionalEmail({
+      BETTER_AUTH_URL: "https://huau.app",
+    } as Env, {
       to: "player@example.com",
       subject: "Test",
       heading: "Test",
@@ -64,5 +72,30 @@ describe("HUAU transactional email", () => {
       actionLabel: "Abrir",
       actionUrl: "https://huau.app",
     })).rejects.toThrow("BREVO_API_KEY_MISSING");
+  });
+
+  it("never breaks the business action when dispatch tracking is unavailable", async () => {
+    const result = await sendTransactionalEmailOnce({
+      HUAU_DB: {
+        prepare: () => {
+          throw new Error("D1_UNAVAILABLE");
+        },
+      },
+    } as unknown as Env, {
+      eventKey: "registration-created:test",
+      kind: "tournament_registration_created",
+      email: {
+        to: "player@example.com",
+        subject: "Test",
+        heading: "Test",
+        body: "Test",
+        actionLabel: "Abrir",
+        actionUrl: "https://huau.app",
+      },
+    });
+
+    expect(result.sent).toBe(false);
+    expect(result.skipped).toBe(false);
+    expect(result.error).toBe("D1_UNAVAILABLE");
   });
 });
