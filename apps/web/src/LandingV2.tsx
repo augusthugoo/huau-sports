@@ -220,7 +220,8 @@ export function Landing({
       const root = mobileJourneyRef.current;
       if (!root) return;
       const rect = root.getBoundingClientRect();
-      const travel = Math.max(1, root.offsetHeight - window.innerHeight);
+      const stage = root.querySelector<HTMLElement>(".lv2-journey-mobile-stage");
+      const travel = Math.max(1, root.offsetHeight - (stage?.offsetHeight ?? window.innerHeight));
       setMobileJourneyProgress(clamp(-rect.top / travel));
     };
     const onScroll = () => {
@@ -418,7 +419,7 @@ export function Landing({
       </aside>
 
       <section className="lv2-hero">
-        <video autoPlay muted loop playsInline preload="metadata" poster="/landing-v2/poster-01.jpg">
+        <video autoPlay muted loop playsInline controls={false} preload="auto" poster="/landing-v2/poster-01.jpg" tabIndex={-1} aria-hidden="true">
           <source src="/landing-v2/sport-01-720.mp4" media="(max-width: 800px)" type="video/mp4" />
           <source src="/landing-v2/sport-01-1080.mp4" type="video/mp4" />
         </video>
@@ -581,7 +582,7 @@ export function Landing({
       </section>
 
       <section className="lv2-sport-scene">
-        <video autoPlay muted loop playsInline preload="metadata" poster="/landing-v2/poster-02.jpg">
+        <video autoPlay muted loop playsInline controls={false} preload="auto" poster="/landing-v2/poster-02.jpg" tabIndex={-1} aria-hidden="true">
           <source src="/landing-v2/sport-02-720.mp4" media="(max-width: 800px)" type="video/mp4" />
           <source src="/landing-v2/sport-02-1080.mp4" type="video/mp4" />
         </video>
