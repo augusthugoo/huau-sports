@@ -13,6 +13,7 @@ const json = (body: unknown, init: ResponseInit = {}) => new Response(JSON.strin
 const heroKey = (slot: number) => `landing/hero-${slot}`;
 const publicLandingSnapshotKey = "public/landing.json";
 const platformSupportKey = "platform/support.json";
+const landingMetricsKey = "landing/metrics.json";
 const validSlot = (raw: string) => { const slot = Number(raw); return Number.isInteger(slot) && slot >= 1 && slot <= 3 ? slot : null; };
 const now = () => Date.now();
 const unixNow = () => Math.floor(Date.now() / 1000);
@@ -33,10 +34,14 @@ type PublicLandingPayload = {
   heroes: Array<{ slot: number; url: string }>;
   tournaments: LandingTournamentRow[];
   tutorials: PublicLandingTutorial[];
+  metrics: {
+    players: number;
+    matches: number;
+  };
 };
 
 type PublicLandingSnapshot = {
-  version: 2;
+  version: 3;
   generatedAt: number;
   validUntil: number;
   payload: PublicLandingPayload;
@@ -62,6 +67,36 @@ async function loadSupportWhatsapp(env: Env): Promise<string> {
   }
 }
 
+
+type LandingMetrics = {
+  players: number;
+  matches: number;
+  updatedAt: number;
+};
+
+const normalizeLandingMetric = (value: unknown): number | null => {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100_000_000) return null;
+  return Math.trunc(parsed);
+};
+
+async function loadLandingMetrics(env: Env): Promise<LandingMetrics> {
+  const object = await env.HUAU_ASSETS.get(landingMetricsKey);
+  if (!object) return { players: 0, matches: 0, updatedAt: 0 };
+  try {
+    const parsed = JSON.parse(await object.text()) as Partial<LandingMetrics>;
+    const players = normalizeLandingMetric(parsed.players);
+    const matches = normalizeLandingMetric(parsed.matches);
+    return {
+      players: players ?? 0,
+      matches: matches ?? 0,
+      updatedAt: Number(parsed.updatedAt ?? 0),
+    };
+  } catch {
+    return { players: 0, matches: 0, updatedAt: 0 };
+  }
+}
+
 async function platformUser(request: Request, env: Env, access: AccessHelpers) {
   const user = await access.requireUser(request, env);
   if (!user) return { response: json({ ok: false, code: "UNAUTHENTICATED" }, { status: 401 }) };
@@ -71,20 +106,42 @@ async function platformUser(request: Request, env: Env, access: AccessHelpers) {
 
 async function buildPublicLandingSnapshot(env: Env): Promise<PublicLandingSnapshot> {
   const generatedAt = unixNow();
-  const tournamentCutoff = generatedAt - 86_400;
-  const rows = await env.HUAU_DB.prepare(
-    `SELECT id,name,slug,sport,status,start_at as startAt,end_at as endAt,
-            CASE WHEN public_hero_r2_key IS NOT NULL AND TRIM(public_hero_r2_key) <> ''
-                 THEN '/api/public/tournaments/' || slug || '/hero' ELSE NULL END as heroImageUrl
-       FROM tournaments
-      WHERE visibility='public'
-        AND status IN ('registration_open','registration_closed','draw_ready','scheduled','live')
-        AND (end_at IS NULL OR end_at >= ?)
-      ORDER BY CASE status WHEN 'live' THEN 0 WHEN 'registration_open' THEN 1 ELSE 2 END,start_at
-      LIMIT 9`,
-  ).bind(tournamentCutoff).all<LandingTournamentRow>();
+  const activeCutoff = generatedAt - 86_400;
+  const completedCutoff = generatedAt - 30 * 86_400;
+
+  const [rows, landingMetrics, tutorials] = await Promise.all([
+    env.HUAU_DB.prepare(
+      `SELECT id,name,slug,sport,status,start_at as startAt,end_at as endAt,
+              CASE WHEN public_hero_r2_key IS NOT NULL AND TRIM(public_hero_r2_key) <> ''
+                   THEN '/api/public/tournaments/' || slug || '/hero' ELSE NULL END as heroImageUrl
+         FROM tournaments
+        WHERE visibility='public'
+          AND status IN ('registration_open','registration_closed','draw_ready','scheduled','live','completed')
+          AND (
+            (status='completed' AND COALESCE(end_at,start_at) >= ?)
+            OR
+            (status<>'completed' AND (end_at IS NULL OR end_at >= ?))
+          )
+        ORDER BY
+          CASE status
+            WHEN 'live' THEN 0
+            WHEN 'registration_open' THEN 1
+            WHEN 'registration_closed' THEN 2
+            WHEN 'draw_ready' THEN 2
+            WHEN 'scheduled' THEN 2
+            WHEN 'completed' THEN 3
+            ELSE 4
+          END,
+          CASE WHEN status='completed' THEN start_at END DESC,
+          CASE WHEN status<>'completed' THEN start_at END ASC
+        LIMIT 12`,
+    ).bind(completedCutoff, activeCutoff).all<LandingTournamentRow>(),
+    loadLandingMetrics(env),
+    loadPublicLandingTutorials(env),
+  ]);
 
   const timeExpiryCandidates = rows.results
+    .filter((row) => row.status !== "completed")
     .map((row) => row.endAt === null ? null : row.endAt + 86_400)
     .filter((value): value is number => value !== null && value > generatedAt);
   const safetyExpiry = generatedAt + 3_600;
@@ -93,10 +150,8 @@ async function buildPublicLandingSnapshot(env: Env): Promise<PublicLandingSnapsh
     timeExpiryCandidates.length ? Math.min(safetyExpiry, ...timeExpiryCandidates) : safetyExpiry,
   );
 
-  const tutorials = await loadPublicLandingTutorials(env);
-
   return {
-    version: 2,
+    version: 3,
     generatedAt,
     validUntil,
     payload: {
@@ -104,17 +159,20 @@ async function buildPublicLandingSnapshot(env: Env): Promise<PublicLandingSnapsh
       heroes: [1, 2, 3].map((slot) => ({ slot, url: `/api/public/landing/hero/${slot}` })),
       tournaments: rows.results,
       tutorials,
+      metrics: {
+        players: landingMetrics.players,
+        matches: landingMetrics.matches,
+      },
     },
   };
 }
-
 async function publicLanding(env: Env) {
   const cached = await env.HUAU_ASSETS.get(publicLandingSnapshotKey);
   if (cached) {
     try {
       const snapshot = JSON.parse(await cached.text()) as PublicLandingSnapshot;
       if (
-        snapshot.version === 2 &&
+        snapshot.version === 3 &&
         snapshot.payload?.ok === true &&
         Number(snapshot.validUntil) > unixNow()
       ) {
@@ -185,9 +243,10 @@ async function submitContact(request: Request, env: Env) {
 async function platformLanding(request: Request, env: Env, access: AccessHelpers) {
   const auth = await platformUser(request, env, access);
   if ("response" in auth) return auth.response;
-  const [heroObjects, supportWhatsapp] = await Promise.all([
+  const [heroObjects, supportWhatsapp, metrics] = await Promise.all([
     Promise.all([1, 2, 3].map((slot) => env.HUAU_ASSETS.head(heroKey(slot)))),
     loadSupportWhatsapp(env),
+    loadLandingMetrics(env),
   ]);
   let leads: unknown[] = [];
   let contactStorageReady = true;
@@ -207,6 +266,10 @@ async function platformLanding(request: Request, env: Env, access: AccessHelpers
     leads,
     contactStorageReady,
     supportWhatsapp,
+    metrics: {
+      players: metrics.players,
+      matches: metrics.matches,
+    },
   });
 }
 
@@ -223,6 +286,32 @@ async function updateSupportWhatsapp(request: Request, env: Env, access: AccessH
     customMetadata: { kind: "platform-support", updatedAt: String(stamp) },
   });
   return json({ ok: true, supportWhatsapp: whatsapp });
+}
+
+
+async function updateLandingMetrics(request: Request, env: Env, access: AccessHelpers) {
+  const auth = await platformUser(request, env, access);
+  if ("response" in auth) return auth.response;
+
+  const body = await request.json() as { players?: unknown; matches?: unknown };
+  const players = normalizeLandingMetric(body.players);
+  const matches = normalizeLandingMetric(body.matches);
+  if (players === null || matches === null) {
+    return json({ ok: false, code: "INVALID_LANDING_METRICS" }, { status: 400 });
+  }
+
+  const metrics: LandingMetrics = { players, matches, updatedAt: now() };
+  await env.HUAU_ASSETS.put(landingMetricsKey, JSON.stringify(metrics), {
+    httpMetadata: { contentType: "application/json; charset=utf-8" },
+    customMetadata: { kind: "landing-metrics", updatedAt: String(metrics.updatedAt) },
+  });
+
+  await env.HUAU_ASSETS.delete(publicLandingSnapshotKey).catch(() => undefined);
+
+  return json({
+    ok: true,
+    metrics: { players, matches },
+  });
 }
 
 async function updateHero(request: Request, slot: number, env: Env, access: AccessHelpers) {
@@ -250,6 +339,7 @@ export async function handleLandingApi(request: Request, env: Env, url: URL, acc
   if (publicHeroMatch && request.method === "GET") return publicHero(Number(publicHeroMatch[1]), env);
   if (url.pathname === "/api/platform/landing" && request.method === "GET") return platformLanding(request, env, access);
   if (url.pathname === "/api/platform/support" && request.method === "PUT") return updateSupportWhatsapp(request, env, access);
+  if (url.pathname === "/api/platform/landing/metrics" && request.method === "PUT") return updateLandingMetrics(request, env, access);
   const platformHeroMatch = url.pathname.match(/^\/api\/platform\/landing\/hero\/([^/]+)$/);
   if (platformHeroMatch) {
     const slot = validSlot(decodeURIComponent(platformHeroMatch[1]!));

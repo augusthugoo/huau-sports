@@ -45,6 +45,10 @@ type LandingAdminData = {
   leads: ContactLead[];
   contactStorageReady: boolean;
   supportWhatsapp: string;
+  metrics: {
+    players: number;
+    matches: number;
+  };
 };
 
 async function jsonApi<T>(path: string, init?: RequestInit): Promise<T> {
@@ -281,6 +285,7 @@ export function LandingAdminPanel({ locale }: { locale: Locale }) {
   const [data, setData] = useState<LandingAdminData | null>(null);
   const [busy, setBusy] = useState(0);
   const [supportBusy, setSupportBusy] = useState(false);
+  const [metricsBusy, setMetricsBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [version, setVersion] = useState(0);
 
@@ -290,6 +295,27 @@ export function LandingAdminPanel({ locale }: { locale: Locale }) {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  const saveMetrics = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const players = Number(form.get("landingPlayers"));
+    const matches = Number(form.get("landingMatches"));
+    setMetricsBusy(true);
+    setMessage("");
+    try {
+      await jsonApi("/api/platform/landing/metrics", {
+        method: "PUT",
+        body: JSON.stringify({ players, matches }),
+      });
+      await load();
+      setMessage(tr(locale, "Contadores públicos actualizados.", "Public counters updated."));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "LANDING_METRICS_SAVE_FAILED");
+    } finally {
+      setMetricsBusy(false);
+    }
+  };
 
   const upload = async (slot: number, event: ChangeEvent<HTMLInputElement>) => {
     const input = event.currentTarget;
@@ -371,6 +397,48 @@ export function LandingAdminPanel({ locale }: { locale: Locale }) {
           </label>
           <button className="light" disabled={supportBusy || !data}>
             {supportBusy ? "…" : tr(locale, "Guardar soporte", "Save support")}
+          </button>
+        </form>
+      </div>
+      <div className="landing-support-admin">
+        <div>
+          <div className="eyebrow">HUAU LANDING</div>
+          <h3>{tr(locale, "Contadores públicos", "Public counters")}</h3>
+          <p className="muted">
+            {tr(
+              locale,
+              "Estos valores son manuales y se muestran exactamente como los cargues en la portada.",
+              "These values are manual and are displayed exactly as entered on the landing page.",
+            )}
+          </p>
+        </div>
+        <form onSubmit={(event) => void saveMetrics(event)}>
+          <label>
+            <span>{tr(locale, "Jugadores", "Players")}</span>
+            <input
+              key={`landing-players-${data?.metrics.players ?? 0}`}
+              name="landingPlayers"
+              type="number"
+              min="0"
+              step="1"
+              defaultValue={data?.metrics.players ?? 0}
+              required
+            />
+          </label>
+          <label>
+            <span>{tr(locale, "Partidos jugados", "Matches played")}</span>
+            <input
+              key={`landing-matches-${data?.metrics.matches ?? 0}`}
+              name="landingMatches"
+              type="number"
+              min="0"
+              step="1"
+              defaultValue={data?.metrics.matches ?? 0}
+              required
+            />
+          </label>
+          <button className="light" disabled={metricsBusy || !data}>
+            {metricsBusy ? "…" : tr(locale, "Guardar contadores", "Save counters")}
           </button>
         </form>
       </div>
