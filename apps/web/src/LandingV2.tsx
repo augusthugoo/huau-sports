@@ -148,7 +148,9 @@ export function Landing({
   const [tournamentFilter, setTournamentFilter] = useState<"upcoming" | "results">("upcoming");
   const [tournamentDot, setTournamentDot] = useState(0);
   const [desktopJourneyStep, setDesktopJourneyStep] = useState(0);
-  const [mobileJourneyProgress, setMobileJourneyProgress] = useState(0);
+  const [headerScrolled, setHeaderScrolled] = useState(false);
+  const [heroVideoPlaying, setHeroVideoPlaying] = useState(false);
+  const [sceneVideoPlaying, setSceneVideoPlaying] = useState(false);
   const [personExpanded, setPersonExpanded] = useState(false);
   const [activeTutorialId, setActiveTutorialId] = useState<string | null>(null);
   const [contactState, setContactState] = useState<"idle" | "sending" | "sent">("idle");
@@ -161,9 +163,18 @@ export function Landing({
   const metricsRef = useRef<HTMLElement | null>(null);
   const desktopJourneyRef = useRef<HTMLDivElement | null>(null);
   const mobileJourneyRef = useRef<HTMLDivElement | null>(null);
+  const heroVideoRef = useRef<HTMLVideoElement | null>(null);
+  const sceneVideoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
     void jsonApi<LandingData>("/api/public/landing").then(setData).catch(() => setData(null));
+  }, []);
+
+  useEffect(() => {
+    const syncHeader = () => setHeaderScrolled(window.scrollY > 18);
+    window.addEventListener("scroll", syncHeader, { passive: true });
+    syncHeader();
+    return () => window.removeEventListener("scroll", syncHeader);
   }, []);
 
   useEffect(() => {
@@ -179,6 +190,32 @@ export function Landing({
     () => data?.tutorials.find((tutorial) => tutorial.id === activeTutorialId) ?? null,
     [activeTutorialId, data?.tutorials],
   );
+
+  useEffect(() => {
+    const tryPlay = () => {
+      for (const video of [heroVideoRef.current, sceneVideoRef.current]) {
+        if (!video) continue;
+        video.muted = true;
+        video.defaultMuted = true;
+        void video.play().catch(() => undefined);
+      }
+    };
+    const onVisibility = () => {
+      if (!document.hidden) tryPlay();
+    };
+    const frame = requestAnimationFrame(tryPlay);
+    document.addEventListener("pointerdown", tryPlay, { passive: true });
+    document.addEventListener("touchstart", tryPlay, { passive: true });
+    window.addEventListener("focus", tryPlay);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("pointerdown", tryPlay);
+      document.removeEventListener("touchstart", tryPlay);
+      window.removeEventListener("focus", tryPlay);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
 
   useEffect(() => {
     if (!activeTutorial) return;
@@ -222,18 +259,30 @@ export function Landing({
       const rect = root.getBoundingClientRect();
       const stage = root.querySelector<HTMLElement>(".lv2-journey-mobile-stage");
       const travel = Math.max(1, root.offsetHeight - (stage?.offsetHeight ?? window.innerHeight));
-      setMobileJourneyProgress(clamp(-rect.top / travel));
+      const progress = clamp(-rect.top / travel);
+      const scenePosition = progress * (journey.length - 1);
+      const slides = root.querySelectorAll<HTMLElement>(".lv2-journey-mobile-slide");
+      slides.forEach((slide, index) => {
+        const delta = index - scenePosition;
+        slide.style.transform = `translate3d(0, ${delta * 100}%, 0)`;
+        slide.style.opacity = String(Math.max(0.22, 1 - Math.max(0, Math.abs(delta) - 0.4) * 0.5));
+      });
+      const fill = root.querySelector<HTMLElement>(".lv2-journey-progress i");
+      if (fill) fill.style.width = `${Math.max(3, progress * 100)}%`;
+      root.querySelector<HTMLElement>(".lv2-scroll-hint")?.classList.toggle("is-hidden", progress > 0.93);
     };
     const onScroll = () => {
       if (!frame) frame = requestAnimationFrame(sync);
     };
     window.addEventListener("scroll", onScroll, { passive: true });
     window.addEventListener("resize", onScroll, { passive: true });
+    window.addEventListener("orientationchange", onScroll, { passive: true });
     sync();
     return () => {
       if (frame) cancelAnimationFrame(frame);
       window.removeEventListener("scroll", onScroll);
       window.removeEventListener("resize", onScroll);
+      window.removeEventListener("orientationchange", onScroll);
     };
   }, []);
 
@@ -369,11 +418,10 @@ export function Landing({
   };
 
   const metricsVisible = Boolean((data?.metrics?.players ?? 0) || (data?.metrics?.matches ?? 0));
-  const mobileJourneyPosition = mobileJourneyProgress * (journey.length - 1);
 
   return (
     <main className={`landing-v2${showLanguageGate ? " is-language-open" : ""}`}>
-      <header className="lv2-header">
+      <header className={`lv2-header${headerScrolled ? " is-scrolled" : ""}`}>
         <button className="lv2-logo-button" type="button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
           <img src="/huau-logo.png" alt="HUAU" />
         </button>
@@ -419,10 +467,24 @@ export function Landing({
       </aside>
 
       <section className="lv2-hero">
-        <video autoPlay muted loop playsInline controls={false} preload="auto" poster="/landing-v2/poster-01.jpg" tabIndex={-1} aria-hidden="true">
+        <video
+          ref={heroVideoRef}
+          autoPlay
+          muted
+          loop
+          playsInline
+          controls={false}
+          preload="auto"
+          poster="/landing-v2/poster-01.jpg"
+          tabIndex={-1}
+          aria-hidden="true"
+          onPlaying={() => setHeroVideoPlaying(true)}
+          onPause={() => setHeroVideoPlaying(false)}
+        >
           <source src="/landing-v2/sport-01-720.mp4" media="(max-width: 800px)" type="video/mp4" />
           <source src="/landing-v2/sport-01-1080.mp4" type="video/mp4" />
         </video>
+        <div className={`lv2-video-poster lv2-video-poster-hero${heroVideoPlaying ? " is-hidden" : ""}`} aria-hidden="true" />
         <div className="lv2-video-shade lv2-hero-shade" />
         <div className="lv2-shell lv2-hero-content">
           <h1>{tr(locale, "Todo el torneo. En un solo lugar.", "The whole tournament. In one place.")}</h1>
@@ -533,14 +595,16 @@ export function Landing({
             ))}
           </div>
           <div className="lv2-journey-stage">
-            <div className="lv2-journey-panel">
-              <img src={journey[desktopJourneyStep]?.image} alt="" />
-              <div className="lv2-journey-panel-shade" />
-              <div className="lv2-journey-panel-copy">
-                <span>{tr(locale, journey[desktopJourneyStep]?.labelEs ?? "", journey[desktopJourneyStep]?.labelEn ?? "")}</span>
-                <strong>{tr(locale, journey[desktopJourneyStep]?.titleEs ?? "", journey[desktopJourneyStep]?.titleEn ?? "")}</strong>
+            {journey.map((item, index) => (
+              <div key={item.number} className={`lv2-journey-panel${desktopJourneyStep === index ? " is-active" : ""}`}>
+                <img src={item.image} alt="" />
+                <div className="lv2-journey-panel-shade" />
+                <div className="lv2-journey-panel-copy">
+                  <span>{tr(locale, item.labelEs, item.labelEn)}</span>
+                  <strong>{tr(locale, item.titleEs, item.titleEn)}</strong>
+                </div>
               </div>
-            </div>
+            ))}
           </div>
         </div>
 
@@ -548,31 +612,25 @@ export function Landing({
           <div className="lv2-journey-mobile-stage">
             <h2>{tr(locale, "Todo el torneo, conectado.", "The whole tournament, connected.")}</h2>
             <div className="lv2-journey-mobile-frame">
-              {journey.map((item, index) => {
-                const delta = index - mobileJourneyPosition;
-                return (
-                  <article
-                    key={item.number}
-                    className="lv2-journey-mobile-slide"
-                    style={{
-                      transform: `translate3d(0, ${delta * 100}%, 0)`,
-                      opacity: Math.max(0.22, 1 - Math.max(0, Math.abs(delta) - 0.4) * 0.5),
-                    }}
-                  >
-                    <img src={item.image} alt="" />
-                    <div className="lv2-journey-mobile-shade" />
-                    <div className="lv2-journey-mobile-copy">
-                      <span>{item.number} · {tr(locale, item.labelEs, item.labelEn)}</span>
-                      <h3>{tr(locale, item.titleEs, item.titleEn)}</h3>
-                      <p>{tr(locale, item.bodyEs, item.bodyEn)}</p>
-                    </div>
-                  </article>
-                );
-              })}
+              {journey.map((item, index) => (
+                <article
+                  key={item.number}
+                  className="lv2-journey-mobile-slide"
+                  style={{ transform: `translate3d(0, ${index * 100}%, 0)`, opacity: index === 0 ? 1 : 0.22 }}
+                >
+                  <img src={item.image} alt="" />
+                  <div className="lv2-journey-mobile-shade" />
+                  <div className="lv2-journey-mobile-copy">
+                    <span>{item.number} · {tr(locale, item.labelEs, item.labelEn)}</span>
+                    <h3>{tr(locale, item.titleEs, item.titleEn)}</h3>
+                    <p>{tr(locale, item.bodyEs, item.bodyEn)}</p>
+                  </div>
+                </article>
+              ))}
             </div>
             <div className="lv2-journey-mobile-footer">
-              <div className="lv2-journey-progress"><i style={{ width: `${Math.max(3, mobileJourneyProgress * 100)}%` }} /></div>
-              <div className={`lv2-scroll-hint${mobileJourneyProgress > 0.93 ? " is-hidden" : ""}`}>
+              <div className="lv2-journey-progress"><i style={{ width: "3%" }} /></div>
+              <div className="lv2-scroll-hint">
                 <span>{tr(locale, "Seguí bajando", "Keep scrolling")}</span>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5" /></svg>
               </div>
@@ -582,10 +640,24 @@ export function Landing({
       </section>
 
       <section className="lv2-sport-scene">
-        <video autoPlay muted loop playsInline controls={false} preload="auto" poster="/landing-v2/poster-02.jpg" tabIndex={-1} aria-hidden="true">
+        <video
+          ref={sceneVideoRef}
+          autoPlay
+          muted
+          loop
+          playsInline
+          controls={false}
+          preload="auto"
+          poster="/landing-v2/poster-02.jpg"
+          tabIndex={-1}
+          aria-hidden="true"
+          onPlaying={() => setSceneVideoPlaying(true)}
+          onPause={() => setSceneVideoPlaying(false)}
+        >
           <source src="/landing-v2/sport-02-720.mp4" media="(max-width: 800px)" type="video/mp4" />
           <source src="/landing-v2/sport-02-1080.mp4" type="video/mp4" />
         </video>
+        <div className={`lv2-video-poster lv2-video-poster-scene${sceneVideoPlaying ? " is-hidden" : ""}`} aria-hidden="true" />
         <div className="lv2-video-shade lv2-scene-shade" />
         <div className="lv2-shell lv2-scene-copy">
           <h2>{tr(locale, "Mientras se juega, todo tiene que estar claro.", "While the tournament is being played, everything has to be clear.")}</h2>
