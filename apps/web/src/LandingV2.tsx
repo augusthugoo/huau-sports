@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, TouchEvent } from "react";
 import type { Locale } from "./i18n";
 import type { LandingTutorial } from "./LandingTutorials";
+import { defaultLandingV2AssetUrls, defaultLandingV2EditableContent } from "./LandingV2Content";
+import type { LandingLocalizedText, LandingV2Content } from "./LandingV2Content";
 import "./LandingV2.css";
 
 type Go = (path: string) => void;
@@ -28,6 +30,7 @@ type LandingData = {
     players: number;
     matches: number;
   };
+  content?: LandingV2Content;
 };
 
 type JourneyItem = {
@@ -166,9 +169,48 @@ export function Landing({
   const heroVideoRef = useRef<HTMLVideoElement | null>(null);
   const sceneVideoRef = useRef<HTMLVideoElement | null>(null);
 
+  const content: LandingV2Content = data?.content ?? {
+    ...defaultLandingV2EditableContent,
+    assets: defaultLandingV2AssetUrls,
+  };
+  const c = (value: LandingLocalizedText) => locale === "es" ? value.es : value.en;
+  const journeyImages = [content.assets.journey1, content.assets.journey2, content.assets.journey3, content.assets.journey4];
+  const journey = content.journey.items.map((item, index) => ({
+    ...item,
+    number: String(index + 1).padStart(2, "0"),
+    image: journeyImages[index] ?? defaultLandingV2AssetUrls.journey1,
+  }));
+
   useEffect(() => {
-    void jsonApi<LandingData>("/api/public/landing").then(setData).catch(() => setData(null));
+    void (async () => {
+      try {
+        const base = await jsonApi<LandingData>("/api/public/landing");
+        if (new URLSearchParams(window.location.search).get("landingDraft") === "1") {
+          try {
+            const preview = await jsonApi<{ ok: true; content: LandingV2Content }>("/api/platform/landing/v2/preview");
+            setData({ ...base, content: preview.content });
+            return;
+          } catch {
+            // If preview auth fails, fall back to the published landing.
+          }
+        }
+        setData(base);
+      } catch {
+        setData(null);
+      }
+    })();
   }, []);
+
+  useEffect(() => {
+    document.title = c(content.seo.title);
+    let description = document.querySelector<HTMLMetaElement>('meta[name="description"]');
+    if (!description) {
+      description = document.createElement("meta");
+      description.name = "description";
+      document.head.appendChild(description);
+    }
+    description.content = c(content.seo.description);
+  }, [content.seo.description, content.seo.title, locale]);
 
   useEffect(() => {
     const syncHeader = () => setHeaderScrolled(window.scrollY > 18);
@@ -427,10 +469,10 @@ export function Landing({
         </button>
 
         <nav className="lv2-desktop-nav" aria-label={tr(locale, "Navegación", "Navigation")}>
-          <button type="button" onClick={() => scrollToSection("lv2-tournaments")}>{tr(locale, "Torneos", "Tournaments")}</button>
-          <button type="button" onClick={() => scrollToSection("lv2-how")}>{tr(locale, "Cómo funciona", "How it works")}</button>
-          <button type="button" onClick={() => scrollToSection("lv2-person")}>{tr(locale, "Quién está detrás", "Who is behind it")}</button>
-          <button type="button" onClick={() => scrollToSection("lv2-organize")}>{tr(locale, "Organizar", "Organize")}</button>
+          <button type="button" onClick={() => scrollToSection("lv2-tournaments")}>{c(content.nav.tournaments)}</button>
+          <button type="button" onClick={() => scrollToSection("lv2-how")}>{c(content.nav.how)}</button>
+          <button type="button" onClick={() => scrollToSection("lv2-person")}>{c(content.nav.person)}</button>
+          <button type="button" onClick={() => scrollToSection("lv2-organize")}>{c(content.nav.organize)}</button>
         </nav>
 
         <div className="lv2-header-actions">
@@ -454,11 +496,11 @@ export function Landing({
       </header>
 
       <aside className={`lv2-mobile-menu${menuOpen ? " is-open" : ""}`} aria-hidden={!menuOpen}>
-        <button type="button" onClick={() => scrollToSection("lv2-tournaments")}>{tr(locale, "Torneos", "Tournaments")}</button>
-        <button type="button" onClick={() => scrollToSection("lv2-how")}>{tr(locale, "Cómo funciona", "How it works")}</button>
-        <button type="button" onClick={() => scrollToSection("lv2-person")}>{tr(locale, "Quién está detrás", "Who is behind it")}</button>
-        <button type="button" onClick={() => scrollToSection("lv2-organize")}>{tr(locale, "Organizar", "Organize")}</button>
-        <button type="button" onClick={() => scrollToSection("lv2-help")}>{tr(locale, "Ayuda", "Help")}</button>
+        <button type="button" onClick={() => scrollToSection("lv2-tournaments")}>{c(content.nav.tournaments)}</button>
+        <button type="button" onClick={() => scrollToSection("lv2-how")}>{c(content.nav.how)}</button>
+        <button type="button" onClick={() => scrollToSection("lv2-person")}>{c(content.nav.person)}</button>
+        <button type="button" onClick={() => scrollToSection("lv2-organize")}>{c(content.nav.organize)}</button>
+        <button type="button" onClick={() => scrollToSection("lv2-help")}>{c(content.nav.help)}</button>
         <div className="lv2-mobile-menu-foot">
           <button type="button" onClick={() => chooseLanguage(locale === "es" ? "en" : "es")}>
             {locale === "es" ? "English" : "Español"}
@@ -468,6 +510,7 @@ export function Landing({
 
       <section className="lv2-hero">
         <video
+          key={`${content.assets.heroVideoMobile}|${content.assets.heroVideoDesktop}`}
           ref={heroVideoRef}
           autoPlay
           muted
@@ -475,29 +518,23 @@ export function Landing({
           playsInline
           controls={false}
           preload="auto"
-          poster="/landing-v2/poster-01.jpg"
+          poster={content.assets.heroPoster}
           tabIndex={-1}
           aria-hidden="true"
           onPlaying={() => setHeroVideoPlaying(true)}
           onPause={() => setHeroVideoPlaying(false)}
         >
-          <source src="/landing-v2/sport-01-720.mp4" media="(max-width: 800px)" type="video/mp4" />
-          <source src="/landing-v2/sport-01-1080.mp4" type="video/mp4" />
+          <source src={content.assets.heroVideoMobile} media="(max-width: 800px)" type="video/mp4" />
+          <source src={content.assets.heroVideoDesktop} type="video/mp4" />
         </video>
-        <div className={`lv2-video-poster lv2-video-poster-hero${heroVideoPlaying ? " is-hidden" : ""}`} aria-hidden="true" />
+        <div className={`lv2-video-poster lv2-video-poster-hero${heroVideoPlaying ? " is-hidden" : ""}`} style={{ backgroundImage: `url(${content.assets.heroPoster})` }} aria-hidden="true" />
         <div className="lv2-video-shade lv2-hero-shade" />
         <div className="lv2-shell lv2-hero-content">
-          <h1>{tr(locale, "Todo el torneo. En un solo lugar.", "The whole tournament. In one place.")}</h1>
+          <h1>{c(content.hero.title)}</h1>
           <div className="lv2-hero-bottom">
-            <p>
-              {tr(
-                locale,
-                "Encontrá torneos, inscribite y seguí cada etapa. Si organizás, manejá inscripciones, cronograma, competencia y resultados desde el mismo lugar.",
-                "Find tournaments, register and follow every stage. If you organize, manage registration, schedule, competition and results from the same place.",
-              )}
-            </p>
+            <p>{c(content.hero.body)}</p>
             <button className="lv2-line-cta" type="button" onClick={() => scrollToSection("lv2-tournaments")}>
-              <span>{tr(locale, "Explorar torneos", "Explore tournaments")}</span>
+              <span>{c(content.hero.cta)}</span>
               <span className="lv2-line-cta-rule"><i /></span>
             </button>
           </div>
@@ -507,16 +544,16 @@ export function Landing({
       <section className="lv2-section lv2-tournaments" id="lv2-tournaments">
         <div className="lv2-shell">
           <div className="lv2-section-head">
-            <h2>{tr(locale, "Torneos.", "Tournaments.")}</h2>
-            <p>{tr(locale, "Lo que está por empezar, lo que se está jugando y lo que ya quedó en la historia.", "What is about to start, what is being played and what is already part of the history.")}</p>
+            <h2>{c(content.tournaments.title)}</h2>
+            <p>{c(content.tournaments.body)}</p>
           </div>
 
           <div className="lv2-tournament-filters" role="tablist" aria-label={tr(locale, "Filtrar torneos", "Filter tournaments")}>
             <button type="button" className={tournamentFilter === "upcoming" ? "is-active" : ""} onClick={() => setTournamentFilter("upcoming")}>
-              {tr(locale, "Próximos", "Upcoming")}
+              {c(content.tournaments.upcoming)}
             </button>
             <button type="button" className={tournamentFilter === "results" ? "is-active" : ""} onClick={() => setTournamentFilter("results")}>
-              {tr(locale, "Resultados", "Results")}
+              {c(content.tournaments.results)}
             </button>
           </div>
 
@@ -567,8 +604,8 @@ export function Landing({
           ) : (
             <div className="lv2-empty">
               {tournamentFilter === "results"
-                ? tr(locale, "Todavía no hay resultados recientes para mostrar.", "There are no recent results to show yet.")
-                : tr(locale, "Los próximos torneos van a aparecer acá.", "Upcoming tournaments will appear here.")}
+                ? c(content.tournaments.emptyResults)
+                : c(content.tournaments.emptyUpcoming)}
             </div>
           )}
         </div>
@@ -577,8 +614,8 @@ export function Landing({
       {metricsVisible && (
         <section className="lv2-metrics" ref={metricsRef}>
           <div className="lv2-shell lv2-metrics-grid">
-            <div className="lv2-metric"><strong>{metricPlayers.toLocaleString(locale === "es" ? "es-UY" : "en-US")}</strong><span>{tr(locale, "Jugadores", "Players")}</span></div>
-            <div className="lv2-metric"><strong>{metricMatches.toLocaleString(locale === "es" ? "es-UY" : "en-US")}</strong><span>{tr(locale, "Partidos jugados", "Matches played")}</span></div>
+            <div className="lv2-metric"><strong>{metricPlayers.toLocaleString(locale === "es" ? "es-UY" : "en-US")}<em>{content.metrics.suffix}</em></strong><span>{c(content.metrics.playersLabel)}</span></div>
+            <div className="lv2-metric"><strong>{metricMatches.toLocaleString(locale === "es" ? "es-UY" : "en-US")}<em>{content.metrics.suffix}</em></strong><span>{c(content.metrics.matchesLabel)}</span></div>
           </div>
         </section>
       )}
@@ -589,8 +626,8 @@ export function Landing({
             {journey.map((item, index) => (
               <article key={item.number} className={`lv2-journey-step${desktopJourneyStep === index ? " is-active" : ""}`} data-lv2-journey-step={index}>
                 <span>{item.number}</span>
-                <h3>{tr(locale, item.titleEs, item.titleEn)}</h3>
-                <p>{tr(locale, item.bodyEs, item.bodyEn)}</p>
+                <h3>{c(item.title)}</h3>
+                <p>{c(item.body)}</p>
               </article>
             ))}
           </div>
@@ -600,8 +637,8 @@ export function Landing({
                 <img src={item.image} alt="" />
                 <div className="lv2-journey-panel-shade" />
                 <div className="lv2-journey-panel-copy">
-                  <span>{tr(locale, item.labelEs, item.labelEn)}</span>
-                  <strong>{tr(locale, item.titleEs, item.titleEn)}</strong>
+                  <span>{c(item.label)}</span>
+                  <strong>{c(item.title)}</strong>
                 </div>
               </div>
             ))}
@@ -610,7 +647,7 @@ export function Landing({
 
         <div className="lv2-journey-mobile" ref={mobileJourneyRef}>
           <div className="lv2-journey-mobile-stage">
-            <h2>{tr(locale, "Todo el torneo, conectado.", "The whole tournament, connected.")}</h2>
+            <h2>{c(content.journey.heading)}</h2>
             <div className="lv2-journey-mobile-frame">
               {journey.map((item, index) => (
                 <article
@@ -621,9 +658,9 @@ export function Landing({
                   <img src={item.image} alt="" />
                   <div className="lv2-journey-mobile-shade" />
                   <div className="lv2-journey-mobile-copy">
-                    <span>{item.number} · {tr(locale, item.labelEs, item.labelEn)}</span>
-                    <h3>{tr(locale, item.titleEs, item.titleEn)}</h3>
-                    <p>{tr(locale, item.bodyEs, item.bodyEn)}</p>
+                    <span>{item.number} · {c(item.label)}</span>
+                    <h3>{c(item.title)}</h3>
+                    <p>{c(item.body)}</p>
                   </div>
                 </article>
               ))}
@@ -631,7 +668,7 @@ export function Landing({
             <div className="lv2-journey-mobile-footer">
               <div className="lv2-journey-progress"><i style={{ width: "3%" }} /></div>
               <div className="lv2-scroll-hint">
-                <span>{tr(locale, "Seguí bajando", "Keep scrolling")}</span>
+                <span>{c(content.journey.keepScrolling)}</span>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5" /></svg>
               </div>
             </div>
@@ -641,6 +678,7 @@ export function Landing({
 
       <section className="lv2-sport-scene">
         <video
+          key={`${content.assets.sceneVideoMobile}|${content.assets.sceneVideoDesktop}`}
           ref={sceneVideoRef}
           autoPlay
           muted
@@ -648,41 +686,41 @@ export function Landing({
           playsInline
           controls={false}
           preload="auto"
-          poster="/landing-v2/poster-02.jpg"
+          poster={content.assets.scenePoster}
           tabIndex={-1}
           aria-hidden="true"
           onPlaying={() => setSceneVideoPlaying(true)}
           onPause={() => setSceneVideoPlaying(false)}
         >
-          <source src="/landing-v2/sport-02-720.mp4" media="(max-width: 800px)" type="video/mp4" />
-          <source src="/landing-v2/sport-02-1080.mp4" type="video/mp4" />
+          <source src={content.assets.sceneVideoMobile} media="(max-width: 800px)" type="video/mp4" />
+          <source src={content.assets.sceneVideoDesktop} type="video/mp4" />
         </video>
-        <div className={`lv2-video-poster lv2-video-poster-scene${sceneVideoPlaying ? " is-hidden" : ""}`} aria-hidden="true" />
+        <div className={`lv2-video-poster lv2-video-poster-scene${sceneVideoPlaying ? " is-hidden" : ""}`} style={{ backgroundImage: `url(${content.assets.scenePoster})` }} aria-hidden="true" />
         <div className="lv2-video-shade lv2-scene-shade" />
         <div className="lv2-shell lv2-scene-copy">
-          <h2>{tr(locale, "Mientras se juega, todo tiene que estar claro.", "While the tournament is being played, everything has to be clear.")}</h2>
-          <p>{tr(locale, "Horarios, cancha, rival, cuadro y resultados: la información importante aparece cuando importa.", "Times, court, opponent, bracket and results: the important information appears when it matters.")}</p>
+          <h2>{c(content.scene.title)}</h2>
+          <p>{c(content.scene.body)}</p>
         </div>
       </section>
 
       <section className="lv2-section lv2-person" id="lv2-person">
         <div className="lv2-shell">
-          <h2 className="lv2-person-mobile-title">{tr(locale, "Quién está detrás.", "Who is behind it.")}</h2>
+          <h2 className="lv2-person-mobile-title">{c(content.person.sectionTitle)}</h2>
           <div className="lv2-person-grid">
             <button type="button" className={`lv2-person-photo${personExpanded ? " is-expanded" : ""}`} onClick={() => setPersonExpanded((value) => !value)} aria-expanded={personExpanded}>
-              <img src="/landing-v2/person.jpg" alt="Augusto" />
-              <div className="lv2-person-mobile-base"><strong>Augusto</strong><span>{personExpanded ? tr(locale, "Cerrar", "Close") : tr(locale, "Conocer más", "Learn more")}</span></div>
+              <img src={content.assets.personPhoto} alt={content.person.name} />
+              <div className="lv2-person-mobile-base"><strong>{content.person.name}</strong><span>{personExpanded ? c(content.person.close) : c(content.person.learnMore)}</span></div>
               <div className="lv2-person-overlay">
-                <h3>{tr(locale, "Construido desde adentro de los torneos.", "Built from inside tournaments.")}</h3>
-                <strong>Augusto</strong>
-                <p>{tr(locale, "Organizar, competir, mirar horarios y seguir resultados: la idea nace de vivir esos problemas en primera persona y convertirlos en una experiencia mucho más clara.", "Organizing, competing, checking times and following results: the idea comes from living those problems first-hand and turning them into a much clearer experience.")}</p>
+                <h3>{c(content.person.headline)}</h3>
+                <strong>{content.person.name}</strong>
+                <p>{c(content.person.body)}</p>
               </div>
             </button>
             <div className="lv2-person-copy">
-              <div className="lv2-person-kicker">{tr(locale, "Quién está detrás", "Who is behind it")}</div>
-              <h2>{tr(locale, "Construido desde adentro de los torneos.", "Built from inside tournaments.")}</h2>
-              <strong>Augusto</strong>
-              <p>{tr(locale, "Organizar, competir, mirar horarios y seguir resultados: la idea nace de vivir esos problemas en primera persona y convertirlos en una experiencia mucho más clara.", "Organizing, competing, checking times and following results: the idea comes from living those problems first-hand and turning them into a much clearer experience.")}</p>
+              <div className="lv2-person-kicker">{c(content.person.kicker)}</div>
+              <h2>{c(content.person.headline)}</h2>
+              <strong>{content.person.name}</strong>
+              <p>{c(content.person.body)}</p>
             </div>
           </div>
         </div>
@@ -691,8 +729,8 @@ export function Landing({
       <section className="lv2-section lv2-organize" id="lv2-organize">
         <div className="lv2-shell lv2-organize-grid">
           <div className="lv2-organize-copy">
-            <h2>{tr(locale, "Organizá con", "Organize with")} <img src="/huau-logo.png" alt="HUAU" /></h2>
-            <p>{tr(locale, "Contanos qué querés organizar y cómo podemos ayudarte a llevarlo a cancha.", "Tell us what you want to organize and how we can help you bring it to the court.")}</p>
+            <h2>{c(content.organize.heading)} <img src="/huau-logo.png" alt="HUAU" /></h2>
+            <p>{c(content.organize.body)}</p>
           </div>
 
           <form className="lv2-contact-form" onSubmit={sendContact}>
@@ -705,10 +743,10 @@ export function Landing({
               <label><span>{tr(locale, "Teléfono", "Phone")}</span><input name="phone" type="tel" maxLength={60} /></label>
             </div>
             <label><span>{tr(locale, "Tipo de organización", "Organization type")}</span><select name="organizationType" defaultValue="organizer"><option value="organizer">{tr(locale, "Organizador", "Organizer")}</option><option value="club">Club</option><option value="league">{tr(locale, "Liga", "League")}</option><option value="academy">{tr(locale, "Academia", "Academy")}</option><option value="federation">{tr(locale, "Federación", "Federation")}</option><option value="other">{tr(locale, "Otro", "Other")}</option></select></label>
-            <label><span>{tr(locale, "Qué querés organizar", "What do you want to organize")}</span><textarea name="message" rows={5} required maxLength={3000} /></label>
+            <label><span>{c(content.organize.messageLabel)}</span><textarea name="message" rows={5} required maxLength={3000} /></label>
             <label className="lv2-website-trap" aria-hidden="true"><span>Website</span><input name="website" tabIndex={-1} autoComplete="off" /></label>
-            <button type="submit" className="lv2-submit" disabled={contactState === "sending"}>{contactState === "sending" ? "…" : tr(locale, "Enviar consulta", "Send inquiry")}</button>
-            {contactState === "sent" && <p className="lv2-form-success">{tr(locale, "Consulta enviada.", "Inquiry sent.")}</p>}
+            <button type="submit" className="lv2-submit" disabled={contactState === "sending"}>{contactState === "sending" ? "…" : c(content.organize.submit)}</button>
+            {contactState === "sent" && <p className="lv2-form-success">{c(content.organize.sent)}</p>}
             {contactError && <p className="lv2-form-error">{contactError}</p>}
           </form>
         </div>
@@ -717,7 +755,7 @@ export function Landing({
       {(data?.tutorials.length ?? 0) > 0 && (
         <section className="lv2-section lv2-help" id="lv2-help">
           <div className="lv2-shell lv2-help-grid">
-            <div className="lv2-help-heading"><h2>{tr(locale, "Ayuda.", "Help.")}</h2><p>{tr(locale, "Guías rápidas para empezar y resolver lo más común.", "Quick guides to get started and solve the most common questions.")}</p></div>
+            <div className="lv2-help-heading"><h2>{c(content.help.title)}</h2><p>{c(content.help.body)}</p></div>
             <div className="lv2-help-list">
               {data?.tutorials.map((tutorial, index) => (
                 <button type="button" key={tutorial.id} onClick={() => setActiveTutorialId(tutorial.id)}>
@@ -735,15 +773,15 @@ export function Landing({
         <div className="lv2-shell lv2-footer-top">
           <img src="/huau-logo.png" alt="HUAU" />
           <div className="lv2-footer-links">
-            <button type="button" onClick={() => scrollToSection("lv2-tournaments")}>{tr(locale, "Torneos", "Tournaments")}</button>
-            <button type="button" onClick={() => scrollToSection("lv2-organize")}>{tr(locale, "Organizar", "Organize")}</button>
-            <button type="button" onClick={() => scrollToSection("lv2-help")}>{tr(locale, "Ayuda", "Help")}</button>
-            <span>{tr(locale, "Términos y condiciones", "Terms and conditions")}</span>
-            <span>{tr(locale, "Política de privacidad", "Privacy policy")}</span>
+            <button type="button" onClick={() => scrollToSection("lv2-tournaments")}>{c(content.nav.tournaments)}</button>
+            <button type="button" onClick={() => scrollToSection("lv2-organize")}>{c(content.nav.organize)}</button>
+            <button type="button" onClick={() => scrollToSection("lv2-help")}>{c(content.nav.help)}</button>
+            <span>{c(content.footer.terms)}</span>
+            <span>{c(content.footer.privacy)}</span>
             <button type="button" onClick={() => chooseLanguage(locale === "es" ? "en" : "es")}>{locale === "es" ? "English" : "Español"}</button>
           </div>
         </div>
-        <div className="lv2-shell lv2-footer-bottom"><span>Your Sports Ecosystem</span></div>
+        <div className="lv2-shell lv2-footer-bottom"><span>{content.footer.tagline}</span></div>
       </footer>
 
       {activeTutorial && (

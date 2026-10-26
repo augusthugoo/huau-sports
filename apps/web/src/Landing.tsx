@@ -5,6 +5,7 @@ import "./Landing.css";
 import { LandingTutorialAdmin, LandingTutorialSection } from "./LandingTutorials";
 import type { LandingTutorial } from "./LandingTutorials";
 import { TournamentLiveTicker } from "./TournamentLiveLinks";
+import { LandingV2Admin } from "./LandingV2Admin";
 
 type Go = (path: string) => void;
 const tr = (locale: Locale, es: string, en: string) => (locale === "es" ? es : en);
@@ -286,6 +287,7 @@ export function LandingAdminPanel({ locale }: { locale: Locale }) {
   const [busy, setBusy] = useState(0);
   const [supportBusy, setSupportBusy] = useState(false);
   const [metricsBusy, setMetricsBusy] = useState(false);
+  const [leadsBusy, setLeadsBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [version, setVersion] = useState(0);
 
@@ -363,20 +365,26 @@ export function LandingAdminPanel({ locale }: { locale: Locale }) {
     }
   };
 
+  const clearLeads = async () => {
+    if (!data?.leads.length) return;
+    if (!window.confirm(tr(locale, "¿Eliminar todas las consultas actuales? Usalo sólo para limpiar las pruebas.", "Delete all current inquiries? Use this only to clear test data."))) return;
+    setLeadsBusy(true);
+    setMessage("");
+    try {
+      await jsonApi("/api/platform/landing/leads", { method: "DELETE", body: "{}" });
+      await load();
+      setMessage(tr(locale, "Consultas eliminadas.", "Inquiries deleted."));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "LANDING_LEADS_DELETE_FAILED");
+    } finally {
+      setLeadsBusy(false);
+    }
+  };
+
   return (
     <section className="panel landing-admin-panel">
       <div className="panel-title"><div><div className="eyebrow">HUAU LANDING</div><h2>{tr(locale, "Portada pública", "Public landing")}</h2></div></div>
-      <p className="muted">{tr(locale, "Las tres imágenes usan claves fijas en R2: reemplazar una sobrescribe la anterior y no acumula archivos.", "The three images use fixed R2 keys: replacing one overwrites the previous file and does not accumulate objects.")}</p>
-      <div className="landing-admin-heroes">
-        {[1, 2, 3].map((slot) => {
-          const hero = data?.heroes.find((item) => item.slot === slot);
-          return <div className="landing-admin-hero" key={slot}>
-            <div className="landing-admin-preview">{hero?.configured ? <img key={`${slot}-${version}`} src={`${hero.url}?v=${version}`} alt={`${tr(locale, "Imagen", "Image")} ${slot}`} /> : <span>{tr(locale, "Sin imagen", "No image")}</span>}</div>
-            <strong>{tr(locale, "Imagen", "Image")} {slot}</strong>
-            <div className="landing-admin-actions"><label className={`ghost small${busy === slot ? " disabled" : ""}`}>{busy === slot ? "…" : tr(locale, "Reemplazar", "Replace")}<input type="file" accept="image/jpeg,image/png,image/webp,image/avif" disabled={busy !== 0} onChange={(event) => void upload(slot, event)} /></label>{hero?.configured && <button className="ghost small" disabled={busy !== 0} onClick={() => void remove(slot)}>{tr(locale, "Quitar", "Remove")}</button>}</div>
-          </div>;
-        })}
-      </div>
+      <LandingV2Admin locale={locale} />
       <div className="landing-support-admin">
         <div>
           <div className="eyebrow">HUAU SUPPORT</div>
@@ -443,7 +451,13 @@ export function LandingAdminPanel({ locale }: { locale: Locale }) {
         </form>
       </div>
       <LandingTutorialAdmin locale={locale} />
-      <div className="landing-leads-head"><h3>{tr(locale, "Consultas de organizaciones", "Organization inquiries")}</h3><span>{data?.leads.length ?? 0}</span></div>
+      <div className="landing-leads-head">
+        <h3>{tr(locale, "Consultas de organizaciones", "Organization inquiries")}</h3>
+        <div className="landing-admin-actions">
+          <span>{data?.leads.length ?? 0}</span>
+          {(data?.leads.length ?? 0) > 0 && <button type="button" className="ghost small" disabled={leadsBusy} onClick={() => void clearLeads()}>{leadsBusy ? "…" : tr(locale, "Limpiar pruebas", "Clear tests")}</button>}
+        </div>
+      </div>
       {!data ? <div className="empty-state">{tr(locale, "Cargando…", "Loading…")}</div> : !data.contactStorageReady ? <div className="empty-state">{tr(locale, "Aplicá la migración 0013 para activar el formulario de contacto.", "Apply migration 0013 to activate contact storage.")}</div> : data.leads.length ? <div className="landing-leads-list">{data.leads.map((lead) => <article key={lead.id}><div><strong>{lead.organization}</strong><span>{lead.name} · {lead.email}{lead.phone ? ` · ${lead.phone}` : ""}</span></div><span className="pill">{lead.organizationType}</span><p>{lead.message}</p><small>{new Intl.DateTimeFormat(locale === "es" ? "es-UY" : "en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(lead.createdAt))}</small></article>)}</div> : <div className="empty-state">{tr(locale, "Todavía no hay consultas.", "No inquiries yet.")}</div>}
       {message && <p className="muted">{message}</p>}
     </section>

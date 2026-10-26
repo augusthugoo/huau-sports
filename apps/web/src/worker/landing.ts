@@ -1,5 +1,7 @@
 import { handleLandingTutorialApi, loadPublicLandingTutorials } from "./landing-tutorials";
 import type { PublicLandingTutorial } from "./landing-tutorials";
+import { handleLandingV2CmsApi, loadPublishedLandingV2Content } from "./landing-v2-cms";
+import type { LandingV2Content } from "../LandingV2Content";
 type CurrentUser = { id: string; name: string; email: string };
 type AccessHelpers = {
   requireUser: (request: Request, env: Env) => Promise<CurrentUser | null>;
@@ -38,10 +40,11 @@ type PublicLandingPayload = {
     players: number;
     matches: number;
   };
+  content: LandingV2Content;
 };
 
 type PublicLandingSnapshot = {
-  version: 3;
+  version: 4;
   generatedAt: number;
   validUntil: number;
   payload: PublicLandingPayload;
@@ -109,7 +112,7 @@ async function buildPublicLandingSnapshot(env: Env): Promise<PublicLandingSnapsh
   const activeCutoff = generatedAt - 86_400;
   const completedCutoff = generatedAt - 30 * 86_400;
 
-  const [rows, landingMetrics, tutorials] = await Promise.all([
+  const [rows, landingMetrics, tutorials, landingContent] = await Promise.all([
     env.HUAU_DB.prepare(
       `SELECT id,name,slug,sport,status,start_at as startAt,end_at as endAt,
               CASE WHEN public_hero_r2_key IS NOT NULL AND TRIM(public_hero_r2_key) <> ''
@@ -138,6 +141,7 @@ async function buildPublicLandingSnapshot(env: Env): Promise<PublicLandingSnapsh
     ).bind(completedCutoff, activeCutoff).all<LandingTournamentRow>(),
     loadLandingMetrics(env),
     loadPublicLandingTutorials(env),
+    loadPublishedLandingV2Content(env),
   ]);
 
   const timeExpiryCandidates = rows.results
@@ -151,7 +155,7 @@ async function buildPublicLandingSnapshot(env: Env): Promise<PublicLandingSnapsh
   );
 
   return {
-    version: 3,
+    version: 4,
     generatedAt,
     validUntil,
     payload: {
@@ -163,6 +167,7 @@ async function buildPublicLandingSnapshot(env: Env): Promise<PublicLandingSnapsh
         players: landingMetrics.players,
         matches: landingMetrics.matches,
       },
+      content: landingContent,
     },
   };
 }
@@ -172,7 +177,7 @@ async function publicLanding(env: Env) {
     try {
       const snapshot = JSON.parse(await cached.text()) as PublicLandingSnapshot;
       if (
-        snapshot.version === 3 &&
+        snapshot.version === 4 &&
         snapshot.payload?.ok === true &&
         Number(snapshot.validUntil) > unixNow()
       ) {
@@ -273,6 +278,20 @@ async function platformLanding(request: Request, env: Env, access: AccessHelpers
   });
 }
 
+async function deleteContactLeads(request: Request, env: Env, access: AccessHelpers) {
+  const auth = await platformUser(request, env, access);
+  if ("response" in auth) return auth.response;
+  try {
+    await env.HUAU_DB.prepare("DELETE FROM platform_contact_leads").run();
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("no such table")) {
+      return json({ ok: false, code: "CONTACT_STORAGE_NOT_READY" }, { status: 503 });
+    }
+    throw error;
+  }
+  return json({ ok: true });
+}
+
 async function updateSupportWhatsapp(request: Request, env: Env, access: AccessHelpers) {
   const auth = await platformUser(request, env, access);
   if ("response" in auth) return auth.response;
@@ -333,11 +352,14 @@ async function updateHero(request: Request, slot: number, env: Env, access: Acce
 export async function handleLandingApi(request: Request, env: Env, url: URL, access: AccessHelpers): Promise<Response | null> {
   if (url.pathname === "/api/public/landing" && request.method === "GET") return publicLanding(env);
   if (url.pathname === "/api/public/contact" && request.method === "POST") return submitContact(request, env);
+  const cmsResponse = await handleLandingV2CmsApi(request, env, url, access);
+  if (cmsResponse) return cmsResponse;
   const tutorialResponse = await handleLandingTutorialApi(request, env, url, access);
   if (tutorialResponse) return tutorialResponse;
   const publicHeroMatch = url.pathname.match(/^\/api\/public\/landing\/hero\/([1-3])$/);
   if (publicHeroMatch && request.method === "GET") return publicHero(Number(publicHeroMatch[1]), env);
   if (url.pathname === "/api/platform/landing" && request.method === "GET") return platformLanding(request, env, access);
+  if (url.pathname === "/api/platform/landing/leads" && request.method === "DELETE") return deleteContactLeads(request, env, access);
   if (url.pathname === "/api/platform/support" && request.method === "PUT") return updateSupportWhatsapp(request, env, access);
   if (url.pathname === "/api/platform/landing/metrics" && request.method === "PUT") return updateLandingMetrics(request, env, access);
   const platformHeroMatch = url.pathname.match(/^\/api\/platform\/landing\/hero\/([^/]+)$/);

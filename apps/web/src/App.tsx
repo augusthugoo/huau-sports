@@ -478,7 +478,7 @@ function PlatformAdmin({locale,go,refreshMe}:{locale:Locale;go:(p:string)=>void;
   };
 
   return <Shell locale={locale} go={go}>
-    <main className="dashboard">
+    <main className="dashboard platform-admin-page">
       <section className="dashboard-head">
         <div>
           <div className="eyebrow">HUAU</div>
