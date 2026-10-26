@@ -22,6 +22,9 @@
       "bucket_name": "huau-dev-assets"
     }
   ],
+  "ai": {
+    "binding": "AI"
+  },
   "vars": {
     "APP_ENV": "development",
     "APP_VERSION": "0.8.0-phase7-payments",
@@ -47,6 +50,9 @@
           "bucket_name": "huau-staging-assets"
         }
       ],
+      "ai": {
+        "binding": "AI"
+      },
       "vars": {
         "APP_ENV": "staging",
         "APP_VERSION": "0.8.0-phase7-payments",

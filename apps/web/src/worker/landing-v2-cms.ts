@@ -47,6 +47,76 @@ const assetSpecs: Record<LandingV2AssetId, { kind: "image" | "video"; maxBytes: 
 
 const isAssetId = (raw: string): raw is LandingV2AssetId => (landingV2AssetIds as readonly string[]).includes(raw);
 
+const translationTargets: Record<string, string> = {
+  en: "english",
+};
+
+const isLocalizedNode = (value: unknown): value is LandingLocalizedText =>
+  Boolean(
+    value &&
+    typeof value === "object" &&
+    typeof (value as { source?: unknown }).source === "string" &&
+    (value as { translations?: unknown }).translations &&
+    typeof (value as { translations?: unknown }).translations === "object",
+  );
+
+async function translateLandingText(env: Env, text: string, targetLocale: string): Promise<string> {
+  const targetLanguage = translationTargets[targetLocale];
+  if (!targetLanguage || !text.trim()) return text;
+  const response = await env.AI.run("@cf/meta/m2m100-1.2b", {
+    text,
+    source_lang: "spanish",
+    target_lang: targetLanguage,
+  }) as { translated_text?: unknown };
+  const translated = typeof response?.translated_text === "string" ? response.translated_text.trim() : "";
+  if (!translated) throw new Error("EMPTY_TRANSLATION");
+  return translated;
+}
+
+async function refreshAutomaticTranslations(
+  env: Env,
+  next: LandingV2EditableContent,
+  previous: LandingV2EditableContent,
+): Promise<number> {
+  const jobs: Array<{ node: LandingLocalizedText; locale: string; text: string }> = [];
+
+  const walk = (nextNode: unknown, previousNode: unknown) => {
+    if (isLocalizedNode(nextNode)) {
+      const previousLocalized = isLocalizedNode(previousNode) ? previousNode : null;
+      for (const locale of Object.keys(translationTargets)) {
+        const currentTranslation = nextNode.translations[locale]?.trim() ?? "";
+        const sourceChanged = !previousLocalized || nextNode.source !== previousLocalized.source;
+        if (sourceChanged || !currentTranslation) {
+          jobs.push({ node: nextNode, locale, text: nextNode.source });
+        }
+      }
+      return;
+    }
+    if (Array.isArray(nextNode)) {
+      nextNode.forEach((item, index) => walk(item, Array.isArray(previousNode) ? previousNode[index] : undefined));
+      return;
+    }
+    if (nextNode && typeof nextNode === "object") {
+      const previousRecord = previousNode && typeof previousNode === "object"
+        ? previousNode as Record<string, unknown>
+        : {};
+      for (const [key, child] of Object.entries(nextNode as Record<string, unknown>)) {
+        walk(child, previousRecord[key]);
+      }
+    }
+  };
+
+  walk(next, previous);
+
+  for (let start = 0; start < jobs.length; start += 6) {
+    const batch = jobs.slice(start, start + 6);
+    await Promise.all(batch.map(async (job) => {
+      job.node.translations[job.locale] = await translateLandingText(env, job.text, job.locale);
+    }));
+  }
+  return jobs.length;
+}
+
 async function platformUser(request: Request, env: Env, access: AccessHelpers) {
   const user = await access.requireUser(request, env);
   if (!user) return { response: json({ ok: false, code: "UNAUTHENTICATED" }, { status: 401 }) };
@@ -57,11 +127,32 @@ async function platformUser(request: Request, env: Env, access: AccessHelpers) {
 }
 
 const localized = (value: unknown, fallback: LandingLocalizedText, max = 240): LandingLocalizedText => {
-  if (!value || typeof value !== "object") return fallback;
-  const candidate = value as { es?: unknown; en?: unknown };
-  const es = typeof candidate.es === "string" ? candidate.es.trim().slice(0, max) : fallback.es;
-  const en = typeof candidate.en === "string" ? candidate.en.trim().slice(0, max) : fallback.en;
-  return { es: es || fallback.es, en: en || fallback.en };
+  if (!value || typeof value !== "object") return structuredClone(fallback);
+  const candidate = value as {
+    source?: unknown;
+    translations?: unknown;
+    es?: unknown;
+    en?: unknown;
+  };
+  const rawSource = typeof candidate.source === "string"
+    ? candidate.source
+    : typeof candidate.es === "string"
+      ? candidate.es
+      : fallback.source;
+  const source = rawSource.trim().slice(0, max) || fallback.source;
+
+  const translations: Record<string, string> = {};
+  if (candidate.translations && typeof candidate.translations === "object") {
+    for (const [locale, translated] of Object.entries(candidate.translations as Record<string, unknown>)) {
+      if (typeof translated === "string") translations[locale] = translated.trim().slice(0, max);
+    }
+  } else if (typeof candidate.en === "string") {
+    translations.en = candidate.en.trim().slice(0, max);
+  } else {
+    Object.assign(translations, fallback.translations);
+  }
+
+  return { source, translations };
 };
 
 const line = (value: unknown, fallback: string, max = 120): string => {
@@ -158,7 +249,7 @@ const normalizeModes = (value: unknown): LandingV2AssetModes => {
 };
 
 type StoredLandingV2 = {
-  version: 1;
+  version: 2;
   content: LandingV2EditableContent;
   assets: LandingV2AssetModes;
   updatedAt: number;
@@ -166,7 +257,7 @@ type StoredLandingV2 = {
 };
 
 const defaultStored = (): StoredLandingV2 => ({
-  version: 1,
+  version: 2,
   content: defaultLandingV2EditableContent,
   assets: defaultLandingV2AssetModes,
   updatedAt: 0,
@@ -178,7 +269,7 @@ async function readStored(env: Env, key: string): Promise<StoredLandingV2 | null
   try {
     const parsed = JSON.parse(await object.text()) as Partial<StoredLandingV2>;
     return {
-      version: 1,
+      version: 2,
       content: normalizeLandingV2EditableContent(parsed.content),
       assets: normalizeModes(parsed.assets),
       updatedAt: Number(parsed.updatedAt ?? 0),
@@ -261,14 +352,22 @@ async function saveDraft(request: Request, env: Env, access: AccessHelpers) {
   if ("response" in auth) return auth.response;
   const body = await request.json() as { content?: unknown; assets?: unknown };
   const current = await loadDraftStored(env);
+  const content = normalizeLandingV2EditableContent(body.content);
+  let translatedFields = 0;
+  try {
+    translatedFields = await refreshAutomaticTranslations(env, content, current.content);
+  } catch (error) {
+    console.error("Landing V2 automatic translation failed", error);
+    return json({ ok: false, code: "LANDING_V2_TRANSLATION_FAILED" }, { status: 502 });
+  }
   const next: StoredLandingV2 = {
-    version: 1,
-    content: normalizeLandingV2EditableContent(body.content),
+    version: 2,
+    content,
     assets: body.assets ? normalizeModes(body.assets) : current.assets,
     updatedAt: now(),
   };
   await writeStored(env, draftKey, next, "landing-v2-draft");
-  return json({ ok: true, draft: next });
+  return json({ ok: true, draft: next, translatedFields });
 }
 
 async function resetDraft(request: Request, env: Env, access: AccessHelpers) {

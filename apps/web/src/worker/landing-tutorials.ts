@@ -65,6 +65,18 @@ const fixedTutorials = (): TutorialConfigItem[] => [
 const validId = (value: string) => /^[a-zA-Z0-9-]{1,80}$/.test(value);
 const videoKey = (id: string) => `landing/tutorials/${id}`;
 
+async function translateTutorialTitle(env: Env, text: string): Promise<string> {
+  if (!text.trim()) return "";
+  const response = await env.AI.run("@cf/meta/m2m100-1.2b", {
+    text,
+    source_lang: "spanish",
+    target_lang: "english",
+  }) as { translated_text?: unknown };
+  const translated = typeof response?.translated_text === "string" ? response.translated_text.trim() : "";
+  if (!translated) throw new Error("EMPTY_TRANSLATION");
+  return translated.slice(0, 140);
+}
+
 async function platformUser(request: Request, env: Env, access: AccessHelpers) {
   const user = await access.requireUser(request, env);
   if (!user) {
@@ -195,7 +207,6 @@ async function updateTutorialMetadata(
 
   const body = (await request.json()) as { titleEs?: string; titleEn?: string };
   const titleEs = String(body.titleEs ?? "").trim().slice(0, 140);
-  const titleEn = String(body.titleEn ?? "").trim().slice(0, 140);
 
   const config = await loadConfig(env);
   const tutorial = config.tutorials.find((item) => item.id === tutorialId);
@@ -203,11 +214,25 @@ async function updateTutorialMetadata(
     return json({ ok: false, code: "TUTORIAL_NOT_FOUND" }, { status: 404 });
   }
 
+  const sourceChanged = titleEs !== tutorial.titleEs;
+  let titleEn = body.titleEn === undefined
+    ? tutorial.titleEn
+    : String(body.titleEn).trim().slice(0, 140);
+
+  if (sourceChanged) {
+    try {
+      titleEn = await translateTutorialTitle(env, titleEs);
+    } catch (error) {
+      console.error("Landing tutorial automatic translation failed", error);
+      return json({ ok: false, code: "LANDING_TUTORIAL_TRANSLATION_FAILED" }, { status: 502 });
+    }
+  }
+
   tutorial.titleEs = titleEs;
   tutorial.titleEn = titleEn;
   tutorial.updatedAt = Date.now();
   await saveConfig(env, config);
-  return json({ ok: true });
+  return json({ ok: true, titleEs, titleEn });
 }
 
 async function updateTutorialVideo(

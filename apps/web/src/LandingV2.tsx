@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, TouchEvent } from "react";
 import type { Locale } from "./i18n";
 import type { LandingTutorial } from "./LandingTutorials";
-import { defaultLandingV2AssetUrls, defaultLandingV2EditableContent } from "./LandingV2Content";
+import { defaultLandingV2AssetUrls, defaultLandingV2EditableContent, getLandingLocalizedText } from "./LandingV2Content";
 import type { LandingLocalizedText, LandingV2Content } from "./LandingV2Content";
 import "./LandingV2.css";
 
@@ -173,7 +173,7 @@ export function Landing({
     ...defaultLandingV2EditableContent,
     assets: defaultLandingV2AssetUrls,
   };
-  const c = (value: LandingLocalizedText) => locale === "es" ? value.es : value.en;
+  const c = (value: LandingLocalizedText) => getLandingLocalizedText(value, locale);
   const journeyImages = [content.assets.journey1, content.assets.journey2, content.assets.journey3, content.assets.journey4];
   const journey = content.journey.items.map((item, index) => ({
     ...item,

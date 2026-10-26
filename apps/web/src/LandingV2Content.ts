@@ -1,4 +1,24 @@
-export type LandingLocalizedText = { es: string; en: string };
+export type LandingLocalizedText = {
+  source: string;
+  translations: Record<string, string>;
+};
+
+export const landingV2SourceLocale = "es";
+export const landingV2EnabledTranslationLocales = ["en"] as const;
+
+export function getLandingLocalizedText(value: LandingLocalizedText, locale: string): string {
+  const legacy = value as LandingLocalizedText & { es?: string; en?: string };
+  const source = typeof value?.source === "string"
+    ? value.source
+    : typeof legacy.es === "string"
+      ? legacy.es
+      : "";
+  if (locale === landingV2SourceLocale) return source;
+  const translated = value?.translations?.[locale];
+  if (typeof translated === "string" && translated.trim()) return translated;
+  if (locale === "en" && typeof legacy.en === "string" && legacy.en.trim()) return legacy.en;
+  return source;
+}
 
 export type LandingV2EditableContent = {
   nav: {
@@ -93,7 +113,10 @@ export type LandingV2Content = LandingV2EditableContent & {
   assets: LandingV2AssetUrls;
 };
 
-const t = (es: string, en: string): LandingLocalizedText => ({ es, en });
+const t = (source: string, english: string): LandingLocalizedText => ({
+  source,
+  translations: { en: english },
+});
 
 export const defaultLandingV2EditableContent: LandingV2EditableContent = {
   nav: {
@@ -107,7 +130,7 @@ export const defaultLandingV2EditableContent: LandingV2EditableContent = {
     title: t("Todo el torneo. En un solo lugar.", "The whole tournament. In one place."),
     body: t(
       "Encontrá torneos, inscribite y seguí cada etapa. Si organizás, manejá inscripciones, cronograma, competencia y resultados desde el mismo lugar.",
-      "Find tournaments, register and follow every stage. If you organize, manage registration, schedule, competition and results from the same place.",
+      "Find tournaments, register and follow every stage. If you organize, manage registration, schedule, competition and results from one place.",
     ),
     cta: t("Explorar torneos", "Explore tournaments"),
   },

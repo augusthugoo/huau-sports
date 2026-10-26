@@ -1,6 +1,9 @@
 interface Env {
   HUAU_DB: D1Database;
   HUAU_ASSETS: R2Bucket;
+  AI: {
+    run(model: string, inputs: Record<string, unknown>): Promise<unknown>;
+  };
   APP_ENV: "development" | "staging" | "production";
   APP_VERSION: string;
   BETTER_AUTH_SECRET: string;

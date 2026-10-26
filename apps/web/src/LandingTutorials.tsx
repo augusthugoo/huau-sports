@@ -197,7 +197,7 @@ export function LandingTutorialAdmin({ locale }: { locale: Locale }) {
         body: JSON.stringify(draft),
       });
       await load();
-      setMessage(tr(locale, "Título guardado.", "Title saved."));
+      setMessage(tr(locale, "Título guardado y traducción actualizada.", "Title saved and translation updated."));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "TUTORIAL_TITLE_SAVE_FAILED");
     } finally {
@@ -292,8 +292,8 @@ export function LandingTutorialAdmin({ locale }: { locale: Locale }) {
           <p className="muted">
             {tr(
               locale,
-              "Los dos primeros bloques son fijos. Podés sumar más cuando quieras. Los videos viven en R2 y no usan D1.",
-              "The first two blocks are fixed. You can add more whenever needed. Videos live in R2 and do not use D1.",
+              "Los dos primeros bloques son fijos. Escribí el título en español: HUAU genera inglés al guardar. Podés revisar la traducción si hace falta. Los videos viven en R2 y no usan D1.",
+              "The first two blocks are fixed. Write the title in Spanish: HUAU generates English when saving. You can review the translation if needed. Videos live in R2 and do not use D1.",
             )}
           </p>
         </div>
@@ -338,7 +338,7 @@ export function LandingTutorialAdmin({ locale }: { locale: Locale }) {
 
               <div className="landing-tutorial-title-grid">
                 <label>
-                  <span>{tr(locale, "Título", "Title")} · ES</span>
+                  <span>{tr(locale, "Título", "Title")} · ES · {tr(locale, "original", "source")}</span>
                   <input
                     value={draft.titleEs}
                     maxLength={140}
@@ -350,19 +350,25 @@ export function LandingTutorialAdmin({ locale }: { locale: Locale }) {
                     }
                   />
                 </label>
-                <label>
-                  <span>{tr(locale, "Título en inglés (opcional)", "English title (optional)")}</span>
-                  <input
-                    value={draft.titleEn}
-                    maxLength={140}
-                    onChange={(event) =>
-                      setDrafts((current) => ({
-                        ...current,
-                        [tutorial.id]: { ...draft, titleEn: event.target.value },
-                      }))
-                    }
-                  />
-                </label>
+                <details className="landing-tutorial-translation-review">
+                  <summary>
+                    <span>{tr(locale, "Revisar traducción · EN", "Review translation · EN")}</span>
+                    <small>{tr(locale, "Automática · editable", "Automatic · editable")}</small>
+                  </summary>
+                  <label>
+                    <span>{tr(locale, "Título", "Title")} · EN</span>
+                    <input
+                      value={draft.titleEn}
+                      maxLength={140}
+                      onChange={(event) =>
+                        setDrafts((current) => ({
+                          ...current,
+                          [tutorial.id]: { ...draft, titleEn: event.target.value },
+                        }))
+                      }
+                    />
+                  </label>
+                </details>
               </div>
 
               <div className="landing-tutorial-admin-actions">

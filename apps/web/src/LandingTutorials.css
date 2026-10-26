@@ -28,7 +28,7 @@
 .landing-tutorial-admin-card-head>div{display:grid;gap:3px}
 .landing-tutorial-admin-card-head span{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#858580}
 .landing-tutorial-admin-card-head strong{font-size:13px}
-.landing-tutorial-title-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.landing-tutorial-title-grid{display:grid;grid-template-columns:1fr;gap:8px}.landing-tutorial-translation-review{border:1px solid rgba(255,255,255,.08);border-radius:10px;overflow:hidden}.landing-tutorial-translation-review summary{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 11px;cursor:pointer;list-style:none;color:#858580;font-size:10px}.landing-tutorial-translation-review summary::-webkit-details-marker{display:none}.landing-tutorial-translation-review summary small{color:#6f8f72}.landing-tutorial-translation-review[open] summary{border-bottom:1px solid rgba(255,255,255,.08)}.landing-tutorial-translation-review label{padding:11px}
 .landing-tutorial-admin-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .landing-tutorial-admin-actions label{display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
 .landing-tutorial-admin-actions label.disabled{opacity:.55;cursor:default;pointer-events:none}

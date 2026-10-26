@@ -13,7 +13,7 @@ import "./LandingV2Admin.css";
 const tr = (locale: Locale, es: string, en: string) => (locale === "es" ? es : en);
 
 type StoredLanding = {
-  version: 1;
+  version: 2;
   content: LandingV2EditableContent;
   assets: LandingV2AssetModes;
   updatedAt: number;
@@ -50,7 +50,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 function setLocalized(
   current: LandingV2EditableContent,
   path: string[],
-  locale: "es" | "en",
+  locale: string,
   value: string,
 ): LandingV2EditableContent {
   const next = structuredClone(current);
@@ -58,7 +58,9 @@ function setLocalized(
   for (const key of path.slice(0, -1)) target = target[key] as Record<string, unknown>;
   const leaf = path[path.length - 1]!;
   const localized = target[leaf] as LandingLocalizedText;
-  target[leaf] = { ...localized, [locale]: value };
+  target[leaf] = locale === "es"
+    ? { ...localized, source: value }
+    : { ...localized, translations: { ...localized.translations, [locale]: value } };
   return next;
 }
 
@@ -79,26 +81,33 @@ function L10nField({
   label: string;
   value: LandingLocalizedText;
   multiline?: boolean;
-  onChange: (locale: "es" | "en", value: string) => void;
+  onChange: (locale: string, value: string) => void;
 }) {
+  const english = value.translations.en ?? "";
   return (
     <div className="lv2-admin-l10n">
-      <label>
-        <span>{label} · ES</span>
+      <label className="lv2-admin-source-field">
+        <span>{label} · ES <small>ORIGINAL</small></span>
         {multiline ? (
-          <textarea value={value.es} rows={3} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => onChange("es", event.target.value)} />
+          <textarea value={value.source} rows={3} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => onChange("es", event.target.value)} />
         ) : (
-          <input value={value.es} onChange={(event: ChangeEvent<HTMLInputElement>) => onChange("es", event.target.value)} />
+          <input value={value.source} onChange={(event: ChangeEvent<HTMLInputElement>) => onChange("es", event.target.value)} />
         )}
       </label>
-      <label>
-        <span>{label} · EN</span>
-        {multiline ? (
-          <textarea value={value.en} rows={3} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => onChange("en", event.target.value)} />
-        ) : (
-          <input value={value.en} onChange={(event: ChangeEvent<HTMLInputElement>) => onChange("en", event.target.value)} />
-        )}
-      </label>
+      <details className="lv2-admin-translation-review">
+        <summary>
+          <span>Revisar traducción · EN</span>
+          <small>Automática · editable</small>
+        </summary>
+        <label>
+          <span>{label} · EN</span>
+          {multiline ? (
+            <textarea value={english} rows={3} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => onChange("en", event.target.value)} />
+          ) : (
+            <input value={english} onChange={(event: ChangeEvent<HTMLInputElement>) => onChange("en", event.target.value)} />
+          )}
+        </label>
+      </details>
     </div>
   );
 }
@@ -118,6 +127,20 @@ const assetLabels: Record<LandingV2AssetId, [string, string]> = {
 };
 
 const isVideo = (id: LandingV2AssetId) => id.includes("Video");
+
+const assetHints: Record<LandingV2AssetId, [string, string]> = {
+  heroPoster: ["Recomendado 16:9. El diseño recorta con cover.", "Recommended 16:9. The design crops with cover."],
+  heroVideoMobile: ["Recomendado 9:16 vertical. El marco de la landing no cambia.", "Recommended vertical 9:16. The landing frame does not change."],
+  heroVideoDesktop: ["Recomendado 16:9 horizontal. El marco de la landing no cambia.", "Recommended horizontal 16:9. The landing frame does not change."],
+  journey1: ["Usá una foto con sujeto centrado; se adapta al marco con cover.", "Use a centered subject; it fits the frame with cover."],
+  journey2: ["Usá una foto con sujeto centrado; se adapta al marco con cover.", "Use a centered subject; it fits the frame with cover."],
+  journey3: ["Usá una foto con sujeto centrado; se adapta al marco con cover.", "Use a centered subject; it fits the frame with cover."],
+  journey4: ["Usá una foto con sujeto centrado; se adapta al marco con cover.", "Use a centered subject; it fits the frame with cover."],
+  scenePoster: ["Recomendado 16:9. El diseño recorta con cover.", "Recommended 16:9. The design crops with cover."],
+  sceneVideoMobile: ["Recomendado 9:16 vertical.", "Recommended vertical 9:16."],
+  sceneVideoDesktop: ["Recomendado 16:9 horizontal.", "Recommended horizontal 16:9."],
+  personPhoto: ["Recomendado 4:5. El diseño mantiene su marco.", "Recommended 4:5. The design keeps its frame."],
+};
 
 function CmsSection({ title, hint, children, open = false }: { title: string; hint?: string; children: ReactNode; open?: boolean }) {
   return (
@@ -153,13 +176,14 @@ export function LandingV2Admin({ locale }: { locale: Locale }) {
     if (!draft) return false;
     if (!silent) { setBusy("save"); setMessage(""); }
     try {
-      await api("/api/platform/landing/v2/draft", {
+      const saved = await api<{ ok: true; draft: StoredLanding; translatedFields?: number }>("/api/platform/landing/v2/draft", {
         method: "PUT",
         body: JSON.stringify({ content: draft }),
       });
+      setDraft(saved.draft.content);
       if (!silent) {
         await load();
-        setMessage(tr(locale, "Borrador guardado.", "Draft saved."));
+        setMessage(tr(locale, "Borrador guardado y traducciones actualizadas.", "Draft saved and translations updated."));
       }
       return true;
     } catch (error) {
@@ -256,7 +280,7 @@ export function LandingV2Admin({ locale }: { locale: Locale }) {
 
   if (!state || !draft) return <div className="lv2-admin-loading">{tr(locale, "Cargando CMS…", "Loading CMS…")}</div>;
 
-  const updateL10n = (path: string[], lang: "es" | "en", value: string) => setDraft((current) => current ? setLocalized(current, path, lang, value) : current);
+  const updateL10n = (path: string[], lang: string, value: string) => setDraft((current) => current ? setLocalized(current, path, lang, value) : current);
   const updateText = (path: string[], value: string) => setDraft((current) => current ? setText(current, path, value) : current);
   const localDirty = state.dirty || JSON.stringify(draft) !== JSON.stringify(state.published.content);
 
@@ -266,7 +290,7 @@ export function LandingV2Admin({ locale }: { locale: Locale }) {
         <div>
           <div className="lv2-admin-kicker">LANDING V2</div>
           <h3>{tr(locale, "Contenido y medios", "Content and media")}</h3>
-          <p>{tr(locale, "Editá el contenido sin tocar la estructura visual. Los cambios no llegan a producción hasta Publicar.", "Edit content without changing the visual structure. Changes do not go live until Publish.")}</p>
+          <p>{tr(locale, "Escribí en español. Al guardar, HUAU genera las traducciones automáticamente; podés revisar o corregir cada una si hace falta. Los cambios no llegan a producción hasta Publicar.", "Write in Spanish. When you save, HUAU generates translations automatically; you can review or correct any of them if needed. Changes do not go live until Publish.")}</p>
         </div>
         <div className="lv2-admin-toolbar-actions">
           <button type="button" className="ghost small" disabled={Boolean(busy)} onClick={() => void resetDraft()}>{tr(locale, "Descartar", "Discard")}</button>
@@ -398,7 +422,7 @@ function AssetGrid({
               )}
             </div>
             <strong>{tr(locale, assetLabels[id][0], assetLabels[id][1])}</strong>
-            <small>{asset.mode === "custom" ? tr(locale, "Personalizado", "Custom") : tr(locale, "Original", "Original")}</small>
+            <small>{asset.mode === "custom" ? tr(locale, "Personalizado", "Custom") : tr(locale, "Original", "Original")} · {tr(locale, assetHints[id][0], assetHints[id][1])}</small>
             <div className="lv2-admin-asset-actions">
               <label className={`ghost small${locked ? " disabled" : ""}`}>
                 {busy === `asset:${id}` ? "…" : tr(locale, "Reemplazar", "Replace")}
