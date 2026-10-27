@@ -181,6 +181,7 @@ export async function cleanupDeletedTournamentPublicArtifacts(
   await Promise.all([
     env.HUAU_ASSETS.delete(`public/tournaments/${tournamentId}/structure.json`),
     env.HUAU_ASSETS.delete(`public/tournaments/${tournamentId}/live.json`),
+    env.HUAU_ASSETS.delete(`public/tournaments/${tournamentId}/participants.json`),
     env.HUAU_ASSETS.delete(`public/tournaments/${slug}/core.json`),
     env.HUAU_ASSETS.delete(`public/tournaments/${slug}/community-link.json`),
     env.HUAU_ASSETS.delete("public/landing.json"),

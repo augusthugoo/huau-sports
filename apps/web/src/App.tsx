@@ -6,14 +6,15 @@ import type { Locale } from "./i18n";
 import { TournamentParityWorkspace } from "./TournamentParityWorkspace";
 import { TournamentHub } from "./TournamentHub";
 import { TournamentDayWorkspace } from "./TournamentDayWorkspace";
-import { MyTournamentRegistrations, PublicTournamentRegistration } from "./TournamentRegistration";
+import { MyTournamentRegistrations } from "./TournamentRegistration";
 import { MyTournamentPayments } from "./TournamentPayments";
 import { LandingAdminPanel } from "./Landing";
 import { Landing } from "./LandingV2";
-import { TournamentLivePage } from "./TournamentLivePage";
-import { TournamentLiveRegistrationLink } from "./TournamentLiveLinks";
+import { TournamentPublicEntry } from "./TournamentPublicEntry";
 import { BirthDateField } from "./BirthDateField";
 import { PlatformUsersAdmin } from "./PlatformUsersAdmin";
+import { PlayerAvatar, PlayerPublicHeader } from "./PlayerPublicChrome";
+import "./PlayerPublicV2.css";
 
 type Membership = {
   id: string;
@@ -117,6 +118,7 @@ function publicTournamentStatus(locale: Locale, status: string) {
     draw_ready: ["Sorteo listo", "Draw ready"],
     scheduled: ["Cronograma publicado", "Schedule published"],
     live: ["En vivo", "Live"],
+    completed: ["Finalizado", "Completed"],
   };
   return labels[status]?.[locale === "es" ? 0 : 1] ?? status.replaceAll("_", " ");
 }
@@ -159,16 +161,19 @@ export function App() {
   if (path === "/signup" && !session?.user) return <AuthScreen mode="signup" locale={locale} go={go} onDone={refreshMe} />;
   if (path === "/recover" && !session?.user) return <RecoveryScreen locale={locale} go={go} />;
 
-  const publicTournamentLiveRoute = path.match(/^\/tournaments\/([^/]+)\/live$/);
-  if (publicTournamentLiveRoute) return <TournamentLivePage slug={decodeURIComponent(publicTournamentLiveRoute[1]!)} locale={locale} go={go} />;
-
-  const publicTournamentRoute = path.match(/^\/tournaments\/([^/]+)$/);
+  const publicTournamentRoute = path.match(/^\/tournaments\/([^/]+)(?:\/live)?$/);
   if (publicTournamentRoute) {
     const slug = decodeURIComponent(publicTournamentRoute[1]!);
-    return <>
-      <TournamentLiveRegistrationLink slug={slug} locale={locale} go={go} />
-      <PublicTournamentRegistration slug={slug} locale={locale} go={go} onProfileSaved={refreshMe} />
-    </>;
+    return (
+      <TournamentPublicEntry
+        slug={slug}
+        locale={locale}
+        go={go}
+        authenticated={Boolean(session?.user)}
+        onProfileSaved={refreshMe}
+        onSignOut={() => authClient.signOut().then(() => go("/"))}
+      />
+    );
   }
 
   const operatorTournamentDayRoute = path.match(/^\/operate\/([^/]+)$/);
@@ -185,7 +190,7 @@ export function App() {
     return <LoadingScreen />;
   }
 
-  if (path === "/app/registrations") return <Shell locale={locale} go={go} me={me}><><MyTournamentPayments locale={locale}/><MyTournamentRegistrations locale={locale} go={go} onProfileSaved={refreshMe} /></></Shell>;
+  if (path === "/app/registrations") return <Shell locale={locale} go={go} me={me}><div className="player-area-v2"><MyTournamentRegistrations locale={locale} go={go} onProfileSaved={refreshMe} /><MyTournamentPayments locale={locale}/></div></Shell>;
 
   const tournamentManage = path.match(/^\/admin\/organizations\/([^/]+)\/tournaments\/([^/]+)\/manage$/);
   if (tournamentManage) {
@@ -222,35 +227,54 @@ function HuauBrand({ onClick, center = false }: { onClick?: () => void; center?:
 function Shell({ children, locale, go, me }: { children: React.ReactNode; locale: Locale; go: (path: string) => void; me?: Me | null }) {
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <HuauBrand onClick={() => go("/")} />
-        <nav>
-          <button className="light compact player-profile-nav" onClick={() => go("/app")}>{copy(locale, "Perfil de jugador", "Player profile")}</button>
-          {me?.platformAdmin && <button onClick={() => go("/platform")}>{t(locale, "platform")}</button>}
-        </nav>
-        <button className="ghost compact" onClick={() => void authClient.signOut().then(() => go("/"))}>{t(locale, "signOut")}</button>
-      </header>
+      <PlayerPublicHeader
+        locale={locale}
+        go={go}
+        authenticated
+        platformAdmin={Boolean(me?.platformAdmin)}
+        onSignOut={() => authClient.signOut().then(() => go("/"))}
+      />
       {children}
     </div>
   );
 }
 
 function AuthScreen({ mode, locale, go, onDone }: { mode: "login"|"signup"; locale: Locale; go:(p:string)=>void; onDone:()=>Promise<void> }) {
-  const [error,setError]=useState(""); const [busy,setBusy]=useState(false);
+  const [error,setError]=useState("");
+  const [busy,setBusy]=useState(false);
+
   const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault(); setBusy(true); setError("");
-    const form=new FormData(event.currentTarget); const email=String(form.get("email")||"").trim(); const password=String(form.get("password")||""); const confirmPassword=String(form.get("confirmPassword")||"");
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    const form=new FormData(event.currentTarget);
+    const email=String(form.get("email")||"").trim();
+    const password=String(form.get("password")||"");
+    const confirmPassword=String(form.get("confirmPassword")||"");
+
     try {
       if(mode==="signup"){
         if(password!==confirmPassword) throw new Error(copy(locale,"Las contraseñas no coinciden.","Passwords do not match."));
-        const firstName=String(form.get("firstName")||"").trim(); const lastName=String(form.get("lastName")||"").trim();
-        const result=await authClient.signUp.email({email,password,name:`${firstName} ${lastName}`.trim(),callbackURL:`${window.location.origin}/verify-email?verified=1`});
+        const firstName=String(form.get("firstName")||"").trim();
+        const lastName=String(form.get("lastName")||"").trim();
+        const result=await authClient.signUp.email({
+          email,
+          password,
+          name:`${firstName} ${lastName}`.trim(),
+          callbackURL:`${window.location.origin}/verify-email?verified=1`,
+        });
         if(result.error) throw new Error(result.error.message || "SIGNUP_FAILED");
-        localStorage.setItem("huau.pendingSignupProfile",JSON.stringify({email,firstName,lastName,preferredLocale:locale==="es"?"es-UY":"en"}));
+        localStorage.setItem("huau.pendingSignupProfile",JSON.stringify({
+          email,
+          firstName,
+          lastName,
+          preferredLocale:locale==="es"?"es-UY":"en",
+        }));
         localStorage.setItem("huau.pendingVerification",JSON.stringify({email,sent:true}));
         go("/verify-email");
         return;
       }
+
       const result=await authClient.signIn.email({email,password});
       if(result.error){
         if(result.error.status===403 || String(result.error.code||"").includes("EMAIL_NOT_VERIFIED")){
@@ -260,10 +284,99 @@ function AuthScreen({ mode, locale, go, onDone }: { mode: "login"|"signup"; loca
         }
         throw new Error(result.error.message || "SIGNIN_FAILED");
       }
-      await onDone(); const next=sessionStorage.getItem("huau.afterAuth"); if(next)sessionStorage.removeItem("huau.afterAuth"); go(next||"/app");
-    } catch (e) { setError(e instanceof Error?e.message:"AUTH_FAILED"); } finally { setBusy(false); }
+
+      await onDone();
+      const next=sessionStorage.getItem("huau.afterAuth");
+      if(next) sessionStorage.removeItem("huau.afterAuth");
+      go(next||"/app");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "AUTH_FAILED");
+    } finally {
+      setBusy(false);
+    }
   };
-  return <main className="auth-page"><button className="back-link" onClick={()=>go("/")}>← {t(locale,"back")}</button><section className="auth-card"><HuauBrand center /><h1>{mode==="login"?t(locale,"signIn"):t(locale,"createAccount")}</h1><form onSubmit={submit}>{mode==="signup"&&<div className="two"><Field name="firstName" label={t(locale,"firstName")}/><Field name="lastName" label={t(locale,"lastName")}/></div>}<Field name="email" label={t(locale,"email")} type="email"/><PasswordField name="password" label={t(locale,"password")} locale={locale} autoComplete={mode==="login"?"current-password":"new-password"}/>{mode==="signup"&&<PasswordField name="confirmPassword" label={copy(locale,"Repetir contraseña","Repeat password")} locale={locale} autoComplete="new-password"/>}<button className="light full" disabled={busy}>{busy?"…":mode==="login"?t(locale,"signIn"):t(locale,"signUp")}</button>{error&&<p className="error">{error}</p>}</form>{mode==="login"?<><button className="text-button" onClick={()=>go("/recover")}>{t(locale,"recover")}</button><button className="text-button" onClick={()=>go("/signup")}>{copy(locale,"¿No tenés cuenta? Crear cuenta","No account yet? Create one")}</button></>:<button className="text-button" onClick={()=>go("/login")}>{copy(locale,"Ya tengo cuenta","I already have an account")}</button>}</section></main>;
+
+  return (
+    <main className="auth-page auth-page-v2">
+      <video
+        className="auth-bg-video"
+        autoPlay
+        muted
+        loop
+        playsInline
+        poster="/landing-v2/poster-01.jpg"
+      >
+        <source src="/landing-v2/sport-01-720.mp4" media="(max-width: 700px)" />
+        <source src="/landing-v2/sport-01-1080.mp4" />
+      </video>
+      <div className="auth-bg-shade" />
+
+      <button className="back-link" onClick={()=>go("/")}>
+        ← {t(locale,"back")}
+      </button>
+
+      <section className="auth-card">
+        <HuauBrand center />
+        <h1>
+          {mode==="login"
+            ? copy(locale,"Iniciar sesión","Sign in")
+            : t(locale,"createAccount")}
+        </h1>
+
+        <form onSubmit={submit}>
+          {mode==="signup" && (
+            <div className="two">
+              <Field name="firstName" label={t(locale,"firstName")}/>
+              <Field name="lastName" label={t(locale,"lastName")}/>
+            </div>
+          )}
+
+          <Field name="email" label={t(locale,"email")} type="email"/>
+
+          <PasswordField
+            name="password"
+            label={t(locale,"password")}
+            locale={locale}
+            autoComplete={mode==="login"?"current-password":"new-password"}
+          />
+
+          {mode==="signup" && (
+            <PasswordField
+              name="confirmPassword"
+              label={copy(locale,"Repetir contraseña","Repeat password")}
+              locale={locale}
+              autoComplete="new-password"
+            />
+          )}
+
+          <button className="light full" disabled={busy}>
+            {busy
+              ? "…"
+              : mode==="login"
+                ? copy(locale,"Iniciar sesión","Sign in")
+                : t(locale,"signUp")}
+          </button>
+
+          {error && <p className="error">{error}</p>}
+        </form>
+
+        {mode==="login" ? (
+          <>
+            <button className="text-button" onClick={()=>go("/recover")}>
+              {t(locale,"recover")}
+            </button>
+            <button className="text-button" onClick={()=>go("/signup")}>
+              {copy(locale,"¿No tenés cuenta? Crear cuenta","No account yet? Create one")}
+            </button>
+          </>
+        ) : (
+          <button className="text-button" onClick={()=>go("/login")}>
+            {copy(locale,"Ya tengo cuenta","I already have an account")}
+          </button>
+        )}
+      </section>
+    </main>
+  );
 }
 
 function EmailVerificationScreen({locale,go,authenticated,onDone}:{locale:Locale;go:(p:string)=>void;authenticated:boolean;onDone:()=>Promise<void>}) {
@@ -334,93 +447,367 @@ function ResetPasswordScreen({locale,go}:{locale:Locale;go:(p:string)=>void}) {
 }
 
 function MyHuau({locale,setLocale,go,me,loading,refreshMe}:{locale:Locale;setLocale:(l:Locale)=>void;go:(p:string)=>void;me:Me|null;loading:boolean;refreshMe:()=>Promise<void>}) {
-  const [organizations,setOrganizations]=useState<Organization[]>([]);
   const [publicTournaments,setPublicTournaments]=useState<PublicTournamentSummary[]>([]);
   const [profileBusy,setProfileBusy]=useState(false);
   const [profileMessage,setProfileMessage]=useState("");
-  useEffect(()=>{ void api<{organizations:Organization[]}>("/api/organizations").then(r=>setOrganizations(r.organizations)); },[]);
+  const [profileEditing,setProfileEditing]=useState(false);
+
+  void setLocale;
+
   useEffect(()=>{
     void api<{ok:true;tournaments:PublicTournamentSummary[]}>("/api/public/landing")
       .then(r=>setPublicTournaments(r.tournaments))
       .catch(()=>setPublicTournaments([]));
   },[]);
-  const adminOrgIds=useMemo(()=>new Set(me?.capabilities.filter(c=>c.capability==="org_admin"&&c.status==="active").map(c=>c.organizationId)??[]),[me]);
-  const profileComplete=Boolean(me?.profile?.firstName&&me.profile.lastName&&me.profile.phone&&me.profile.birthDate&&me.profile.sportGender&&me.profile.sportGender!=="unspecified");
+
+  const adminOrgIds=useMemo(
+    ()=>new Set(
+      me?.capabilities
+        .filter(c=>c.capability==="org_admin"&&c.status==="active")
+        .map(c=>c.organizationId)??[]
+    ),
+    [me],
+  );
+
+  const profileComplete=Boolean(
+    me?.profile?.firstName &&
+    me.profile.lastName &&
+    me.profile.phone &&
+    me.profile.birthDate &&
+    me.profile.sportGender &&
+    me.profile.sportGender!=="unspecified"
+  );
+
+  const fullName = [
+    me?.profile?.firstName,
+    me?.profile?.lastName,
+  ].filter(Boolean).join(" ") || me?.user.name || copy(locale,"Jugador","Player");
+
+  const genderLabel =
+    me?.profile?.sportGender === "male"
+      ? copy(locale,"Masculino","Male")
+      : me?.profile?.sportGender === "female"
+        ? copy(locale,"Femenino","Female")
+        : copy(locale,"Sin especificar","Unspecified");
 
   const saveProfile=async(event:FormEvent<HTMLFormElement>)=>{
-    event.preventDefault();setProfileBusy(true);setProfileMessage("");
+    event.preventDefault();
+    setProfileBusy(true);
+    setProfileMessage("");
+
     const form=new FormData(event.currentTarget);
+
     try{
-      await api("/api/me/profile",{method:"PUT",body:JSON.stringify({
-        firstName:form.get("firstName"),
-        lastName:form.get("lastName"),
-        phone:form.get("phone")||null,
-        birthDate:form.get("birthDate")||null,
-        sportGender:form.get("sportGender"),
-        city:form.get("city")||null,
-        countryCode:String(form.get("countryCode")||"").trim().toUpperCase()||null,
-        duprId:String(form.get("duprId")||"").trim()||null,
-        duprSingles:String(form.get("duprSingles")||"").trim()?Number(form.get("duprSingles")):null,
-        duprDoubles:String(form.get("duprDoubles")||"").trim()?Number(form.get("duprDoubles")):null,
-      })});
+      await api("/api/me/profile",{
+        method:"PUT",
+        body:JSON.stringify({
+          firstName:form.get("firstName"),
+          lastName:form.get("lastName"),
+          phone:form.get("phone")||null,
+          birthDate:form.get("birthDate")||null,
+          sportGender:form.get("sportGender"),
+          city:form.get("city")||null,
+          countryCode:String(form.get("countryCode")||"").trim().toUpperCase()||null,
+          duprId:String(form.get("duprId")||"").trim()||null,
+          duprSingles:String(form.get("duprSingles")||"").trim()
+            ? Number(form.get("duprSingles"))
+            : null,
+          duprDoubles:String(form.get("duprDoubles")||"").trim()
+            ? Number(form.get("duprDoubles"))
+            : null,
+        }),
+      });
       await refreshMe();
+      setProfileEditing(false);
       setProfileMessage(copy(locale,"Perfil actualizado.","Profile updated."));
-    }catch(error){setProfileMessage(error instanceof Error?error.message:"PROFILE_UPDATE_FAILED");}
-    finally{setProfileBusy(false);}
+    }catch(error){
+      setProfileMessage(error instanceof Error?error.message:"PROFILE_UPDATE_FAILED");
+    }finally{
+      setProfileBusy(false);
+    }
   };
 
-  return <Shell locale={locale} go={go} me={me}><main className="dashboard player-profile-page">
-    <section className="dashboard-head"><div><div className="eyebrow">{copy(locale,"PERFIL DE JUGADOR","PLAYER PROFILE")}</div><h1>{me?.profile?.firstName ? copy(locale,`Bienvenido, ${me.profile.firstName}.`,`Welcome, ${me.profile.firstName}.`) : copy(locale,"Bienvenido a HUAU.","Welcome to HUAU.")}</h1></div><div className="dashboard-head-actions"><button className="ghost" onClick={()=>go("/app/registrations")}>{copy(locale,"Mis inscripciones","My registrations")}</button><LocaleToggle locale={locale} setLocale={setLocale}/></div></section>
-    <section className="dashboard-grid">
-      <div className="panel wide player-profile-panel">
-        <div className="player-profile-overview profile-overview-no-avatar">
-          <div className="player-profile-summary">
-            <div className="eyebrow">HUAU ID</div>
-            <h2>{copy(locale,"Perfil de jugador","Player profile")}</h2>
-            <p className="muted">{copy(locale,"Tus datos de identidad, contacto y pickleball se reutilizan al inscribirte a torneos.","Your identity, contact and pickleball data are reused when you register for tournaments.")}</p>
-            <div className="profile-status-row">
-              <span className={`profile-completion ${profileComplete?"complete":""}`}>{profileComplete?copy(locale,"Perfil base completo","Base profile complete"):copy(locale,"Faltan datos básicos","Basic details missing")}</span>
-              <code title={me?.user.id}>{me?.user.id??"—"}</code>
+  return (
+    <Shell locale={locale} go={go} me={me}>
+      <main className="dashboard player-profile-page player-profile-page-v2">
+        <section className="player-v2-hero">
+          <div className="player-v2-identity">
+            <PlayerAvatar name={fullName} size="lg" />
+            <div>
+              <h1>
+                {me?.profile?.firstName
+                  ? copy(locale,`Hola, ${me.profile.firstName}.`,`Hi, ${me.profile.firstName}.`)
+                  : copy(locale,"Mi HUAU","My HUAU")}
+              </h1>
+              <p>{me?.user.email ?? ""}</p>
             </div>
           </div>
-        </div>
 
-        <form onSubmit={saveProfile} className="player-profile-form">
-          <div className="two"><Field name="firstName" label={copy(locale,"Nombre","First name")} defaultValue={me?.profile?.firstName??""}/><Field name="lastName" label={copy(locale,"Apellido","Last name")} defaultValue={me?.profile?.lastName??""}/></div>
-          <div className="two"><label><span>Email</span><input value={me?.user.email??""} disabled readOnly/></label><Field name="phone" label={copy(locale,"Teléfono","Phone")} required={false} defaultValue={me?.profile?.phone??""}/></div>
-          <div className="two"><BirthDateField name="birthDate" label={copy(locale,"Fecha de nacimiento","Birth date")} defaultValue={me?.profile?.birthDate??""} locale={locale}/><label><span>{copy(locale,"Género deportivo","Sport gender")}</span><select name="sportGender" defaultValue={me?.profile?.sportGender??"unspecified"}><option value="unspecified">{copy(locale,"Sin especificar","Unspecified")}</option><option value="male">{copy(locale,"Masculino","Male")}</option><option value="female">{copy(locale,"Femenino","Female")}</option></select></label></div>
-          <div className="two"><Field name="city" label={copy(locale,"Ciudad","City")} required={false} defaultValue={me?.profile?.city??""}/><label><span>{copy(locale,"País (código)","Country code")}</span><input name="countryCode" maxLength={3} defaultValue={me?.profile?.countryCode??""} placeholder="UY"/></label></div>
-          <div className="dupr-profile-box">
-            <div className="dupr-profile-copy"><div className="eyebrow">DUPR</div><strong>{copy(locale,"Identidad y ratings","Identity & ratings")}</strong><p className="muted">{copy(locale,"El DUPR ID permite que la organización verifique los ratings declarados cuando corresponda.","Your DUPR ID lets organizers verify declared ratings when needed.")}</p></div>
-            <label><span>DUPR ID</span><input name="duprId" maxLength={80} defaultValue={me?.profile?.duprId??""} placeholder={copy(locale,"ID de jugador DUPR","DUPR player ID")}/></label>
-            <div className="two"><label><span>DUPR Singles</span><input name="duprSingles" type="number" min="0" max="8" step="0.001" defaultValue={me?.profile?.duprSingles===null||me?.profile?.duprSingles===undefined?"":String(me.profile.duprSingles)}/></label><label><span>DUPR Doubles</span><input name="duprDoubles" type="number" min="0" max="8" step="0.001" defaultValue={me?.profile?.duprDoubles===null||me?.profile?.duprDoubles===undefined?"":String(me.profile.duprDoubles)}/></label></div>
+          <div className="player-v2-actions">
+            <button className="light" onClick={()=>go("/app/registrations")}>
+              {copy(locale,"Mis inscripciones","My registrations")}
+            </button>
+            <button className="ghost" onClick={()=>setProfileEditing(value=>!value)}>
+              {profileEditing
+                ? copy(locale,"Cerrar edición","Close editing")
+                : copy(locale,"Editar perfil","Edit profile")}
+            </button>
           </div>
-          <div className="form-actions"><button className="light small" disabled={profileBusy}>{profileBusy?"…":copy(locale,"Guardar perfil","Save profile")}</button>{profileMessage&&<span className="muted">{profileMessage}</span>}</div>
-        </form>
-      </div>
+        </section>
 
-      <div className="panel wide">
-        <div className="panel-title"><h2>{copy(locale,"Torneos públicos","Public tournaments")}</h2><span>{publicTournaments.length}</span></div>
-        {publicTournaments.length ? (
-          <div className="card-list">
-            {publicTournaments.map(tournament=><article className="org-card" key={tournament.id}>
-              <div>
-                <span className="pill">{tournament.sport}</span>
-                <h3>{tournament.name}</h3>
-                <p>{publicTournamentStatus(locale,tournament.status)} · {displayDate(tournament.startAt)}{tournament.endAt ? ` → ${displayDate(tournament.endAt)}` : ""}</p>
-              </div>
-              <div className="card-actions">
-                <button className="light small" onClick={()=>go(`/tournaments/${tournament.slug}`)}>{copy(locale,"Ver torneo","View tournament")}</button>
-              </div>
-            </article>)}
-          </div>
-        ) : <p className="muted">{copy(locale,"No hay torneos públicos disponibles en este momento.","There are no public tournaments available right now.")}</p>}
-      </div>
+        <section className="player-v2-grid">
+          <article className="player-v2-card">
+            <div className="player-v2-card-head">
+              <h2>{copy(locale,"Información personal","Personal information")}</h2>
+              <span className={`profile-completion ${profileComplete?"complete":""}`}>
+                {profileComplete
+                  ? copy(locale,"Perfil completo","Profile complete")
+                  : copy(locale,"Faltan datos","Missing details")}
+              </span>
+            </div>
 
-      <div className="panel wide"><div className="panel-title"><h2>{t(locale,"organizations")}</h2><span>{me?.memberships.length??0}</span></div>{loading?<p className="muted">Loading…</p>:me?.memberships.length? <div className="card-list">{me.memberships.map(m=><article className="org-card" key={m.id}><div><span className="pill">{m.organizationType}</span><h3>{m.organizationName}</h3><p>{m.status}</p></div><div className="card-actions"><button className="ghost small" onClick={()=>go(`/organizations/${m.organizationSlug}`)}>{t(locale,"openOrganization")}</button>{adminOrgIds.has(m.organizationId)&&<button className="light small" onClick={()=>go(`/admin/organizations/${m.organizationId}`)}>{t(locale,"admin")}</button>}</div></article>)}</div>:<p className="muted">{t(locale,"noOrganizations")}</p>}</div>
-      <div className="panel"><h2>{t(locale,"discover")}</h2><div className="mini-list">{organizations.slice(0,6).map(org=><button key={org.id} onClick={()=>go(`/organizations/${org.slug}`)}><span>{org.name}</span><small>{org.type}</small></button>)}</div></div>
-    </section>
-  </main></Shell>;
+            {!profileEditing ? (
+              <div className="player-v2-data-list">
+                <div className="player-v2-data-row">
+                  <span>{copy(locale,"Nombre","Name")}</span>
+                  <strong>{fullName}</strong>
+                </div>
+                <div className="player-v2-data-row">
+                  <span>Email</span>
+                  <strong>{me?.user.email ?? "—"}</strong>
+                </div>
+                <div className="player-v2-data-row">
+                  <span>{copy(locale,"Teléfono","Phone")}</span>
+                  <strong>{me?.profile?.phone || "—"}</strong>
+                </div>
+                <div className="player-v2-data-row">
+                  <span>{copy(locale,"Nacimiento","Birth date")}</span>
+                  <strong>{me?.profile?.birthDate || "—"}</strong>
+                </div>
+                <div className="player-v2-data-row">
+                  <span>{copy(locale,"Género deportivo","Sport gender")}</span>
+                  <strong>{genderLabel}</strong>
+                </div>
+                <div className="player-v2-data-row">
+                  <span>{copy(locale,"Ciudad","City")}</span>
+                  <strong>{me?.profile?.city || "—"}</strong>
+                </div>
+                <div className="player-v2-data-row">
+                  <span>{copy(locale,"País","Country")}</span>
+                  <strong>{me?.profile?.countryCode || "—"}</strong>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={saveProfile} className="player-profile-form">
+                <div className="two">
+                  <Field
+                    name="firstName"
+                    label={copy(locale,"Nombre","First name")}
+                    defaultValue={me?.profile?.firstName??""}
+                  />
+                  <Field
+                    name="lastName"
+                    label={copy(locale,"Apellido","Last name")}
+                    defaultValue={me?.profile?.lastName??""}
+                  />
+                </div>
+
+                <div className="two">
+                  <label>
+                    <span>Email</span>
+                    <input value={me?.user.email??""} disabled readOnly/>
+                  </label>
+                  <Field
+                    name="phone"
+                    label={copy(locale,"Teléfono","Phone")}
+                    required={false}
+                    defaultValue={me?.profile?.phone??""}
+                  />
+                </div>
+
+                <div className="two">
+                  <BirthDateField
+                    name="birthDate"
+                    label={copy(locale,"Fecha de nacimiento","Birth date")}
+                    defaultValue={me?.profile?.birthDate??""}
+                    locale={locale}
+                  />
+                  <label>
+                    <span>{copy(locale,"Género deportivo","Sport gender")}</span>
+                    <select name="sportGender" defaultValue={me?.profile?.sportGender??"unspecified"}>
+                      <option value="unspecified">{copy(locale,"Sin especificar","Unspecified")}</option>
+                      <option value="male">{copy(locale,"Masculino","Male")}</option>
+                      <option value="female">{copy(locale,"Femenino","Female")}</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div className="two">
+                  <Field
+                    name="city"
+                    label={copy(locale,"Ciudad","City")}
+                    required={false}
+                    defaultValue={me?.profile?.city??""}
+                  />
+                  <label>
+                    <span>{copy(locale,"País (código)","Country code")}</span>
+                    <input
+                      name="countryCode"
+                      maxLength={3}
+                      defaultValue={me?.profile?.countryCode??""}
+                      placeholder="UY"
+                    />
+                  </label>
+                </div>
+
+                <label>
+                  <span>DUPR ID</span>
+                  <input
+                    name="duprId"
+                    maxLength={80}
+                    defaultValue={me?.profile?.duprId??""}
+                    placeholder={copy(locale,"ID de jugador DUPR","DUPR player ID")}
+                  />
+                </label>
+
+                <div className="two">
+                  <label>
+                    <span>DUPR Singles</span>
+                    <input
+                      name="duprSingles"
+                      type="number"
+                      min="0"
+                      max="8"
+                      step="0.001"
+                      defaultValue={me?.profile?.duprSingles===null||me?.profile?.duprSingles===undefined?"":String(me.profile.duprSingles)}
+                    />
+                  </label>
+                  <label>
+                    <span>DUPR Doubles</span>
+                    <input
+                      name="duprDoubles"
+                      type="number"
+                      min="0"
+                      max="8"
+                      step="0.001"
+                      defaultValue={me?.profile?.duprDoubles===null||me?.profile?.duprDoubles===undefined?"":String(me.profile.duprDoubles)}
+                    />
+                  </label>
+                </div>
+
+                <div className="form-actions">
+                  <button className="light small" disabled={profileBusy}>
+                    {profileBusy?"…":copy(locale,"Guardar cambios","Save changes")}
+                  </button>
+                  {profileMessage&&<span className="muted">{profileMessage}</span>}
+                </div>
+              </form>
+            )}
+          </article>
+
+          <aside className="player-v2-card">
+            <div className="player-v2-card-head">
+              <h2>Pickleball</h2>
+            </div>
+            <div className="player-v2-data-list">
+              <div className="player-v2-data-row">
+                <span>DUPR ID</span>
+                <strong>{me?.profile?.duprId || "—"}</strong>
+              </div>
+              <div className="player-v2-data-row">
+                <span>Singles</span>
+                <strong>
+                  {me?.profile?.duprSingles===null||me?.profile?.duprSingles===undefined
+                    ? "—"
+                    : me.profile.duprSingles.toFixed(3)}
+                </strong>
+              </div>
+              <div className="player-v2-data-row">
+                <span>Doubles</span>
+                <strong>
+                  {me?.profile?.duprDoubles===null||me?.profile?.duprDoubles===undefined
+                    ? "—"
+                    : me.profile.duprDoubles.toFixed(3)}
+                </strong>
+              </div>
+            </div>
+          </aside>
+        </section>
+
+        <section className="player-v2-section">
+          <header>
+            <h2>{copy(locale,"Torneos","Tournaments")}</h2>
+            <button className="ghost small" onClick={()=>go("/")}>
+              {copy(locale,"Explorar","Explore")}
+            </button>
+          </header>
+
+          {publicTournaments.length ? (
+            <div className="player-v2-tournaments">
+              {publicTournaments.slice(0,4).map((tournament)=>(
+                <article className="player-v2-list-card" key={tournament.id}>
+                  <div>
+                    <h3>{tournament.name}</h3>
+                    <p>
+                      {publicTournamentStatus(locale,tournament.status)}
+                      {" · "}
+                      {displayDate(tournament.startAt)}
+                    </p>
+                  </div>
+                  <button
+                    className="ghost small"
+                    onClick={()=>go(`/tournaments/${tournament.slug}`)}
+                  >
+                    {copy(locale,"Ver torneo","View tournament")}
+                  </button>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <p className="muted">
+              {copy(locale,"No hay torneos públicos disponibles.","No public tournaments available.")}
+            </p>
+          )}
+        </section>
+
+        {me?.memberships.length ? (
+          <section className="player-v2-section">
+            <header>
+              <h2>{copy(locale,"Mis organizaciones","My organizations")}</h2>
+            </header>
+            <div className="player-v2-organizations">
+              {me.memberships.map((membership)=>(
+                <article className="player-v2-list-card" key={membership.id}>
+                  <div>
+                    <h3>{membership.organizationName}</h3>
+                    <p>{membership.organizationType}</p>
+                  </div>
+                  <div className="card-actions">
+                    <button
+                      className="ghost small"
+                      onClick={()=>go(`/organizations/${membership.organizationSlug}`)}
+                    >
+                      {copy(locale,"Ver","View")}
+                    </button>
+                    {adminOrgIds.has(membership.organizationId)&&(
+                      <button
+                        className="light small"
+                        onClick={()=>go(`/admin/organizations/${membership.organizationId}`)}
+                      >
+                        {copy(locale,"Administrar","Manage")}
+                      </button>
+                    )}
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : loading ? (
+          <p className="muted">Loading…</p>
+        ) : null}
+      </main>
+    </Shell>
+  );
 }
 
 function PublicOrganization({slug,locale,go,me,refreshMe,authenticated}:{slug:string;locale:Locale;go:(p:string)=>void;me:Me|null;refreshMe:()=>Promise<void>;authenticated:boolean}) {

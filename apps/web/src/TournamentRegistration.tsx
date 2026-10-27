@@ -4,6 +4,7 @@ import { registrationPriceMinor, resolveRegistrationPricing, resolveTeamIndividu
 import { FormatExplanationPanel, explanationForPersistedFormat } from "./FormatExplanationPanel";
 import { BirthDateField } from "./BirthDateField";
 import type { Locale } from "./i18n";
+import { PlayerAvatar, PlayerPublicHeader } from "./PlayerPublicChrome";
 import "./TournamentCommunityLink.css";
 
 type Go = (path: string) => void;
@@ -97,9 +98,35 @@ type PublicCategory = {
   explanationSchemaVersion: number | null;
   registrationBlockedCode: string | null;
   viewerAlreadyRegistered: boolean;
+  publicParticipantCount: number;
 };
 
 type TournamentCommunityLinkConfig = { enabled: boolean; title: string; url: string };
+
+type PublicParticipantEntry = {
+  entryType: "individual" | "pair" | "team";
+  label: string | null;
+  members: string[];
+  seeking: "partner" | "team" | null;
+  waitlisted: boolean;
+};
+
+type PublicParticipantsCategory = {
+  categoryId: string;
+  name: string;
+  entryType: "individual" | "pair" | "team";
+  participantCount: number;
+  occupiedEntries: number;
+  waitlistCount: number;
+  entries: PublicParticipantEntry[];
+};
+
+type PublicParticipantsData = {
+  ok: true;
+  public: boolean;
+  totalPlayers: number;
+  categories: PublicParticipantsCategory[];
+};
 
 export type PublicTournamentData = {
   ok: true;
@@ -133,6 +160,8 @@ export type PublicTournamentData = {
   activeCategoryCount: number;
   activeTeamCategoryCount: number;
   activeAgeTeamDivisionCount: number;
+  totalPlayers: number;
+  publicParticipants: boolean;
   categories: PublicCategory[];
   viewer: { authenticated: boolean; profile: PlayerProfile | null; wildCard: boolean };
 };
@@ -197,6 +226,41 @@ function blockedButtonCopy(locale: Locale, code: string) {
   if (code === "MAX_CATEGORIES_REACHED") return tr(locale, "Máximo alcanzado", "Limit reached");
   if (code === "TEAM_AGE_DIVISION_OVERLAP_DISABLED") return tr(locale, "División no disponible", "Division unavailable");
   return tr(locale, "Cerrada", "Closed");
+}
+
+function categoryEntryCopy(locale: Locale, entryType: PublicCategory["entryType"]) {
+  if (entryType === "pair") return tr(locale, "Dobles", "Doubles");
+  if (entryType === "team") return tr(locale, "Equipos", "Teams");
+  return tr(locale, "Individual", "Individual");
+}
+
+function categoryGenderCopy(locale: Locale, gender: string | null) {
+  if (gender === "male") return tr(locale, "Masculino", "Men");
+  if (gender === "female") return tr(locale, "Femenino", "Women");
+  if (gender === "mixed") return tr(locale, "Mixto", "Mixed");
+  return "Open";
+}
+
+function categoryAgeCopy(locale: Locale, category: Pick<PublicCategory, "minAge" | "maxAge">) {
+  const min = category.minAge !== null && category.minAge > 0 ? category.minAge : null;
+  const max = category.maxAge !== null && category.maxAge < 99 ? category.maxAge : null;
+
+  if (min !== null && max !== null) return `${min}–${max} ${tr(locale, "años", "years")}`;
+  if (min !== null) return `+${min} ${tr(locale, "años", "years")}`;
+  if (max !== null) return `${tr(locale, "Hasta", "Up to")} ${max} ${tr(locale, "años", "years")}`;
+  return null;
+}
+
+function categoryCapacityCopy(locale: Locale, category: PublicCategory) {
+  if (category.maxEntries === null) return tr(locale, "Sin límite de cupos", "No capacity limit");
+
+  const noun = category.entryType === "pair"
+    ? tr(locale, "parejas", "pairs")
+    : category.entryType === "team"
+      ? tr(locale, "equipos", "teams")
+      : tr(locale, "jugadores", "players");
+
+  return `${category.occupiedEntries}/${category.maxEntries} ${noun}`;
 }
 
 function categoryNeedsProfile(category: Pick<PublicCategory, "minAge" | "maxAge" | "competitionGender">, profile: PlayerProfile | null, requireDupr = false, allowNoDupr = false) {
@@ -276,7 +340,7 @@ function estimateCategoryPrice(data: PublicTournamentData, category: PublicCateg
   return registrationPriceMinor({ priceScope: resolution.priceScope, priceMinor: resolution.priceMinor }, 1);
 }
 
-export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved }: { slug: string; locale: Locale; go: Go; onProfileSaved?: () => Promise<void> }) {
+export function PublicTournamentRegistration({ slug, locale, go, authenticated = false, onSignOut, onProfileSaved }: { slug: string; locale: Locale; go: Go; authenticated?: boolean; onSignOut?: (() => void | Promise<void>) | undefined; onProfileSaved?: (() => Promise<void>) | undefined }) {
   const [data, setData] = useState<PublicTournamentData | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
@@ -303,6 +367,9 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
   const [regulationsAccepted, setRegulationsAccepted] = useState(false);
   const [registrationSuccess, setRegistrationSuccess] = useState<{ waitlisted: number } | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [participantData, setParticipantData] = useState<PublicParticipantsData | null>(null);
+  const [openParticipantCategory, setOpenParticipantCategory] = useState<string | null>(null);
+  const [participantsBusy, setParticipantsBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -336,6 +403,30 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
   const login = () => {
     sessionStorage.setItem("huau.afterAuth", `/tournaments/${slug}`);
     go("/login");
+  };
+
+  const toggleParticipantCategory = async (categoryId: string) => {
+    if (openParticipantCategory === categoryId) {
+      setOpenParticipantCategory(null);
+      return;
+    }
+
+    setOpenParticipantCategory(categoryId);
+
+    if (participantData) return;
+
+    setParticipantsBusy(true);
+    try {
+      setParticipantData(
+        await api<PublicParticipantsData>(
+          `/api/public/tournaments/${encodeURIComponent(slug)}/participants`,
+        ),
+      );
+    } catch {
+      setParticipantData(null);
+    } finally {
+      setParticipantsBusy(false);
+    }
   };
 
   const saveProfile = async (event: FormEvent<HTMLFormElement>) => {
@@ -435,7 +526,7 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
     }
   };
 
-  if (!data) return <main className="public-tournament-page"><button className="back-link" onClick={() => go("/")}>← HUAU</button>{error ? <div className="registration-alert">{error}</div> : <div className="empty-state">{tr(locale, "Cargando torneo…", "Loading tournament…")}</div>}</main>;
+  if (!data) return <main className="public-tournament-page"><PlayerPublicHeader locale={locale} go={go} authenticated={authenticated} onLogin={login} onSignOut={onSignOut}/>{error ? <div className="registration-alert">{error}</div> : <div className="public-phase-loading">{tr(locale, "Cargando torneo…", "Loading tournament…")}</div>}</main>;
 
   const duprSinglesMissing = !data.viewer.profile || data.viewer.profile.duprSingles === null || data.viewer.profile.duprSingles <= 0;
   const duprDoublesMissing = !data.viewer.profile || data.viewer.profile.duprDoubles === null || data.viewer.profile.duprDoubles <= 0;
@@ -456,12 +547,20 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
     tr(locale, `Hola, necesito ayuda con HUAU en el torneo "${data.tournament.name}".`, `Hi, I need help with HUAU for the tournament "${data.tournament.name}".`),
   );
 
+  const registrationAvailable =
+    data.tournament.status === "registration_open" &&
+    !data.tournament.structureLocked &&
+    (!data.registrationCloseAt || Math.floor(Date.now() / 1000) <= data.registrationCloseAt);
+
   return (
     <main className="public-tournament-page">
-      <header className="public-tournament-nav">
-        <button className="huau-logo-button" onClick={() => go("/")} aria-label="HUAU"><img className="huau-logo-image" src="/huau-logo.png" alt="HUAU" /></button>
-        <div>{data.viewer.authenticated ? <button className="ghost" onClick={() => go("/app/registrations")}>{tr(locale, "Mis inscripciones", "My registrations")}</button> : <button className="light" onClick={login}>{tr(locale, "Ingresar", "Sign in")}</button>}</div>
-      </header>
+      <PlayerPublicHeader
+        locale={locale}
+        go={go}
+        authenticated={data.viewer.authenticated || authenticated}
+        onLogin={login}
+        onSignOut={onSignOut}
+      />
       <section
         className={`public-tournament-hero ${data.tournament.heroImageUrl ? "has-cover" : ""}`}
         style={data.tournament.heroImageUrl ? {
@@ -479,12 +578,33 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
               )}
               <span>{data.tournament.courtCount} {tr(locale, "canchas", "courts")}</span>
             </div>
+            {data.publicParticipants && data.totalPlayers > 0 && (
+              <button
+                type="button"
+                className="public-hero-participants"
+                onClick={() => document.getElementById("tournament-participants")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+              >
+                {data.totalPlayers} {tr(locale, data.totalPlayers === 1 ? "jugador inscripto" : "jugadores inscriptos", data.totalPlayers === 1 ? "registered player" : "registered players")}
+              </button>
+            )}
             <div className="public-tournament-hero-actions">
               <button
                 className="light"
-                onClick={() => document.getElementById("registration-categories")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                onClick={() => document.getElementById(
+                  registrationAvailable
+                    ? "registration-categories"
+                    : data.publicParticipants
+                      ? "tournament-participants"
+                      : "tournament-info",
+                )?.scrollIntoView({ behavior: "smooth", block: "start" })}
               >
-                {data.viewer.authenticated ? tr(locale, "Comenzar inscripción", "Start registration") : tr(locale, "Ver categorías", "View categories")}
+                {registrationAvailable
+                  ? data.viewer.authenticated
+                    ? tr(locale, "Comenzar inscripción", "Start registration")
+                    : tr(locale, "Ver categorías", "View categories")
+                  : data.publicParticipants
+                    ? tr(locale, "Ver inscriptos", "View players")
+                    : tr(locale, "Ver información", "View information")}
               </button>
               {data.viewer.authenticated && (
                 <button className="ghost" onClick={() => go("/app/registrations")}>
@@ -499,10 +619,24 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
         </div>
       </section>
 
-      <section className="public-tournament-summary">
+      <nav className="public-tournament-section-nav" aria-label={tr(locale,"Secciones del torneo","Tournament sections")}>
+        <button type="button" onClick={() => document.getElementById("tournament-info")?.scrollIntoView({ behavior:"smooth", block:"start" })}>
+          {tr(locale,"Información","Information")}
+        </button>
+        <button type="button" onClick={() => document.getElementById("registration-categories")?.scrollIntoView({ behavior:"smooth", block:"start" })}>
+          {tr(locale,"Categorías","Categories")}
+        </button>
+        {data.publicParticipants && (
+          <button type="button" onClick={() => document.getElementById("tournament-participants")?.scrollIntoView({ behavior:"smooth", block:"start" })}>
+            {tr(locale,"Inscriptos","Players")}
+          </button>
+        )}
+      </nav>
+
+      <section className="public-tournament-summary" id="tournament-info">
         <div className="public-tournament-summary-copy">
           <div className="eyebrow">{tr(locale, "INFORMACIÓN DEL TORNEO", "TOURNAMENT INFO")}</div>
-          <h2>{tr(locale, "Todo lo necesario antes de inscribirte", "Everything you need before registering")}</h2>
+          <h2>{tr(locale, "Sobre el torneo", "About the tournament")}</h2>
           {data.publicInfo.description ? (
             <p>{data.publicInfo.description}</p>
           ) : (
@@ -568,21 +702,36 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
             const needsProfile = categoryNeedsProfile(category, data.viewer.profile, data.eligibilityPolicy.duprRequired, data.eligibilityPolicy.allowNoDupr);
             const isSelected = selected.includes(category.id);
             const explanation = explanationForPersistedFormat(category.formatKind, category.formatConfig, locale);
+            const ageLabel = categoryAgeCopy(locale, category);
             return (
               <article className={`public-category-card ${isSelected ? "selected" : ""}`} key={category.id}>
-                <header><div><span className="pill">{category.entryType.toUpperCase()}</span><h2>{category.name}</h2></div><strong>{money(category.priceMinor, category.currency, locale)}</strong></header>
-                <div className="category-registration-meta"><span>{category.competitionGender ?? "open"}</span>{category.minAge !== null && <span>+{category.minAge}</span>}{category.maxAge !== null && <span>≤ {category.maxAge}</span>}<span>{category.maxEntries === null ? tr(locale, "Sin cupo máximo", "No capacity limit") : `${category.occupiedEntries}/${category.maxEntries}`}</span>{category.waitlistCount > 0 && <span>{category.waitlistCount} waitlist</span>}</div>
+                <div className="public-category-main">
+                  <div>
+                    <h2>{category.name}</h2>
+                    <div className="category-human-meta">
+                      <span>{categoryEntryCopy(locale, category.entryType)}</span>
+                      <span>{categoryGenderCopy(locale, category.competitionGender)}</span>
+                      {ageLabel && <span>{ageLabel}</span>}
+                      <span>{categoryCapacityCopy(locale, category)}</span>
+                      <span>{category.publicParticipantCount} {tr(locale, category.publicParticipantCount === 1 ? "inscripto" : "inscriptos", category.publicParticipantCount === 1 ? "player" : "players")}</span>
+                      {category.waitlistCount > 0 && <span>{category.waitlistCount} {tr(locale,"en espera","waitlisted")}</span>}
+                    </div>
+                  </div>
+                  <strong className="public-category-price">{money(category.priceMinor, category.currency, locale)}</strong>
+                </div>
                 {category.entryType === "pair" && <p className="muted">{tr(locale, "Te inscribís vos primero. La pareja se arma después entre jugadores ya inscriptos y libres.", "Register yourself first. Pairing happens later between registered free players.")}</p>}
                 {category.entryType === "team" && <p className="muted">{tr(locale, "Podés quedar libre o crear un equipo y convertirte en capitán.", "Stay free or create a team and become captain.")}</p>}
-                {explanation && <button type="button" className="public-format-explanation-trigger" onClick={() => setExplanationCategoryId(category.id)}><span>{tr(locale, "Cómo se juega", "How it works")}</span><span aria-hidden="true">↗</span></button>}
-                {category.registrationBlockedCode ? <><button className="ghost full" disabled>{blockedButtonCopy(locale, category.registrationBlockedCode)}</button><p className="muted">{codeCopy(locale, category.registrationBlockedCode)}</p></> : !data.viewer.authenticated ? <button className="ghost full" onClick={login}>{tr(locale, "Ingresar para inscribirme", "Sign in to register")}</button> : <button className={isSelected ? "ghost full" : full ? "ghost full" : "light full"} disabled={needsProfile} onClick={() => toggle(category)}>{needsProfile ? tr(locale, "Completá tu perfil", "Complete your profile") : isSelected ? tr(locale, "Quitar", "Remove") : full ? tr(locale, "Agregar · puede ir a waitlist", "Add · may waitlist") : tr(locale, "Agregar", "Add")}</button>}
+                <div className="public-category-actions">
+                  {explanation && <button type="button" className="public-format-explanation-trigger" onClick={() => setExplanationCategoryId(category.id)}><span>{tr(locale, "Cómo se juega", "How it works")}</span><span aria-hidden="true">↗</span></button>}
+                  {category.registrationBlockedCode ? <><button className="ghost" disabled>{blockedButtonCopy(locale, category.registrationBlockedCode)}</button><p className="muted category-block-note">{codeCopy(locale, category.registrationBlockedCode)}</p></> : !data.viewer.authenticated ? <button className="ghost" onClick={login}>{tr(locale, "Iniciar sesión para inscribirme", "Sign in to register")}</button> : <button className={isSelected ? "ghost" : full ? "ghost" : "light"} disabled={needsProfile} onClick={() => toggle(category)}>{needsProfile ? tr(locale, "Completá tu perfil", "Complete your profile") : isSelected ? tr(locale, "✓ Seleccionada", "✓ Selected") : full ? tr(locale, "Agregar · lista de espera", "Add · waitlist") : tr(locale, "Agregar", "Add")}</button>}
+                </div>
               </article>
             );
           })}
         </div>
 
-        <aside className="registration-basket">
-          <div className="registration-basket-head"><div><div className="eyebrow">TU INSCRIPCIÓN</div><h2>{tr(locale, "Resumen de inscripción", "Registration summary")}</h2></div><span>{basket.length}</span></div>
+        <aside className="registration-basket" id="registration-summary">
+          <div className="registration-basket-head"><div><div className="eyebrow">TU INSCRIPCIÓN</div><h2>{tr(locale, "Tu inscripción", "Your registration")}</h2></div><span>{basket.length}</span></div>
           {!basket.length ? <div className="registration-basket-empty">{tr(locale, "Agregá categorías y vas a ver acá el desglose antes de confirmar.", "Add categories to see the full breakdown before confirming.")}</div> : <div className="registration-basket-items">{basket.map(({ category, price }) => {
             const team = teamChoice(category.id);
             return <div className="registration-basket-item" key={category.id}><div className="registration-basket-line"><div><strong>{category.name}</strong><small>{category.entryType === "pair" ? tr(locale, "Inscripción individual · pareja después", "Personal registration · pair later") : category.entryType === "team" ? tr(locale, "Torneo por equipos", "Team tournament") : tr(locale, "Individual", "Individual")}</small></div><strong>{money(price, category.currency, locale)}</strong></div>{category.entryType === "team" && <div className="team-basket-config"><label><span>{tr(locale, "Al confirmar", "On confirmation")}</span><select value={team.choice} onChange={(event) => updateTeamChoice(category.id, { choice: event.target.value as "free" | "create" })}><option value="free">{tr(locale, "Quedar libre / esperar equipo", "Stay free / wait for team")}</option><option value="create">{tr(locale, "Crear equipo · ser capitán", "Create team · become captain")}</option></select></label>{team.choice === "create" && <><label><span>{tr(locale, "Nombre del equipo", "Team name")}</span><input value={team.teamName} onChange={(event) => updateTeamChoice(category.id, { teamName: event.target.value })} placeholder={tr(locale, "Ej. Horneros +50", "e.g. Horneros +50")} /></label><label><span>{tr(locale, "Quién paga", "Who pays")}</span><select value={team.paymentMode} onChange={(event) => updateTeamChoice(category.id, { paymentMode: event.target.value as "individual" | "team_full" })}><option value="individual">{tr(locale, "Cada jugador paga su inscripción", "Each player pays individually")}</option><option value="team_full" disabled={data.teamPricing.fullTeamFeeMinor === null}>{data.teamPricing.fullTeamFeeMinor === null ? tr(locale, "Equipo completo · precio no configurado", "Full team · fee not configured") : tr(locale, `Capitán paga equipo completo · ${money(data.teamPricing.fullTeamFeeMinor, category.currency, locale)}`, `Captain pays full team · ${money(data.teamPricing.fullTeamFeeMinor, category.currency, locale)}`)}</option></select></label></>}</div>}<button className="text-button" onClick={() => toggle(category)}>{tr(locale, "Quitar", "Remove")}</button></div>;
@@ -601,6 +750,124 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
           {limitAfterSelection !== null && data.maxCategoriesPerPlayer !== null && <small>{tr(locale, `${limitAfterSelection}/${data.maxCategoriesPerPlayer} categorías`, `${limitAfterSelection}/${data.maxCategoriesPerPlayer} categories`)}</small>}
         </aside>
       </section>
+
+
+      <section className="public-participants-section" id="tournament-participants">
+        <div className="public-section-heading">
+          <div>
+            <h2>{tr(locale,"Inscriptos.","Players.")}</h2>
+            <p>
+              {tr(
+                locale,
+                "Mirá quiénes ya forman parte de cada categoría y qué parejas todavía se están armando.",
+                "See who is already in each category and which pairs are still being formed.",
+              )}
+            </p>
+          </div>
+          {data.publicParticipants && <strong>{data.totalPlayers}</strong>}
+        </div>
+
+        {!data.publicParticipants ? (
+          <div className="public-participant-empty">
+            {tr(
+              locale,
+              "La organización todavía no publicó la lista de inscriptos.",
+              "The organizer has not published the player list yet.",
+            )}
+          </div>
+        ) : (
+          <div className="public-participant-categories">
+            {data.categories.map((category) => {
+              const isOpen = openParticipantCategory === category.id;
+              const publishedCategory = participantData?.categories.find(
+                (candidate) => candidate.categoryId === category.id,
+              );
+
+              return (
+                <div
+                  className={`public-participant-category${isOpen ? " is-open" : ""}`}
+                  key={`participants-${category.id}`}
+                >
+                  <button
+                    type="button"
+                    className="public-participant-category-toggle"
+                    onClick={() => void toggleParticipantCategory(category.id)}
+                  >
+                    <strong>{category.name}</strong>
+                    <span>
+                      {category.publicParticipantCount}{" "}
+                      {tr(
+                        locale,
+                        category.publicParticipantCount === 1 ? "inscripto" : "inscriptos",
+                        category.publicParticipantCount === 1 ? "player" : "players",
+                      )}
+                    </span>
+                    <i aria-hidden="true" />
+                  </button>
+
+                  {isOpen && (
+                    <div className="public-participant-list">
+                      {participantsBusy && !participantData ? (
+                        <div className="public-participant-empty">
+                          {tr(locale,"Cargando inscriptos…","Loading players…")}
+                        </div>
+                      ) : publishedCategory?.entries.length ? (
+                        publishedCategory.entries.map((entry, index) => (
+                          <article
+                            className="public-participant-entry"
+                            key={`${category.id}-${index}`}
+                          >
+                            {entry.entryType === "team" && entry.label && (
+                              <small>{entry.label}</small>
+                            )}
+
+                            {entry.members.map((name, memberIndex) => (
+                              <div
+                                className="public-participant-member"
+                                key={`${name}-${memberIndex}`}
+                              >
+                                <PlayerAvatar name={name} size="sm" />
+                                <strong>{name}</strong>
+                              </div>
+                            ))}
+
+                            {entry.seeking && (
+                              <div className="public-participant-member public-participant-vacant">
+                                <span className="public-participant-vacant-mark">+</span>
+                                <strong>
+                                  {entry.seeking === "partner"
+                                    ? tr(locale,"Buscando pareja","Looking for partner")
+                                    : tr(locale,"Buscando equipo","Looking for team")}
+                                </strong>
+                              </div>
+                            )}
+                          </article>
+                        ))
+                      ) : (
+                        <div className="public-participant-empty">
+                          {tr(locale,"Todavía no hay inscriptos para mostrar.","No players to show yet.")}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {basket.length > 0 && (
+        <button
+          type="button"
+          className="registration-mobile-selection"
+          onClick={() => document.getElementById("registration-summary")?.scrollIntoView({ behavior:"smooth", block:"center" })}
+        >
+          <span>{basket.length} {tr(locale,basket.length===1?"categoría":"categorías",basket.length===1?"category":"categories")}</span>
+          <strong>{money(basketTotal, basket[0]?.category.currency ?? "UYU", locale)}</strong>
+          <b>{tr(locale,"Continuar","Continue")} →</b>
+        </button>
+      )}
 
       {explanationCategory && modalExplanation && (
         <div
@@ -664,7 +931,7 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
             </button>
             <div className="eyebrow">{tr(locale, "REVISIÓN FINAL", "FINAL REVIEW")}</div>
             <h2 id="launch-review-title">
-              {tr(locale, "¿Confirmás tu inscripción?", "Confirm your registration?")}
+              {tr(locale, "Confirmá tu inscripción", "Confirm your registration")}
             </h2>
             <p>
               {tr(
@@ -754,7 +1021,7 @@ export function PublicTournamentRegistration({ slug, locale, go, onProfileSaved 
             <div className="launch-registration-check" aria-hidden="true">✓</div>
             <div className="eyebrow">HUAU TOURNAMENT</div>
             <h2 id="launch-registration-title">
-              {tr(locale, "Inscripción confirmada", "Registration confirmed")}
+              {tr(locale, "Listo, estás inscripto.", "You’re registered.")}
             </h2>
             <p>
               {registrationSuccess.waitlisted > 0
@@ -883,6 +1150,17 @@ type ManagedRegistration = {
 
 type MyData = { ok: true; profile: PlayerProfile | null; registrations: ManagedRegistration[]; invitations: Invitation[] };
 
+function registrationStatusCopy(locale: Locale, status: string) {
+  const values: Record<string, [string, string]> = {
+    confirmed: ["Confirmada", "Confirmed"],
+    awaiting_payment: ["Pago pendiente", "Payment pending"],
+    waitlisted: ["Lista de espera", "Waitlisted"],
+    cancelled: ["Cancelada", "Cancelled"],
+    rejected: ["Rechazada", "Rejected"],
+  };
+  return values[status]?.[locale === "es" ? 0 : 1] ?? status.replaceAll("_", " ");
+}
+
 export function MyTournamentRegistrations({ locale, go, onProfileSaved }: { locale: Locale; go: Go; onProfileSaved?: () => Promise<void> }) {
   const [data, setData] = useState<MyData | null>(null);
   const [error, setError] = useState("");
@@ -989,21 +1267,40 @@ export function MyTournamentRegistrations({ locale, go, onProfileSaved }: { loca
     count: currentRegistrations.filter((registration) => registration.isOwner === 1 && registration.tournamentId === seed.tournamentId).length,
   })).filter((group) => group.count > 1);
 
+  const currentTournamentGroups = currentRegistrations.reduce<Array<{
+    tournamentId: string;
+    tournamentName: string;
+    slug: string;
+    registrations: ManagedRegistration[];
+  }>>((groups, registration) => {
+    const existing = groups.find((group) => group.tournamentId === registration.tournamentId);
+    if (existing) {
+      existing.registrations.push(registration);
+    } else {
+      groups.push({
+        tournamentId: registration.tournamentId,
+        tournamentName: registration.tournamentName,
+        slug: registration.slug,
+        registrations: [registration],
+      });
+    }
+    return groups;
+  }, []);
+
   return (
     <main className="dashboard my-registrations-page">
-      <button className="section-back" onClick={() => go("/app")}>← {tr(locale, "Mi HUAU", "My HUAU")}</button>
-      <section className="dashboard-head"><div><div className="eyebrow">HUAU TOURNAMENT</div><h1>{tr(locale, "Mis inscripciones", "My registrations")}</h1><p className="muted">{tr(locale, "Tu inscripción es tuya. Después podés vincularla a una pareja o equipo sin volver a inscribirte.", "Your registration belongs to you. Pair or join a team later without registering again.")}</p></div></section>
+      <section className="dashboard-head"><div><h1>{tr(locale, "Mis inscripciones", "My registrations")}</h1><p className="muted">{tr(locale, "Tus torneos, categorías, pagos y vínculos en un mismo lugar.", "Your tournaments, categories, payments and pairings in one place.")}</p></div></section>
       {error && <div className="registration-alert">{error}</div>}
       {(profileNeeded || invitationNeedsMissingProfile) && <EligibilityProfileCard locale={locale} profile={data?.profile ?? null} busy={busy === "profile"} onSave={saveProfile} compact />}
 
       {data?.invitations.length ? <section className="panel"><div className="panel-title"><div><h2>{tr(locale, "Invitaciones pendientes", "Pending invitations")}</h2><p className="muted">{tr(locale, "Aceptar vincula tu inscripción existente; no crea una inscripción nueva.", "Accepting links your existing registration; it does not create a new one.")}</p></div><span>{data.invitations.length}</span></div><div className="registration-list">{data.invitations.map((invitation) => <article className="registration-row" key={invitation.id}><div><span className="pill">{invitation.kind}</span><strong>{invitation.kind === "pair" ? tr(locale, `${invitation.inviterName} quiere formar pareja contigo`, `${invitation.inviterName} wants to pair with you`) : tr(locale, `${invitation.inviterName} te invita a ${invitation.teamName || "su equipo"}`, `${invitation.inviterName} invites you to ${invitation.teamName || "their team"}`)}</strong><small>{invitation.tournamentName} · {invitation.categoryName}</small></div><div className="form-actions"><button className="ghost small" disabled={busy === invitation.id} onClick={() => void respond(invitation.id, "decline")}>{tr(locale, "Rechazar", "Decline")}</button><button className="light small" disabled={busy === invitation.id} onClick={() => void respond(invitation.id, "accept")}>{tr(locale, "Aceptar", "Accept")}</button></div></article>)}</div></section> : null}
 
-      <section className="panel"><div className="panel-title"><div><h2>{tr(locale, "Inscripciones actuales", "Current registrations")}</h2><p className="muted">{tr(locale, "Sólo aparecen acá tus participaciones vigentes. Las canceladas quedan guardadas aparte como historial.", "Only current participation appears here. Cancelled registrations are kept separately as history.")}</p></div><span>{currentRegistrations.length}</span></div>{cancellableTournamentGroups.length > 0 && <div className="registration-cancel-all-list">{cancellableTournamentGroups.map((group) => <div key={group.tournamentId}><div><strong>{group.tournamentName}</strong><span>{group.count} {tr(locale, "inscripciones activas", "active registrations")}</span></div><button className="ghost small" disabled={busy === `cancel-all-${group.tournamentId}`} onClick={() => void cancelAll(group.tournamentId, group.tournamentName, group.count)}>{tr(locale, "Cancelar todas", "Cancel all")}</button></div>)}</div>}<div className="registration-list">{currentRegistrations.length ? currentRegistrations.map((registration) => {
+      <section className="panel"><div className="panel-title"><div><h2>{tr(locale, "Inscripciones actuales", "Current registrations")}</h2><p className="muted">{tr(locale, "Sólo aparecen acá tus participaciones vigentes. Las canceladas quedan guardadas aparte como historial.", "Only current participation appears here. Cancelled registrations are kept separately as history.")}</p></div><span>{currentRegistrations.length}</span></div>{cancellableTournamentGroups.length > 0 && <div className="registration-cancel-all-list">{cancellableTournamentGroups.map((group) => <div key={group.tournamentId}><div><strong>{group.tournamentName}</strong><span>{group.count} {tr(locale, "inscripciones activas", "active registrations")}</span></div><button className="ghost small" disabled={busy === `cancel-all-${group.tournamentId}`} onClick={() => void cancelAll(group.tournamentId, group.tournamentName, group.count)}>{tr(locale, "Cancelar todas", "Cancel all")}</button></div>)}</div>}<div className="my-tournament-groups">{currentRegistrations.length ? currentTournamentGroups.map((group) => <section className="my-tournament-group" key={group.tournamentId}><header className="my-tournament-group-head"><div><h2>{group.tournamentName}</h2><span>{group.registrations.length} {tr(locale, group.registrations.length === 1 ? "categoría" : "categorías", group.registrations.length === 1 ? "category" : "categories")}</span></div><button className="ghost small" onClick={() => go(`/tournaments/${group.slug}`)}>{tr(locale,"Ver torneo","View tournament")}</button></header><div className="registration-list">{group.registrations.map((registration) => {
         const active = !["cancelled", "rejected"].includes(registration.status);
         const registrationCandidates = candidates[registration.id];
         const explanation = explanationForPersistedFormat(registration.formatKind, registration.formatConfig, locale);
         return <article className="registration-card" key={`${registration.id}-${registration.isOwner}`}>
-          <div className="registration-card-head"><button className="registration-main" onClick={() => go(`/tournaments/${registration.slug}`)}><span className={`pill status-${registration.status}`}>#{registration.registrationNumber} · {registration.status}</span><strong>{registration.tournamentName} · {registration.categoryName}</strong><small>{registration.entryType === "pair" ? registration.groupingState === "paired" ? tr(locale, "Pareja asignada", "Partner assigned") : tr(locale, "Buscando pareja", "Looking for partner") : registration.entryType === "team" ? registration.groupingState === "free" ? tr(locale, "Libre / sin equipo", "Free agent / no team") : `${registration.entryName || tr(locale, "Equipo", "Team")} · ${registration.groupingState}` : tr(locale, "Individual", "Individual")} · {money(registration.finalAmountMinor, registration.currency, locale)}</small></button><div className="form-actions">{registration.isOwner === 1 && active && (registration.pendingCancellationRequest ? <span className="pill">{tr(locale, "Cancelación solicitada", "Cancellation requested")}</span> : <button className="ghost small" disabled={busy === registration.id} onClick={() => void cancel(registration.id)}>{tr(locale, "Cancelar inscripción", "Cancel registration")}</button>)}{registration.isOwner === 0 && active && registration.entryType !== "individual" && <button className="ghost small" disabled={busy === `leave-${registration.id}`} onClick={() => void leaveGroup(registration)}>{tr(locale, "Salir", "Leave")}</button>}</div></div>
+          <div className="registration-card-head"><button className="registration-main" onClick={() => go(`/tournaments/${registration.slug}`)}><span className={`pill status-${registration.status}`}>#{registration.registrationNumber} · {registrationStatusCopy(locale, registration.status)}</span><strong>{registration.categoryName}</strong><small>{registration.entryType === "pair" ? registration.groupingState === "paired" ? tr(locale, "Pareja asignada", "Partner assigned") : tr(locale, "Buscando pareja", "Looking for partner") : registration.entryType === "team" ? registration.groupingState === "free" ? tr(locale, "Libre / sin equipo", "Free agent / no team") : `${registration.entryName || tr(locale, "Equipo", "Team")} · ${registration.groupingState}` : tr(locale, "Individual", "Individual")} · {money(registration.finalAmountMinor, registration.currency, locale)}</small></button><div className="form-actions">{registration.isOwner === 1 && active && (registration.pendingCancellationRequest ? <span className="pill">{tr(locale, "Cancelación solicitada", "Cancellation requested")}</span> : <button className="ghost small" disabled={busy === registration.id} onClick={() => void cancel(registration.id)}>{tr(locale, "Cancelar inscripción", "Cancel registration")}</button>)}{registration.isOwner === 0 && active && registration.entryType !== "individual" && <button className="ghost small" disabled={busy === `leave-${registration.id}`} onClick={() => void leaveGroup(registration)}>{tr(locale, "Salir", "Leave")}</button>}</div></div>
 
           {registration.entryType !== "individual" && registration.members.length > 0 && <div className="registration-entry-manager"><div className="registration-member-grid">{registration.members.map((member) => <div className="registration-member" key={member.personId}><span className="pill">{member.memberRole}</span><strong>{member.name}</strong><small>{member.email || tr(locale, "Cuenta HUAU", "HUAU account")}</small></div>)}</div></div>}
 
@@ -1027,9 +1324,9 @@ export function MyTournamentRegistrations({ locale, go, onProfileSaved }: { loca
           {!registration.covered && registration.status === "awaiting_payment" && <div className="registration-payment-note"><strong>{tr(locale, "Pago pendiente", "Payment pending")}</strong><span>{tr(locale, "La inscripción ya existe. El pago se confirma cuando el organizador o el medio habilitado lo aprueba.", "Your registration already exists. Payment is confirmed when the organizer or enabled payment method approves it.")}</span></div>}
           {explanation && <details className="registration-format-explanation"><summary>{tr(locale, "Cómo se juega esta categoría", "How this category works")}</summary><FormatExplanationPanel explanation={explanation} locale={locale} compact title={registration.categoryName}/></details>}
         </article>;
-      }) : <div className="empty-state">{tr(locale, "No tenés inscripciones vigentes.", "You do not have current registrations.")}</div>}</div></section>
+      })}</div></section>) : <div className="empty-state">{tr(locale, "No tenés inscripciones vigentes.", "You do not have current registrations.")}</div>}</div></section>
 
-      {registrationHistory.length > 0 && <section className="panel registration-history-panel"><div className="panel-title"><div><h2>{tr(locale, "Cancelaciones e historial", "Cancellations & history")}</h2><p className="muted">{tr(locale, "Se conserva para trazabilidad. No cuenta como participación activa ni aparece en la operación del torneo.", "Kept for traceability. It does not count as active participation or appear in tournament operations.")}</p></div><span>{registrationHistory.length}</span></div><div className="registration-history-list">{registrationHistory.map((registration) => <article className="registration-history-row" key={`history-${registration.id}-${registration.isOwner}`}><div><span className={`pill status-${registration.status}`}>#{registration.registrationNumber} · {registration.status}</span><strong>{registration.tournamentName} · {registration.categoryName}</strong><small>{money(registration.finalAmountMinor, registration.currency, locale)}</small></div><span className="history-state">{registration.status === "cancelled" ? tr(locale, "Cancelada", "Cancelled") : tr(locale, "Rechazada", "Rejected")}</span></article>)}</div></section>}
+      {registrationHistory.length > 0 && <section className="panel registration-history-panel"><div className="panel-title"><div><h2>{tr(locale, "Cancelaciones e historial", "Cancellations & history")}</h2><p className="muted">{tr(locale, "Se conserva para trazabilidad. No cuenta como participación activa ni aparece en la operación del torneo.", "Kept for traceability. It does not count as active participation or appear in tournament operations.")}</p></div><span>{registrationHistory.length}</span></div><div className="registration-history-list">{registrationHistory.map((registration) => <article className="registration-history-row" key={`history-${registration.id}-${registration.isOwner}`}><div><span className={`pill status-${registration.status}`}>#{registration.registrationNumber} · {registrationStatusCopy(locale, registration.status)}</span><strong>{registration.tournamentName} · {registration.categoryName}</strong><small>{money(registration.finalAmountMinor, registration.currency, locale)}</small></div><span className="history-state">{registration.status === "cancelled" ? tr(locale, "Cancelada", "Cancelled") : tr(locale, "Rechazada", "Rejected")}</span></article>)}</div></section>}
     </main>
   );
 }

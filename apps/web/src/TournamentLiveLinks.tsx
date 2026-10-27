@@ -50,7 +50,7 @@ export function TournamentLiveTicker({ locale, go }: { locale: Locale; go: Go })
   const repeated = repeatedTickerItems(visible);
   return <div className="huau-live-ticker" role="region" aria-label={tr(locale,"Torneos destacados en vivo","Featured live tournaments")}>
     <div className="huau-live-ticker-track">
-      {repeated.map((item,index)=><button key={`${item.tournamentId}-${index}`} onClick={()=>go(`/tournaments/${item.slug}/live`)}>
+      {repeated.map((item,index)=><button key={`${item.tournamentId}-${index}`} onClick={()=>go(`/tournaments/${item.slug}`)}>
         <span className={`huau-live-ticker-dot ${item.status}`} />
         <b>{item.status === "live" ? "LIVE" : item.status === "finished" ? tr(locale,"FINALIZADO","FINISHED") : tr(locale,"PROGRAMADO","SCHEDULED")}</b>
         <span>{item.name}</span>
@@ -68,5 +68,5 @@ export function TournamentLiveRegistrationLink({ slug, locale, go }: { slug: str
     return () => { active = false; };
   }, [slug]);
   if (!published) return null;
-  return <div className="huau-registration-live-link"><button type="button" className="ghost" onClick={()=>go(`/tournaments/${slug}/live`)}>{tr(locale,"Seguir torneo en vivo","Follow tournament live")} ↗</button></div>;
+  return <div className="huau-registration-live-link"><button type="button" className="ghost" onClick={()=>go(`/tournaments/${slug}`)}>{tr(locale,"Seguir torneo en vivo","Follow tournament live")} ↗</button></div>;
 }

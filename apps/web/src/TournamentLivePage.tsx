@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useMemo, useState } from "react";
 import type { Locale } from "./i18n";
+import { PlayerPublicHeader } from "./PlayerPublicChrome";
 import "./TournamentLivePage.css";
 
 type Go = (path: string) => void;
@@ -121,10 +122,10 @@ function scheduleMatchesNeedle(row: any, needle: string, structure: any) {
   return [row.entryAId,row.entryBId].some((id)=>id&&matchingTeams.has(String(id)));
 }
 
-export function TournamentLivePage({ slug, locale, go }: { slug: string; locale: Locale; go: Go }) {
+export function TournamentLivePage({ slug, locale, go, authenticated = false, onSignOut }: { slug: string; locale: Locale; go: Go; authenticated?: boolean; onSignOut?: (() => void | Promise<void>) | undefined }) {
   const [data, setData] = useState<Bundle | null>(null);
   const [error, setError] = useState("");
-  const [view,setView]=useState<View>("overview");
+  const [view,setView]=useState<View | null>(null);
   const [categoryId,setCategoryId]=useState("");
   const [teamId,setTeamId]=useState("");
   const [player,setPlayer]=useState("");
@@ -163,11 +164,18 @@ export function TournamentLivePage({ slug, locale, go }: { slug: string; locale:
     return [...days.entries()];
   }, [groupedSchedule]);
 
-  if (!data) return <main className="live-page"><header className="live-top"><button onClick={() => go("/")}>←</button><img src="/huau-logo.png" alt="HUAU" /></header><div className="live-empty">{error || tr(locale, "Cargando torneo…", "Loading tournament…")}</div></main>;
+  if (!data) return <main className="live-page"><PlayerPublicHeader locale={locale} go={go} authenticated={authenticated} onSignOut={onSignOut}/><div className="live-empty">{error || tr(locale, "Cargando torneo…", "Loading tournament…")}</div></main>;
 
   const structure=data.structure;
   const live=data.live;
   const manifest=data.manifest;
+  const activeView: View = view ?? (
+    manifest.status === "finished"
+      ? "results"
+      : manifest.status === "scheduled"
+        ? "schedule"
+        : "overview"
+  );
   const heroImageUrl=String(structure.tournament.heroImageUrl??"");
   const categories=structure.categories??[];
   const teams=structure.teams??[];
@@ -191,29 +199,29 @@ export function TournamentLivePage({ slug, locale, go }: { slug: string; locale:
   const mySchedule=playerNeedle?groupedSchedule.filter((block)=>block.rows.some((row:any)=>scheduleMatchesNeedle(row,playerNeedle,structure))).slice(0,12):[];
 
   return <main className="live-page">
-    <header className="live-top"><button onClick={() => go("/")}>← HUAU</button><img src="/huau-logo.png" alt="HUAU" /></header>
+    <PlayerPublicHeader locale={locale} go={go} authenticated={authenticated} onSignOut={onSignOut}/>
     <section className={`live-hero ${heroImageUrl?"has-cover":""}`} style={heroImageUrl?{backgroundImage:`linear-gradient(90deg,rgba(5,5,5,.84) 0%,rgba(5,5,5,.60) 58%,rgba(5,5,5,.72) 100%), url("${heroImageUrl}")`}:undefined}>
       <div className="live-hero-main"><span className={`live-status ${manifest.status}`}>● {manifest.status === "live" ? "LIVE" : manifest.status === "finished" ? tr(locale,"FINALIZADO","FINISHED") : tr(locale,"PROGRAMADO","SCHEDULED")}</span><h1>{structure.tournament.name}</h1><p>{dateTime(structure.tournament.startAt,locale)} · {structure.tournament.courtCount} {tr(locale,"canchas","courts")}{structure.tournament.venue?` · ${structure.tournament.venue}`:""}</p></div>
       <div className="live-hero-meta"><span>{tr(locale,"Actualizado","Updated")}</span><strong>{dateTime(updatedAt,locale)}</strong><small>{live?tr(locale,"Resultados publicados por dirección de torneo","Results published by tournament direction"):tr(locale,"Estructura publicada · resultados aún no publicados","Structure published · results not yet published")}</small></div>
     </section>
 
-    <nav className="live-nav">{(["overview","schedule","groups","results"] as View[]).map((key)=><button className={view===key?"active":""} key={key} onClick={()=>setView(key)}>{key==="overview"?tr(locale,"Resumen","Overview"):key==="schedule"?tr(locale,"Cronograma","Schedule"):key==="groups"?tr(locale,"Grupos y formato","Groups & format"):tr(locale,"Resultados","Results")}</button>)}</nav>
+    <nav className="live-nav">{(["overview","schedule","groups","results"] as View[]).map((key)=><button className={activeView===key?"active":""} key={key} onClick={()=>setView(key)}>{key==="overview"?tr(locale,"Resumen","Overview"):key==="schedule"?tr(locale,"Cronograma","Schedule"):key==="groups"?tr(locale,"Competencia","Competition"):tr(locale,"Resultados","Results")}</button>)}</nav>
 
     <section className="live-filters"><select value={categoryId} onChange={(e)=>setCategoryId(e.target.value)}><option value="">{tr(locale,"Todas las categorías","All categories")}</option>{categories.map((category:any)=><option key={category.id} value={category.id}>{category.name}</option>)}</select><select value={teamId} onChange={(e)=>setTeamId(e.target.value)}><option value="">{tr(locale,"Todos los equipos","All teams")}</option>{teams.map((team:any)=><option key={team.id} value={team.id}>{team.name}</option>)}</select><input value={player} onChange={(e)=>setPlayer(e.target.value)} placeholder={tr(locale,"Buscar mi nombre…","Find my name…")} /><select value={court} onChange={(e)=>setCourt(e.target.value)}><option value="">{tr(locale,"Todas las canchas","All courts")}</option>{courts.map((value)=><option key={String(value)} value={String(value)}>Cancha {String(value)}</option>)}</select></section>
 
     {playerNeedle?<section className="live-card live-my"><header><span>{tr(locale,"MI TORNEO","MY TOURNAMENT")}</span><b>{mySchedule.length}</b></header>{myTeams.length?<div className="live-my-teams">{myTeams.map((team:any)=><div key={team.id}><strong>{team.name}</strong><span>{categories.find((category:any)=>String(category.id)===String(team.categoryId))?.name??""}</span><small>{(team.roster??[]).map((member:any)=>member.name).join(" · ")}</small></div>)}</div>:null}{mySchedule.length?<div className="live-my-schedule">{mySchedule.map((block)=><ScheduleEncounterRow key={block.id} block={block} locale={locale}/>)}</div>:<p>{tr(locale,"No encontramos partidos con ese nombre. Probá con apellido o equipo.","No matches found for that name. Try a surname or team.")}</p>}</section>:null}
 
-    {view==="overview"?<>
+    {activeView==="overview"?<>
       <section className="live-grid"><article className="live-card live-now"><header><span>{tr(locale,"AHORA","NOW")}</span><b>{current.length}</b></header>{current.length?current.map((block)=><ScheduleEncounterRow key={block.id} block={block} locale={locale}/>):<p>{tr(locale,"No hay partidos activos.","No active matches.")}</p>}</article><article className="live-card"><header><span>{tr(locale,"PRÓXIMOS","NEXT")}</span><b>{next.length}</b></header>{next.length?next.map((block)=><ScheduleEncounterRow key={block.id} block={block} locale={locale}/>):<p>{tr(locale,"El cronograma todavía no tiene próximos partidos.","No upcoming matches are scheduled yet.")}</p>}</article></section>
       <section className="live-card"><header><span>{tr(locale,"CATEGORÍAS Y FORMATO","CATEGORIES & FORMAT")}</span><b>{categories.length}</b></header><div className="live-category-grid">{categories.map((category:any)=>{const team=teamByCategory.get(String(category.id));const standard=standardByCategory.get(String(category.id));const groupCount=team?teamGroupRows(team).length:standard?.groups?.length??0;return <div key={category.id}><span>{category.entryType==="team"?"TEAM":"STANDARD"}</span><h3>{category.name}</h3><strong>{groupCount} {tr(locale,"grupo(s)","group(s)")}</strong><p>{team?teamFormatText(locale,team):standardFormatText(locale,standard)}</p></div>})}</div></section>
       {live?<><Results locale={locale} categories={categories} standardResults={standardResults} teamResults={teamResults} categoryId={categoryId} compact/><Standings locale={locale} live={live}/></>:<section className="live-card live-pending"><h2>{tr(locale,"Estructura publicada","Structure published")}</h2><p>{tr(locale,"La dirección del torneo todavía no publicó resultados. El cronograma, los grupos y el formato ya están disponibles.","Tournament direction has not published results yet. Schedule, groups and format are already available.")}</p></section>}
     </>:null}
 
-    {view==="schedule"?<section className="live-card"><header><span>{tr(locale,"CRONOGRAMA POR DÍA","SCHEDULE BY DAY")}</span><b>{groupedSchedule.length}</b></header><div className="live-schedule-days">{scheduleDays.map(([day,blocks])=><section className="live-schedule-day" key={day}><header><strong>{scheduleDayLabel(blocks[0]?.startAt??0,locale)}</strong><span>{blocks.length} {tr(locale,blocks.length===1?"enfrentamiento":"enfrentamientos",blocks.length===1?"encounter":"encounters")}</span></header><div>{blocks.map((block)=><ScheduleEncounterRow key={block.id} block={block} locale={locale}/>)}</div></section>)}</div></section>:null}
+    {activeView==="schedule"?<section className="live-card"><header><span>{tr(locale,"CRONOGRAMA POR DÍA","SCHEDULE BY DAY")}</span><b>{groupedSchedule.length}</b></header><div className="live-schedule-days">{scheduleDays.map(([day,blocks])=><section className="live-schedule-day" key={day}><header><strong>{scheduleDayLabel(blocks[0]?.startAt??0,locale)}</strong><span>{blocks.length} {tr(locale,blocks.length===1?"enfrentamiento":"enfrentamientos",blocks.length===1?"encounter":"encounters")}</span></header><div>{blocks.map((block)=><ScheduleEncounterRow key={block.id} block={block} locale={locale}/>)}</div></section>)}</div></section>:null}
 
-    {view==="groups"?<section className="live-groups-view">{categories.map((category:any)=>{const standard=standardByCategory.get(String(category.id));const team=teamByCategory.get(String(category.id));if(!standard&&!team)return null;const groups=team?teamGroupRows(team):standard.groups??[];return <article className="live-card" key={category.id}><header><div><span>{category.entryType==="team"?"TEAM":"STANDARD"}</span><h2>{category.name}</h2></div><b>{groups.length} {tr(locale,"grupos","groups")}</b></header><p className="live-format-copy">{team?teamFormatText(locale,team):standardFormatText(locale,standard)}</p>{team?.format?.encounter?.rubbers?.length?<div className="live-rubber-sequence">{team.format.encounter.rubbers.map((rubber:any,index:number)=><span key={rubber.key}><b>{visibleRubberCode(rubber,index)}</b>{rubber.label}{rubber.play==="if_tied"?<em>{tr(locale,"si empate","if tied")}</em>:null}</span>)}</div>:null}<div className="live-group-grid">{groups.map((group:any)=><div key={group.id}><h3>{tr(locale,"Grupo","Group")} {group.name}</h3>{(group.entries??[]).map((entry:any,index:number)=><span key={entry.id}><b>{index+1}</b><strong>{entry.name}</strong></span>)}</div>)}</div></article>})}</section>:null}
+    {activeView==="groups"?<section className="live-groups-view">{categories.map((category:any)=>{const standard=standardByCategory.get(String(category.id));const team=teamByCategory.get(String(category.id));if(!standard&&!team)return null;const groups=team?teamGroupRows(team):standard.groups??[];return <article className="live-card" key={category.id}><header><div><span>{category.entryType==="team"?"TEAM":"STANDARD"}</span><h2>{category.name}</h2></div><b>{groups.length} {tr(locale,"grupos","groups")}</b></header><p className="live-format-copy">{team?teamFormatText(locale,team):standardFormatText(locale,standard)}</p>{team?.format?.encounter?.rubbers?.length?<div className="live-rubber-sequence">{team.format.encounter.rubbers.map((rubber:any,index:number)=><span key={rubber.key}><b>{visibleRubberCode(rubber,index)}</b>{rubber.label}{rubber.play==="if_tied"?<em>{tr(locale,"si empate","if tied")}</em>:null}</span>)}</div>:null}<div className="live-group-grid">{groups.map((group:any)=><div key={group.id}><h3>{tr(locale,"Grupo","Group")} {group.name}</h3>{(group.entries??[]).map((entry:any,index:number)=><span key={entry.id}><b>{index+1}</b><strong>{entry.name}</strong></span>)}</div>)}</div></article>})}</section>:null}
 
-    {view==="results"?<>{live?<><Results locale={locale} categories={categories} standardResults={standardResults} teamResults={teamResults} categoryId={categoryId}/><Standings locale={locale} live={live}/><Bracket locale={locale} live={live}/></>:<section className="live-card live-pending"><h2>{tr(locale,"Resultados todavía no publicados","Results not published yet")}</h2><p>{tr(locale,"La dirección del torneo los habilitará desde Tournament Day.","Tournament direction will publish them from Tournament Day.")}</p></section>}</>:null}
+    {activeView==="results"?<>{live?<><Results locale={locale} categories={categories} standardResults={standardResults} teamResults={teamResults} categoryId={categoryId}/><Standings locale={locale} live={live}/><Bracket locale={locale} live={live}/></>:<section className="live-card live-pending"><h2>{tr(locale,"Resultados todavía no publicados","Results not published yet")}</h2><p>{tr(locale,"La dirección del torneo los habilitará desde Tournament Day.","Tournament direction will publish them from Tournament Day.")}</p></section>}</>:null}
   </main>;
 }
 

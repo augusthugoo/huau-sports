@@ -33,6 +33,7 @@ type TournamentRow = {
   timezone: string;
   courtCount: number;
   publicHeroR2Key: string | null;
+  publicParticipants: number;
   structureLocked: number;
 };
 
@@ -203,13 +204,13 @@ async function sendRegistrationCreatedEmail(
 
 async function tournamentBySlug(env: Env, slug: string) {
   return env.HUAU_DB.prepare(
-    `SELECT id,organizer_organization_id as organizerOrganizationId,name,slug,sport,status,visibility,start_at as startAt,end_at as endAt,timezone,court_count as courtCount,public_hero_r2_key as publicHeroR2Key,structure_locked as structureLocked FROM tournaments WHERE slug=?`,
+    `SELECT id,organizer_organization_id as organizerOrganizationId,name,slug,sport,status,visibility,start_at as startAt,end_at as endAt,timezone,court_count as courtCount,public_hero_r2_key as publicHeroR2Key,COALESCE(public_participants,0) as publicParticipants,structure_locked as structureLocked FROM tournaments WHERE slug=?`,
   ).bind(slug).first<TournamentRow>();
 }
 
 async function tournamentById(env: Env, id: string) {
   return env.HUAU_DB.prepare(
-    `SELECT id,organizer_organization_id as organizerOrganizationId,name,slug,sport,status,visibility,start_at as startAt,end_at as endAt,timezone,court_count as courtCount,public_hero_r2_key as publicHeroR2Key,structure_locked as structureLocked FROM tournaments WHERE id=?`,
+    `SELECT id,organizer_organization_id as organizerOrganizationId,name,slug,sport,status,visibility,start_at as startAt,end_at as endAt,timezone,court_count as courtCount,public_hero_r2_key as publicHeroR2Key,COALESCE(public_participants,0) as publicParticipants,structure_locked as structureLocked FROM tournaments WHERE id=?`,
   ).bind(id).first<TournamentRow>();
 }
 
@@ -1036,26 +1037,344 @@ async function publicTournamentCoreBySlug(
   return core ? { core, source: "d1-fill" } : null;
 }
 
-async function publicCapacityForTournament(env: Env, tournamentId: string) {
-  const rows = await env.HUAU_DB.prepare(
-    `SELECT e.category_id as categoryId,
-            SUM(CASE WHEN e.status NOT IN ('waitlisted','withdrawn','rejected') THEN 1 ELSE 0 END) as occupiedEntries,
-            SUM(CASE WHEN e.status='waitlisted' THEN 1 ELSE 0 END) as waitlistCount
-       FROM tournament_entries e
-       JOIN tournament_categories tc ON tc.id=e.category_id
-      WHERE tc.tournament_id=?
-      GROUP BY e.category_id`,
-  ).bind(tournamentId).all<{ categoryId: string; occupiedEntries: number; waitlistCount: number }>();
+type PublicParticipantEntry = {
+  entryType: "individual" | "pair" | "team";
+  label: string | null;
+  members: string[];
+  seeking: "partner" | "team" | null;
+  waitlisted: boolean;
+};
 
-  return new Map(
-    rows.results.map((row) => [
-      row.categoryId,
-      {
-        occupiedEntries: Number(row.occupiedEntries ?? 0),
-        waitlistCount: Number(row.waitlistCount ?? 0),
-      },
-    ] as const),
+type PublicParticipantsCategory = {
+  categoryId: string;
+  name: string;
+  entryType: "individual" | "pair" | "team";
+  participantCount: number;
+  occupiedEntries: number;
+  waitlistCount: number;
+  entries: PublicParticipantEntry[];
+};
+
+type PublicParticipantsSnapshot = {
+  version: 1;
+  generatedAt: number;
+  validUntil: number;
+  tournamentId: string;
+  totalPlayers: number;
+  categories: PublicParticipantsCategory[];
+};
+
+const publicTournamentParticipantsKey = (tournamentId: string) =>
+  `public/tournaments/${tournamentId}/participants.json`;
+
+async function buildPublicParticipantsSnapshot(
+  env: Env,
+  tournamentId: string,
+): Promise<PublicParticipantsSnapshot> {
+  const [entryRows, freeRows] = await Promise.all([
+    env.HUAU_DB.prepare(
+      `SELECT tc.id as categoryId,tc.name as categoryName,tc.entry_type as entryType,
+              e.id as entryId,e.display_name as entryName,e.status as entryStatus,
+              em.organization_person_id as personId,
+              op.user_id as memberUserId,
+              TRIM(COALESCE(op.first_name,'')||' '||COALESCE(op.last_name,'')) as memberName
+         FROM tournament_categories tc
+         LEFT JOIN tournament_entries e
+           ON e.category_id=tc.id
+          AND e.status NOT IN ('withdrawn','rejected')
+         LEFT JOIN entry_members em
+           ON em.entry_id=e.id
+          AND em.status IN ('accepted','manual')
+         LEFT JOIN organization_people op ON op.id=em.organization_person_id
+        WHERE tc.tournament_id=?
+        ORDER BY tc.sort_order,tc.name,e.created_at,em.created_at`,
+    ).bind(tournamentId).all<{
+      categoryId: string;
+      categoryName: string;
+      entryType: "individual" | "pair" | "team";
+      entryId: string | null;
+      entryName: string | null;
+      entryStatus: string | null;
+      personId: string | null;
+      memberUserId: string | null;
+      memberName: string | null;
+    }>(),
+    env.HUAU_DB.prepare(
+      `SELECT tc.id as categoryId,tc.name as categoryName,tc.entry_type as entryType,
+              tr.id as registrationId,tr.user_id as userId,tr.status,
+              COALESCE(
+                NULLIF(TRIM(COALESCE(up.first_name,'')||' '||COALESCE(up.last_name,'')),''),
+                u.name
+              ) as name
+         FROM tournament_registrations tr
+         JOIN tournament_categories tc ON tc.id=tr.category_id
+         JOIN user u ON u.id=tr.user_id
+         LEFT JOIN user_profiles up ON up.user_id=tr.user_id
+        WHERE tr.tournament_id=?
+          AND tr.entry_id IS NULL
+          AND tr.status NOT IN ('cancelled','rejected')
+        ORDER BY tc.sort_order,tc.name,tr.created_at`,
+    ).bind(tournamentId).all<{
+      categoryId: string;
+      categoryName: string;
+      entryType: "individual" | "pair" | "team";
+      registrationId: string;
+      userId: string;
+      status: string;
+      name: string;
+    }>(),
+  ]);
+
+  type InternalEntry = PublicParticipantEntry & {
+    identityKeys: Set<string>;
+  };
+
+  type InternalCategory = {
+    categoryId: string;
+    name: string;
+    entryType: "individual" | "pair" | "team";
+    participantIdentities: Set<string>;
+    entriesByKey: Map<string, InternalEntry>;
+    occupiedEntries: number;
+    waitlistCount: number;
+  };
+
+  const categories = new Map<string, InternalCategory>();
+  const globalPlayers = new Set<string>();
+
+  const ensureCategory = (
+    categoryId: string,
+    name: string,
+    entryType: "individual" | "pair" | "team",
+  ) => {
+    const existing = categories.get(categoryId);
+    if (existing) return existing;
+    const created: InternalCategory = {
+      categoryId,
+      name,
+      entryType,
+      participantIdentities: new Set<string>(),
+      entriesByKey: new Map<string, InternalEntry>(),
+      occupiedEntries: 0,
+      waitlistCount: 0,
+    };
+    categories.set(categoryId, created);
+    return created;
+  };
+
+  for (const row of entryRows.results) {
+    const category = ensureCategory(row.categoryId, row.categoryName, row.entryType);
+
+    if (!row.entryId) continue;
+
+    let entry = category.entriesByKey.get(row.entryId);
+    if (!entry) {
+      entry = {
+        entryType: row.entryType,
+        label: row.entryName,
+        members: [],
+        seeking: null,
+        waitlisted: row.entryStatus === "waitlisted",
+        identityKeys: new Set<string>(),
+      };
+      category.entriesByKey.set(row.entryId, entry);
+
+      if (row.entryStatus === "waitlisted") category.waitlistCount += 1;
+      else category.occupiedEntries += 1;
+    }
+
+    const name = String(row.memberName ?? "").trim();
+    if (!name || !row.personId) continue;
+
+    const identity = row.memberUserId
+      ? `user:${row.memberUserId}`
+      : `person:${row.personId}`;
+
+    if (!entry.identityKeys.has(identity)) {
+      entry.identityKeys.add(identity);
+      entry.members.push(name);
+    }
+
+    category.participantIdentities.add(identity);
+    globalPlayers.add(identity);
+  }
+
+  for (const row of freeRows.results) {
+    const category = ensureCategory(row.categoryId, row.categoryName, row.entryType);
+    const identity = `user:${row.userId}`;
+
+    category.participantIdentities.add(identity);
+    globalPlayers.add(identity);
+
+    category.entriesByKey.set(`registration:${row.registrationId}`, {
+      entryType: row.entryType,
+      label: null,
+      members: [row.name],
+      seeking:
+        row.entryType === "pair"
+          ? "partner"
+          : row.entryType === "team"
+            ? "team"
+            : null,
+      waitlisted: row.status === "waitlisted",
+      identityKeys: new Set([identity]),
+    });
+  }
+
+  const generatedAt = now();
+
+  return {
+    version: 1,
+    generatedAt,
+    validUntil: generatedAt + 300,
+    tournamentId,
+    totalPlayers: globalPlayers.size,
+    categories: [...categories.values()].map((category) => ({
+      categoryId: category.categoryId,
+      name: category.name,
+      entryType: category.entryType,
+      participantCount: category.participantIdentities.size,
+      occupiedEntries: category.occupiedEntries,
+      waitlistCount: category.waitlistCount,
+      entries: [...category.entriesByKey.values()]
+        .map((entry) => ({
+          entryType: entry.entryType,
+          label: entry.label,
+          members: entry.members,
+          seeking:
+            entry.seeking ??
+            (
+              entry.entryType === "pair" && entry.members.length < 2
+                ? "partner"
+                : null
+            ),
+          waitlisted: entry.waitlisted,
+        }))
+        .sort((a, b) => {
+          const left = a.label || a.members[0] || "";
+          const right = b.label || b.members[0] || "";
+          return left.localeCompare(right);
+        }),
+    })),
+  };
+}
+
+async function publicParticipantsSnapshotForTournament(
+  env: Env,
+  tournamentId: string,
+): Promise<PublicParticipantsSnapshot> {
+  const key = publicTournamentParticipantsKey(tournamentId);
+  const cached = await env.HUAU_ASSETS.get(key);
+
+  if (cached) {
+    try {
+      const snapshot = JSON.parse(await cached.text()) as PublicParticipantsSnapshot;
+      if (
+        snapshot.version === 1 &&
+        snapshot.tournamentId === tournamentId &&
+        Number(snapshot.validUntil) > now()
+      ) {
+        return snapshot;
+      }
+    } catch {
+      // Disposable read model.
+    }
+
+    await env.HUAU_ASSETS.delete(key).catch(() => undefined);
+  }
+
+  const snapshot = await buildPublicParticipantsSnapshot(env, tournamentId);
+
+  await env.HUAU_ASSETS.put(key, JSON.stringify(snapshot), {
+    httpMetadata: {
+      contentType: "application/json; charset=utf-8",
+      cacheControl: "public, max-age=30",
+    },
+    customMetadata: {
+      kind: "public-tournament-participants",
+      tournamentId,
+      generatedAt: String(snapshot.generatedAt),
+      validUntil: String(snapshot.validUntil),
+    },
+  }).catch(() => undefined);
+
+  return snapshot;
+}
+
+async function invalidatePublicParticipantsSnapshot(
+  env: Env,
+  tournamentId: string,
+): Promise<void> {
+  await env.HUAU_ASSETS.delete(
+    publicTournamentParticipantsKey(tournamentId),
+  ).catch(() => undefined);
+}
+
+async function invalidatePublicParticipantsForRegistration(
+  env: Env,
+  registrationId: string,
+): Promise<void> {
+  const registration = await env.HUAU_DB.prepare(
+    `SELECT tournament_id as tournamentId
+       FROM tournament_registrations
+      WHERE id=?`,
+  ).bind(registrationId).first<{ tournamentId: string }>();
+
+  if (registration?.tournamentId) {
+    await invalidatePublicParticipantsSnapshot(env, registration.tournamentId);
+  }
+}
+
+async function invalidatePublicParticipantsForInvitation(
+  env: Env,
+  invitationId: string,
+): Promise<void> {
+  const invitation = await env.HUAU_DB.prepare(
+    `SELECT tournament_id as tournamentId
+       FROM registration_match_invitations
+      WHERE id=?`,
+  ).bind(invitationId).first<{ tournamentId: string }>();
+
+  if (invitation?.tournamentId) {
+    await invalidatePublicParticipantsSnapshot(env, invitation.tournamentId);
+  }
+}
+
+async function publicTournamentParticipants(slug: string, env: Env) {
+  const loaded = await publicTournamentCoreBySlug(env, slug);
+  if (!loaded) {
+    return json({ ok: false, code: "TOURNAMENT_NOT_FOUND" }, { status: 404 });
+  }
+
+  const snapshot = await publicParticipantsSnapshotForTournament(
+    env,
+    loaded.core.tournament.id,
   );
+
+  const canShowNames = Boolean(loaded.core.tournament.publicParticipants);
+
+  const payload = {
+    ok: true,
+    public: canShowNames,
+    version: snapshot.version,
+    generatedAt: snapshot.generatedAt,
+    validUntil: snapshot.validUntil,
+    tournamentId: snapshot.tournamentId,
+    totalPlayers: snapshot.totalPlayers,
+    categories: canShowNames
+      ? snapshot.categories
+      : snapshot.categories.map((category) => ({
+          ...category,
+          entries: [],
+        })),
+  };
+
+  return new Response(JSON.stringify(payload), {
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "public, max-age=20, stale-while-revalidate=40",
+    },
+  });
 }
 
 async function publicTournamentHero(slug: string, env: Env) {
@@ -1081,11 +1400,23 @@ async function publicTournament(slug: string, request: Request, env: Env, access
 
   const { tournament, settings, publicInfo, categories } = loaded.core;
   const closeAt = settings.registrationCloseAt;
-  const [capacityByCategory, currentUser, supportWhatsapp] = await Promise.all([
-    publicCapacityForTournament(env, tournament.id),
+  const [participantSnapshot, currentUser, supportWhatsapp] = await Promise.all([
+    publicParticipantsSnapshotForTournament(env, tournament.id),
     access.requireUser(request, env),
     huauSupportWhatsapp(env),
   ]);
+  const participantByCategory = new Map(
+    participantSnapshot.categories.map((category) => [category.categoryId, category] as const),
+  );
+  const capacityByCategory = new Map(
+    participantSnapshot.categories.map((category) => [
+      category.categoryId,
+      {
+        occupiedEntries: category.occupiedEntries,
+        waitlistCount: category.waitlistCount,
+      },
+    ] as const),
+  );
 
   const viewerState = currentUser
     ? await Promise.all([
@@ -1164,11 +1495,13 @@ async function publicTournament(slug: string, request: Request, env: Env, access
                     ? "TEAM_AGE_DIVISION_OVERLAP_DISABLED"
                     : null;
 
+    const participantCategory = participantByCategory.get(category.id);
     const capacity = capacityByCategory.get(category.id) ?? { occupiedEntries: 0, waitlistCount: 0 };
     const { formatConfigJson, ...categoryPublic } = category;
     return {
       ...categoryPublic,
       ...capacity,
+      publicParticipantCount: participantCategory?.participantCount ?? 0,
       formatConfig: parseJsonOrNull(formatConfigJson),
       rawPriceScope: category.priceScope,
       rawPriceMinor: category.priceMinor,
@@ -1180,7 +1513,14 @@ async function publicTournament(slug: string, request: Request, env: Env, access
     };
   });
 
-  const { publicHeroR2Key, organizerOrganizationId: _organizerOrganizationId, visibility: _visibility, ...publicTournamentData } = tournament;
+  const {
+    publicHeroR2Key,
+    publicParticipants: _publicParticipants,
+    organizerOrganizationId: _organizerOrganizationId,
+    visibility: _visibility,
+    ...publicTournamentData
+  } = tournament;
+  void _publicParticipants;
   void _organizerOrganizationId;
   void _visibility;
 
@@ -1212,6 +1552,8 @@ async function publicTournament(slug: string, request: Request, env: Env, access
     activeCategoryCount,
     activeTeamCategoryCount,
     activeAgeTeamDivisionCount,
+    totalPlayers: participantSnapshot.totalPlayers,
+    publicParticipants: Boolean(tournament.publicParticipants),
     categories: publicCategories,
     viewer: currentUser ? { authenticated: true, profile, wildCard: viewerHasWildCard } : { authenticated: false, profile: null, wildCard: false },
   }, {
@@ -2243,19 +2585,37 @@ export async function handleRegistrationApi(request: Request, env: Env, access: 
   const pubHero = url.pathname.match(/^\/api\/public\/tournaments\/([^/]+)\/hero$/);
   if (pubHero && request.method === "GET") return publicTournamentHero(decodeURIComponent(pubHero[1]!), env);
 
+  const pubParticipants = url.pathname.match(/^\/api\/public\/tournaments\/([^/]+)\/participants$/);
+  if (pubParticipants && request.method === "GET") return publicTournamentParticipants(decodeURIComponent(pubParticipants[1]!), env);
+
   const pub = url.pathname.match(/^\/api\/public\/tournaments\/([^/]+)$/);
   if (pub && request.method === "GET") return publicTournament(decodeURIComponent(pub[1]!), request, env, access);
 
   const batch = url.pathname.match(/^\/api\/tournaments\/([^/]+)\/registrations\/batch$/);
-  if (batch && request.method === "POST") return batchRegistration(decodeURIComponent(batch[1]!), request, env, access);
+  if (batch && request.method === "POST") {
+    const tournamentId = decodeURIComponent(batch[1]!);
+    const response = await batchRegistration(tournamentId, request, env, access);
+    if (response.ok) await invalidatePublicParticipantsSnapshot(env, tournamentId);
+    return response;
+  }
 
   const create = url.pathname.match(/^\/api\/tournaments\/([^/]+)\/categories\/([^/]+)\/register$/);
-  if (create && request.method === "POST") return createRegistration(decodeURIComponent(create[1]!), decodeURIComponent(create[2]!), request, env, access);
+  if (create && request.method === "POST") {
+    const tournamentId = decodeURIComponent(create[1]!);
+    const response = await createRegistration(tournamentId, decodeURIComponent(create[2]!), request, env, access);
+    if (response.ok) await invalidatePublicParticipantsSnapshot(env, tournamentId);
+    return response;
+  }
 
   if (url.pathname === "/api/me/tournament-registrations" && request.method === "GET") return myRegistrations(request, env, access);
 
   const team = url.pathname.match(/^\/api\/tournament-registrations\/([^/]+)\/team$/);
-  if (team && request.method === "POST") return createTeamForRegistration(decodeURIComponent(team[1]!), request, env, access);
+  if (team && request.method === "POST") {
+    const registrationId = decodeURIComponent(team[1]!);
+    const response = await createTeamForRegistration(registrationId, request, env, access);
+    if (response.ok) await invalidatePublicParticipantsForRegistration(env, registrationId);
+    return response;
+  }
 
   const candidates = url.pathname.match(/^\/api\/tournament-registrations\/([^/]+)\/candidates$/);
   if (candidates && request.method === "GET") return registrationCandidates(decodeURIComponent(candidates[1]!), request, env, access);
@@ -2264,28 +2624,58 @@ export async function handleRegistrationApi(request: Request, env: Env, access: 
   if (matchInvite && request.method === "POST") return createMatchInvitation(decodeURIComponent(matchInvite[1]!), request, env, access);
 
   const respond = url.pathname.match(/^\/api\/registration-match-invitations\/([^/]+)\/respond$/);
-  if (respond && request.method === "POST") return respondMatchInvitation(decodeURIComponent(respond[1]!), request, env, access);
+  if (respond && request.method === "POST") {
+    const invitationId = decodeURIComponent(respond[1]!);
+    const response = await respondMatchInvitation(invitationId, request, env, access);
+    if (response.ok) await invalidatePublicParticipantsForInvitation(env, invitationId);
+    return response;
+  }
 
   const cancelInvite = url.pathname.match(/^\/api\/registration-match-invitations\/([^/]+)$/);
   if (cancelInvite && request.method === "DELETE") return cancelMatchInvitation(decodeURIComponent(cancelInvite[1]!), request, env, access);
 
   const leave = url.pathname.match(/^\/api\/tournament-registrations\/([^/]+)\/leave-group$/);
-  if (leave && request.method === "POST") return leaveGroup(decodeURIComponent(leave[1]!), request, env, access);
+  if (leave && request.method === "POST") {
+    const registrationId = decodeURIComponent(leave[1]!);
+    const response = await leaveGroup(registrationId, request, env, access);
+    if (response.ok) await invalidatePublicParticipantsForRegistration(env, registrationId);
+    return response;
+  }
 
   const cancelAll = url.pathname.match(/^\/api\/tournaments\/([^/]+)\/registrations\/cancel-all$/);
-  if (cancelAll && request.method === "POST") return cancelAllTournamentRegistrations(decodeURIComponent(cancelAll[1]!), request, env, access);
+  if (cancelAll && request.method === "POST") {
+    const tournamentId = decodeURIComponent(cancelAll[1]!);
+    const response = await cancelAllTournamentRegistrations(tournamentId, request, env, access);
+    if (response.ok) await invalidatePublicParticipantsSnapshot(env, tournamentId);
+    return response;
+  }
 
   const cancel = url.pathname.match(/^\/api\/tournament-registrations\/([^/]+)\/cancel$/);
-  if (cancel && request.method === "POST") return cancelRegistration(decodeURIComponent(cancel[1]!), request, env, access);
+  if (cancel && request.method === "POST") {
+    const registrationId = decodeURIComponent(cancel[1]!);
+    const response = await cancelRegistration(registrationId, request, env, access);
+    if (response.ok) await invalidatePublicParticipantsForRegistration(env, registrationId);
+    return response;
+  }
 
   const admin = url.pathname.match(/^\/api\/admin\/tournaments\/([^/]+)\/registrations$/);
   if (admin && request.method === "GET") return adminRegistrations(decodeURIComponent(admin[1]!), request, env, access);
 
   const adminCancel = url.pathname.match(/^\/api\/admin\/registrations\/([^/]+)\/cancel$/);
-  if (adminCancel && request.method === "POST") return adminCancelRegistration(decodeURIComponent(adminCancel[1]!), request, env, access);
+  if (adminCancel && request.method === "POST") {
+    const registrationId = decodeURIComponent(adminCancel[1]!);
+    const response = await adminCancelRegistration(registrationId, request, env, access);
+    if (response.ok) await invalidatePublicParticipantsForRegistration(env, registrationId);
+    return response;
+  }
 
   const promote = url.pathname.match(/^\/api\/admin\/registrations\/([^/]+)\/promote$/);
-  if (promote && request.method === "POST") return adminPromote(decodeURIComponent(promote[1]!), request, env, access);
+  if (promote && request.method === "POST") {
+    const registrationId = decodeURIComponent(promote[1]!);
+    const response = await adminPromote(registrationId, request, env, access);
+    if (response.ok) await invalidatePublicParticipantsForRegistration(env, registrationId);
+    return response;
+  }
 
   const adjustment = url.pathname.match(/^\/api\/admin\/registrations\/([^/]+)\/adjustment$/);
   if (adjustment && request.method === "POST") return adminAdjustment(decodeURIComponent(adjustment[1]!), request, env, access);
