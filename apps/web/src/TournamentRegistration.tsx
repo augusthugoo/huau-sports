@@ -842,7 +842,7 @@ export function PublicTournamentRegistration({ slug, locale, go, authenticated =
         </div>
       )}
 
-      {basket.length > 0 && (
+      {basket.length > 0 && !reviewOpen && !regulationsOpen && !explanationCategoryId && !openParticipantCategory && (
         <button
           type="button"
           className="registration-mobile-selection"

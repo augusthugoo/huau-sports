@@ -147,6 +147,7 @@ export function Landing({
 }) {
   const [showLanguageGate, setShowLanguageGate] = useState(() => !localStorage.getItem("huau.locale"));
   const [data, setData] = useState<LandingData | null>(null);
+  const [landingLoadSettled, setLandingLoadSettled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [tournamentFilter, setTournamentFilter] = useState<"upcoming" | "results">("upcoming");
   const [tournamentDot, setTournamentDot] = useState(0);
@@ -197,6 +198,8 @@ export function Landing({
         setData(base);
       } catch {
         setData(null);
+      } finally {
+        setLandingLoadSettled(true);
       }
     })();
   }, []);
@@ -462,7 +465,7 @@ export function Landing({
   const metricsVisible = Boolean((data?.metrics?.players ?? 0) || (data?.metrics?.matches ?? 0));
 
   return (
-    <main className={`landing-v2${showLanguageGate ? " is-language-open" : ""}`}>
+    <main className={`landing-v2${showLanguageGate ? " is-language-open" : ""}${!landingLoadSettled ? " is-content-loading" : ""}`}>
       <header className={`lv2-header${headerScrolled ? " is-scrolled" : ""}`}>
         <button className="lv2-logo-button" type="button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
           <img src="/huau-logo.png" alt="HUAU" />
