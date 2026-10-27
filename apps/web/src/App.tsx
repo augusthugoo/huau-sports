@@ -15,6 +15,9 @@ import { BirthDateField } from "./BirthDateField";
 import { PlatformUsersAdmin } from "./PlatformUsersAdmin";
 import { PlayerAvatar, PlayerPublicHeader } from "./PlayerPublicChrome";
 import "./PlayerPublicV2.css";
+import "./PlayerPublicV3.css";
+
+// HUAU_PLAYER_PUBLIC_V3_HOTFIX_2026_10_27
 
 type Membership = {
   id: string;
@@ -190,7 +193,7 @@ export function App() {
     return <LoadingScreen />;
   }
 
-  if (path === "/app/registrations") return <Shell locale={locale} go={go} me={me}><div className="player-area-v2"><MyTournamentRegistrations locale={locale} go={go} onProfileSaved={refreshMe} /><MyTournamentPayments locale={locale}/></div></Shell>;
+  if (path === "/app/registrations") return <Shell locale={locale} go={go} me={me}><div className="player-area-v2 player-area-v3"><MyTournamentPayments locale={locale}/><MyTournamentRegistrations locale={locale} go={go} onProfileSaved={refreshMe} /></div></Shell>;
 
   const tournamentManage = path.match(/^\/admin\/organizations\/([^/]+)\/tournaments\/([^/]+)\/manage$/);
   if (tournamentManage) {
@@ -297,7 +300,7 @@ function AuthScreen({ mode, locale, go, onDone }: { mode: "login"|"signup"; loca
   };
 
   return (
-    <main className="auth-page auth-page-v2">
+    <main className="auth-page auth-page-v2 auth-page-v3">
       <video
         className="auth-bg-video"
         autoPlay
@@ -529,7 +532,7 @@ function MyHuau({locale,setLocale,go,me,loading,refreshMe}:{locale:Locale;setLoc
 
   return (
     <Shell locale={locale} go={go} me={me}>
-      <main className="dashboard player-profile-page player-profile-page-v2">
+      <main className="dashboard player-profile-page player-profile-page-v2 player-profile-page-v3">
         <section className="player-v2-hero">
           <div className="player-v2-identity">
             <PlayerAvatar name={fullName} size="lg" />
