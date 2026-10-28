@@ -464,8 +464,23 @@ export function Landing({
 
   const metricsVisible = Boolean((data?.metrics?.players ?? 0) || (data?.metrics?.matches ?? 0));
 
+  if (!landingLoadSettled || !data) {
+    return (
+      <main className="landing-v2 lv2-boot" aria-busy={!landingLoadSettled}>
+        <div className="lv2-boot-screen">
+          <img src="/huau-logo.png" alt="HUAU" />
+          {landingLoadSettled && !data && (
+            <div className="lv2-boot-error" role="alert">
+              <p>{locale === "es" ? "No se pudo cargar el contenido de HUAU." : "HUAU content could not be loaded."}</p>
+              <button type="button" onClick={() => window.location.reload()}>{locale === "es" ? "Reintentar" : "Retry"}</button>
+            </div>
+          )}
+        </div>
+      </main>
+    );
+  }
   return (
-    <main className={`landing-v2${showLanguageGate ? " is-language-open" : ""}${!landingLoadSettled ? " is-content-loading" : ""}`}>
+    <main className={`landing-v2${showLanguageGate ? " is-language-open" : ""}`}>
       <header className={`lv2-header${headerScrolled ? " is-scrolled" : ""}`}>
         <button className="lv2-logo-button" type="button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
           <img src="/huau-logo.png" alt="HUAU" />

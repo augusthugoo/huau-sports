@@ -31,8 +31,33 @@
 @media(prefers-reduced-motion:reduce){.landing-v2 *,.landing-v2 *:before,.landing-v2 *:after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 
 
-/* HUAU_LANDING_CMS_FLASH_FIX_2026_10_27 */
-.landing-v2.is-content-loading .lv2-hero-content {
-  visibility: hidden;
-  opacity: 0;
+/* HUAU_LANDING_BOOT_2026_10_27 */
+.lv2-boot {
+  min-height: 100svh;
+  background: #080808;
+}
+.lv2-boot-screen {
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  background: #080808;
+}
+.lv2-boot-screen img {
+  width: 108px;
+  filter: brightness(0) invert(1);
+  opacity: .92;
+}
+.lv2-boot-error {
+  max-width: 360px;
+  padding: 14px 24px;
+  color: rgba(255,255,255,.82);
+  text-align: center;
+  font-size: 13px;
+}
+.lv2-boot-error button {
+  padding: 10px 22px;
+  border: 1px solid rgba(255,255,255,.58);
+  border-radius: 999px;
+  background: transparent;
+  color: white;
 }

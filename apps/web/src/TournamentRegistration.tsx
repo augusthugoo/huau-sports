@@ -365,7 +365,7 @@ export function PublicTournamentRegistration({ slug, locale, go, authenticated =
   const [explanationCategoryId, setExplanationCategoryId] = useState<string | null>(null);
   const [regulationsOpen, setRegulationsOpen] = useState(false);
   const [regulationsAccepted, setRegulationsAccepted] = useState(false);
-  const [registrationSuccess, setRegistrationSuccess] = useState<{ waitlisted: number } | null>(null);
+  const [registrationSuccess, setRegistrationSuccess] = useState<{ waitlisted: number; total: number } | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [participantData, setParticipantData] = useState<PublicParticipantsData | null>(null);
   const [openParticipantCategory, setOpenParticipantCategory] = useState<string | null>(null);
@@ -513,7 +513,7 @@ export function PublicTournamentRegistration({ slug, locale, go, authenticated =
       setReviewOpen(false);
       await load();
       setNotice("");
-      setRegistrationSuccess({ waitlisted });
+      setRegistrationSuccess({ waitlisted, total: result.registrations.length });
     } catch (err) {
       const code = err instanceof RegistrationError ? err.code : "REGISTRATION_FAILED";
       if (code === "REGULATIONS_VERSION_CHANGED") {
@@ -552,6 +552,18 @@ export function PublicTournamentRegistration({ slug, locale, go, authenticated =
     data.tournament.status === "registration_open" &&
     !data.tournament.structureLocked &&
     (!data.registrationCloseAt || Math.floor(Date.now() / 1000) <= data.registrationCloseAt);
+  const categoryCurrencies = [...new Set(data.categories.map((category) => category.currency || "UYU"))];
+  const categoryPrices = data.categories.map((category) => category.priceMinor);
+  const minCategoryPrice = categoryPrices.length ? Math.min(...categoryPrices) : 0;
+  const maxCategoryPrice = categoryPrices.length ? Math.max(...categoryPrices) : 0;
+  const categoryPriceLabel =
+    !categoryPrices.length
+      ? "—"
+      : categoryCurrencies.length > 1
+        ? tr(locale, "Según categoría", "By category")
+        : minCategoryPrice === maxCategoryPrice
+          ? money(minCategoryPrice, categoryCurrencies[0] || "UYU", locale)
+          : `${money(minCategoryPrice, categoryCurrencies[0] || "UYU", locale)} – ${money(maxCategoryPrice, categoryCurrencies[0] || "UYU", locale)}`;
   const participantCategory = openParticipantCategory
     ? data.categories.find((category) => category.id === openParticipantCategory) ?? null
     : null;
@@ -621,16 +633,21 @@ export function PublicTournamentRegistration({ slug, locale, go, authenticated =
 
       <nav className="public-tournament-section-nav public-v3-section-nav" aria-label={tr(locale,"Secciones del torneo","Tournament sections")}>
         <button type="button" onClick={() => document.getElementById("tournament-info")?.scrollIntoView({ behavior:"smooth", block:"start" })}>
-          {tr(locale,"Información","Information")}
+          {tr(locale,"Resumen","Overview")}
         </button>
         <button type="button" onClick={() => document.getElementById("registration-categories")?.scrollIntoView({ behavior:"smooth", block:"start" })}>
           {tr(locale,"Categorías","Categories")}
         </button>
+        {data.regulations.text.trim() && (
+          <button type="button" onClick={() => setRegulationsOpen(true)}>
+            {tr(locale,"Reglamento","Regulations")}
+          </button>
+        )}
       </nav>
 
       <section className="public-v3-info" id="tournament-info">
         <div className="public-v3-info-intro">
-          <h2>{tr(locale, "El torneo.", "The tournament.")}</h2>
+          <h2>{tr(locale, "Sobre el torneo", "About the tournament")}</h2>
           <p>
             {data.publicInfo.description || tr(locale, "Revisá la información principal y elegí las categorías en las que querés competir.", "Review the main information and choose the categories you want to compete in.")}
           </p>
@@ -640,6 +657,7 @@ export function PublicTournamentRegistration({ slug, locale, go, authenticated =
           <div><span>{tr(locale, "Fecha", "Date")}</span><strong>{date(data.tournament.startAt)}</strong></div>
           <div><span>{tr(locale, "Sede", "Venue")}</span><strong>{data.publicInfo.location || data.publicInfo.club || data.publicInfo.city || tr(locale, "A confirmar", "TBC")}</strong></div>
           <div><span>{tr(locale, "Inscripción", "Registration")}</span><strong>{data.registrationCloseAt ? `${tr(locale, "Hasta", "Until")} ${date(data.registrationCloseAt)}` : tournamentStatusCopy(locale, data.tournament.status)}</strong></div>
+          <div><span>{tr(locale, "Entrada", "Entry")}</span><strong>{categoryPriceLabel}</strong></div>
           <div><span>{tr(locale, "Categorías", "Categories")}</span><strong>{data.categories.length}</strong></div>
         </div>
 
@@ -686,8 +704,8 @@ export function PublicTournamentRegistration({ slug, locale, go, authenticated =
       <section className="public-v3-registration" id="registration-categories">
         <header className="public-v3-section-heading">
           <div>
-            <h2>{tr(locale, "Elegí dónde competir.", "Choose where to compete.")}</h2>
-            <p>{tr(locale, "Toda la información importante está en una sola línea: formato, cupos, precio e inscriptos.", "Format, capacity, price and registered players are kept together in one place.")}</p>
+            <h2>{tr(locale, "Categorías", "Categories")}</h2>
+            <p>{tr(locale, "Elegí una o más categorías. Podés revisar cupos, formato e inscriptos antes de continuar.", "Choose one or more categories. Review capacity, format and players before continuing.")}</p>
           </div>
           <span>{data.categories.length} {tr(locale, data.categories.length === 1 ? "categoría" : "categorías", data.categories.length === 1 ? "category" : "categories")}</span>
         </header>
@@ -846,7 +864,7 @@ export function PublicTournamentRegistration({ slug, locale, go, authenticated =
         <button
           type="button"
           className="registration-mobile-selection"
-          onClick={() => document.getElementById("registration-summary")?.scrollIntoView({ behavior:"smooth", block:"center" })}
+          onClick={() => basket.some(({ category }) => category.entryType === "team") ? document.getElementById("registration-summary")?.scrollIntoView({ behavior:"smooth", block:"center" }) : setReviewOpen(true)}
         >
           <span>{basket.length} {tr(locale,basket.length===1?"categoría":"categorías",basket.length===1?"category":"categories")}</span>
           <strong>{money(basketTotal, basket[0]?.category.currency ?? "UYU", locale)}</strong>
@@ -1028,7 +1046,9 @@ export function PublicTournamentRegistration({ slug, locale, go, authenticated =
                 go("/app/registrations");
               }}
             >
-              {tr(locale, "Ir a Mis inscripciones", "Go to My registrations")}
+              {registrationSuccess.waitlisted < registrationSuccess.total
+                ? tr(locale, "Continuar al pago", "Continue to payment")
+                : tr(locale, "Ver Mis inscripciones", "View My registrations")}
             </button>
           </section>
         </div>

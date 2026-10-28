@@ -306,7 +306,6 @@ function AuthScreen({ mode, locale, go, onDone }: { mode: "login"|"signup"; loca
         muted
         loop
         playsInline
-        poster="/landing-v2/poster-01.jpg"
       >
         <source src="/landing-v2/sport-01-720.mp4" media="(max-width: 700px)" />
         <source src="/landing-v2/sport-01-1080.mp4" />
