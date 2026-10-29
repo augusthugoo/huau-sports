@@ -2661,3 +2661,57 @@
     width:calc(100% - 30px)!important;
   }
 }
+
+/* HUAU_PUBLIC_POLISH_2026_10_29
+   Narrow public-only fixes; no live/admin/Tournament Day styling changes.
+*/
+
+/* Review sheet: legacy launch-hotfix.css was painting black boxes behind dark text. */
+.public-tournament-page-v3 .launch-review-item {
+  padding: 13px 0;
+  border: 0;
+  border-bottom: 1px solid var(--pp-line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--pp-ink);
+}
+.public-tournament-page-v3 .launch-review-item strong {
+  color: var(--pp-ink);
+}
+.public-tournament-page-v3 .launch-review-item small {
+  color: var(--pp-muted);
+}
+
+/* Inscritos: override the global 116px profile avatar ONLY inside the drawer. */
+.public-tournament-page-v3 .public-v3-participant-member .player-avatar {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  flex: 0 0 36px;
+  display: inline-grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 500;
+  box-shadow: none;
+}
+.public-tournament-page-v3 .public-v3-participant-member {
+  min-height: 42px;
+}
+
+/* Small lists should create a compact bottom sheet; long lists remain scrollable. */
+@media (max-width: 900px) {
+  .public-tournament-page-v3 .public-v3-participant-sheet {
+    height: auto;
+    min-height: 0;
+    max-height: min(78svh, 680px);
+    overflow: hidden;
+  }
+  .public-tournament-page-v3 .public-v3-participant-scroll {
+    flex: 0 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-bottom: 4px;
+  }
+}

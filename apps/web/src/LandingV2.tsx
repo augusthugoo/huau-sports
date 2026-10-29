@@ -277,9 +277,11 @@ export function Landing({
   }, [activeTutorial]);
 
   useEffect(() => {
+    if (!landingLoadSettled) return;
     const root = desktopJourneyRef.current;
     if (!root) return;
     const steps = [...root.querySelectorAll<HTMLElement>("[data-lv2-journey-step]")];
+    if (!steps.length) return;
     const observer = new IntersectionObserver(
       (entries) => {
         const visible = entries
@@ -292,7 +294,7 @@ export function Landing({
     );
     steps.forEach((step) => observer.observe(step));
     return () => observer.disconnect();
-  }, []);
+  }, [landingLoadSettled]);
 
   useEffect(() => {
     let frame = 0;
@@ -632,8 +634,8 @@ export function Landing({
       {metricsVisible && (
         <section className="lv2-metrics" ref={metricsRef}>
           <div className="lv2-shell lv2-metrics-grid">
-            <div className="lv2-metric"><strong>{metricPlayers.toLocaleString(locale === "es" ? "es-UY" : "en-US")}<em>{content.metrics.suffix}</em></strong><span>{c(content.metrics.playersLabel)}</span></div>
-            <div className="lv2-metric"><strong>{metricMatches.toLocaleString(locale === "es" ? "es-UY" : "en-US")}<em>{content.metrics.suffix}</em></strong><span>{c(content.metrics.matchesLabel)}</span></div>
+            <div className="lv2-metric"><strong><em>{content.metrics.suffix}</em>{metricPlayers.toLocaleString(locale === "es" ? "es-UY" : "en-US")}</strong><span>{c(content.metrics.playersLabel)}</span></div>
+            <div className="lv2-metric"><strong><em>{content.metrics.suffix}</em>{metricMatches.toLocaleString(locale === "es" ? "es-UY" : "en-US")}</strong><span>{c(content.metrics.matchesLabel)}</span></div>
           </div>
         </section>
       )}
