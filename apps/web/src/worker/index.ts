@@ -9,6 +9,7 @@ import {
 } from "@huau/db";
 import { and, eq, inArray } from "drizzle-orm";
 import { createAuth } from "./auth";
+import { createLegalSignupIntent, signupWithLegalAcceptance, reconcileLegalSignupAcceptance } from "./legal-signup";
 import { handleTournamentAdminApi } from "./tournament-admin";
 import { handleTeamAdminApi } from "./team-admin";
 import { handleRegistrationApi } from "./registration";
@@ -142,6 +143,9 @@ async function handleMe(request: Request, env: Env) {
   const currentUser = await requireUser(request, env);
   if (!currentUser) return json({ ok: false, code: "UNAUTHENTICATED" }, { status: 401 });
 
+  // Repair an existing signup audit record without blocking user access.
+  await reconcileLegalSignupAcceptance(currentUser.id,currentUser.email,env)
+    .catch(() => console.error("HUAU legal signup: deferred audit repair failed"));
   const db = createDb(env.HUAU_DB);
 
   const [profileRows, memberships, capabilities, membershipRequests, platformAdmin] =
@@ -535,6 +539,12 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
+    if (url.pathname === "/api/public/legal/signup-intent" && request.method === "POST") {
+      return createLegalSignupIntent(request, env);
+    }
+    if (url.pathname === "/api/auth/sign-up/email" && request.method === "POST") {
+      return signupWithLegalAcceptance(request, env, (original) => createAuth(env).handler(original));
+    }
     if (url.pathname.startsWith("/api/auth/")) {
       return createAuth(env).handler(request);
     }

@@ -14,6 +14,8 @@ import { TournamentPublicEntry } from "./TournamentPublicEntry";
 import { BirthDateField } from "./BirthDateField";
 import { PlatformUsersAdmin } from "./PlatformUsersAdmin";
 import { PlayerAvatar, PlayerPublicHeader } from "./PlayerPublicChrome";
+import { HuauLegalPage } from "./HuauLegalPage";
+import { HUAU_TERMS_VERSION, HUAU_PRIVACY_VERSION } from "./HuauLegalVersions";
 import "./PlayerPublic.css";
 
 // HUAU_PLAYER_PUBLIC_V3_HOTFIX_2026_10_27
@@ -157,6 +159,7 @@ export function App() {
 
   if (isPending) return <LoadingScreen />;
   if (path === "/") return <Landing locale={locale} setLocale={changeLocale} go={go} authenticated={Boolean(session?.user)} />;
+  if (path === "/terms" || path === "/privacy") return <HuauLegalPage kind={path === "/terms" ? "terms" : "privacy"} locale={locale} go={go} authenticated={Boolean(session?.user)} onSignOut={() => authClient.signOut().then(() => go("/"))} />;
   if (path === "/verify-email") return <EmailVerificationScreen locale={locale} go={go} authenticated={Boolean(session?.user)} onDone={refreshMe} />;
   if (path === "/reset-password") return <ResetPasswordScreen locale={locale} go={go} />;
   if (path === "/login" && !session?.user) return <AuthScreen mode="login" locale={locale} go={go} onDone={refreshMe} />;
@@ -244,6 +247,7 @@ function Shell({ children, locale, go, me }: { children: React.ReactNode; locale
 function AuthScreen({ mode, locale, go, onDone }: { mode: "login"|"signup"; locale: Locale; go:(p:string)=>void; onDone:()=>Promise<void> }) {
   const [error,setError]=useState("");
   const [busy,setBusy]=useState(false);
+  const [legalRole,setLegalRole]=useState<"adult"|"guardian">("adult");
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -256,15 +260,23 @@ function AuthScreen({ mode, locale, go, onDone }: { mode: "login"|"signup"; loca
 
     try {
       if(mode==="signup"){
+        if (form.get("legalAccepted") !== "on") throw new Error(copy(locale,"Debés aceptar los Términos y confirmar que leíste la Política de Privacidad.","You must accept the Terms and acknowledge the Privacy Policy."));
+        if (legalRole === "guardian" && form.get("guardianAttested") !== "on") throw new Error(copy(locale,"Confirmá tu responsabilidad como representante legal.","Please confirm your legal-guardian responsibility."));
         if(password!==confirmPassword) throw new Error(copy(locale,"Las contraseñas no coinciden.","Passwords do not match."));
         const firstName=String(form.get("firstName")||"").trim();
         const lastName=String(form.get("lastName")||"").trim();
-        const result=await authClient.signUp.email({
-          email,
-          password,
-          name:`${firstName} ${lastName}`.trim(),
-          callbackURL:`${window.location.origin}/verify-email?verified=1`,
+        const intent = await api<{ ok:true; token:string }>("/api/public/legal/signup-intent", {
+          method:"POST",
+          body:JSON.stringify({email,accountRole:legalRole,acceptTerms:true,acknowledgePrivacy:true,
+            guardianAttested:legalRole==="guardian" && form.get("guardianAttested")==="on",
+            termsVersion:HUAU_TERMS_VERSION,privacyVersion:HUAU_PRIVACY_VERSION}),
         });
+        const result=await authClient.signUp.email({
+           email,
+           password,
+           name:`${firstName} ${lastName}`.trim(),
+           callbackURL:`${window.location.origin}/verify-email?verified=1`,
+         }, { headers:{ "x-huau-legal-token":intent.token } });
         if(result.error) throw new Error(result.error.message || "SIGNUP_FAILED");
         localStorage.setItem("huau.pendingSignupProfile",JSON.stringify({
           email,
@@ -350,6 +362,24 @@ function AuthScreen({ mode, locale, go, onDone }: { mode: "login"|"signup"; loca
             />
           )}
 
+          {mode === "signup" && <div className="hl-consent">
+            <label><input type="checkbox" name="legalAccepted" required />
+              <span>{copy(locale,"Acepto los ","I accept the ")}
+                <a href="/terms" target="_blank" rel="noopener noreferrer">{copy(locale,"Términos y condiciones","Terms of service")}</a>
+                {copy(locale," y confirmo que leí la "," and confirm that I have read the ")}
+                <a href="/privacy" target="_blank" rel="noopener noreferrer">{copy(locale,"Política de privacidad","Privacy policy")}</a>.
+              </span>
+            </label>
+            <div className="hl-role" role="radiogroup" aria-label={copy(locale,"Responsable de la cuenta","Account holder")}>
+              <strong>{copy(locale,"¿Quién administra esta cuenta?","Who manages this account?")}</strong>
+              <label><input type="radio" name="accountRole" value="adult" checked={legalRole==="adult"} onChange={()=>setLegalRole("adult")}/>{copy(locale,"Soy mayor de edad y creo mi cuenta.","I am an adult creating my own account.")}</label>
+              <label><input type="radio" name="accountRole" value="guardian" checked={legalRole==="guardian"} onChange={()=>setLegalRole("guardian")}/>{copy(locale,"Soy adulto y representante legal de un menor.","I am an adult and legal guardian of a minor.")}</label>
+            </div>
+            {legalRole==="guardian" && <label><input type="checkbox" name="guardianAttested" required/>
+              <span>{copy(locale,"Declaro que ejerzo la representación legal del menor y asumiré la administración de la cuenta. La participación del menor puede requerir verificación adicional.","I declare I am the minor’s legal guardian and will manage the account. A minor’s participation may require further verification.")}</span>
+            </label>}
+            <p className="hl-consent-note">{copy(locale,"La cuenta debe pertenecer a una persona adulta. La declaración no equivale a verificar parentesco ni autoriza automáticamente la publicación de datos de menores.","Accounts must belong to adults. A declaration does not verify guardianship or automatically authorize publication of minors’ data.")}</p>
+          </div>}
           <button className="light full" disabled={busy}>
             {busy
               ? "…"

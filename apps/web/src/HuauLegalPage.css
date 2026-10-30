@@ -1,0 +1,43 @@
+/* HUAU Legal V2, scoped so the landing and Tournament Live remain untouched. */
+.hl-page{min-height:100vh;background:#f3f0e9;color:#141411;font-family:Montserrat,Inter,system-ui,sans-serif;font-weight:400;font-synthesis:none}
+.hl-page *{box-sizing:border-box}
+.hl-main{width:min(1180px,calc(100% - 48px));margin:auto;padding:54px 0 130px}
+.hl-back{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-bottom:72px;color:#77736d;font-size:10px;letter-spacing:.1em}
+.hl-back button{border:0;background:none;padding:0;color:#141411;font-size:12px;font-weight:500}
+.hl-heading{padding-bottom:53px;border-bottom:1px solid rgba(20,20,17,.19)}
+.hl-heading>p{font-size:10px;letter-spacing:.2em;font-weight:500;margin:0 0 22px}
+.hl-heading h1{font-size:clamp(38px,6vw,88px);line-height:1.04;font-weight:400;letter-spacing:-.06em;max-width:1000px;margin:0 0 30px}
+.hl-intro{display:flex;align-items:flex-end;justify-content:space-between;gap:26px}
+.hl-intro p{font-size:clamp(14px,1.8vw,18px);line-height:1.7;max-width:690px;color:#55504a;margin:0}
+.hl-intro span{font-size:11px;white-space:nowrap;color:#77736d}
+.hl-layout{display:grid;grid-template-columns:225px minmax(0,1fr);gap:70px;padding-top:55px}
+.hl-sidebar{position:sticky;top:110px;align-self:start;display:grid;gap:14px}
+.hl-sidebar strong{font-size:11px;letter-spacing:.06em;margin-bottom:5px;font-weight:600}
+.hl-sidebar a{text-decoration:none;font-size:11px;line-height:1.65;color:#77736d}
+.hl-sidebar a:hover{color:#141411}
+.hl-article{min-width:0;max-width:765px}
+.hl-section{border-bottom:1px solid rgba(20,20,17,.12);padding:0 0 31px;margin-bottom:39px;scroll-margin-top:120px}
+.hl-section>span{font-size:10px;letter-spacing:.12em;color:#99928a}
+.hl-section h2,.hl-operator h2{font-size:clamp(22px,2.9vw,32px);font-weight:400;letter-spacing:-.045em;line-height:1.2;margin:12px 0 21px}
+.hl-section p,.hl-operator p{font-size:13px;line-height:1.95;color:#57534d;margin:0 0 17px;overflow-wrap:anywhere}
+.hl-operator{border-radius:18px;background:#e8e3d9;padding:29px 34px;margin-top:15px}
+.hl-operator strong{font-weight:600;color:#141411}
+.hl-operator a{color:#141411;text-underline-offset:3px}
+.hl-footer{background:#090909;padding:33px max(24px,calc((100% - 1180px)/2));display:flex;align-items:center;justify-content:space-between;gap:24px;flex-wrap:wrap}
+.hl-footer img{width:95px;filter:brightness(0) invert(1)}
+.hl-footer>div{display:flex;gap:23px;flex-wrap:wrap}
+.hl-footer button{border:0;background:none;color:#b9b8b5;font-size:11px;padding:0}
+.hl-footer button:hover{color:#fff}
+/* Signup: avoid global form label and checkbox input styling collisions. */
+.auth-page .hl-consent{display:grid;gap:13px;padding:12px 0 2px}
+.auth-page .hl-consent label{display:flex;align-items:flex-start;gap:10px;color:#dedbd5;font-size:11px;line-height:1.65}
+.auth-page .hl-consent input[type="checkbox"]{appearance:auto;flex:0 0 auto;width:17px;height:17px;margin:1px 0 0;padding:0;accent-color:#e5dfd3;box-shadow:none}
+.auth-page .hl-consent a{color:#fff;text-decoration:underline;text-underline-offset:3px}
+@media(max-width:900px){.hl-layout{grid-template-columns:minmax(0,1fr);gap:15px}.hl-sidebar{display:none}.hl-intro{align-items:flex-start;flex-direction:column}}
+@media(max-width:600px){.hl-main{width:calc(100% - 36px);padding:30px 0 80px}.hl-back{margin-bottom:52px}.hl-heading{padding-bottom:35px}.hl-heading h1{font-size:43px}.hl-layout{padding-top:37px}.hl-section{margin-bottom:32px}.hl-operator{padding:23px 20px}.hl-footer{padding:30px 19px}}
+
+.auth-page .hl-consent .hl-role{display:grid;gap:9px;border:1px solid rgba(255,255,255,.16);border-radius:12px;padding:13px;margin:1px 0}
+.auth-page .hl-consent .hl-role>strong{font-size:12px;font-weight:600;color:#fff}
+.auth-page .hl-consent .hl-role label{align-items:center;margin:0}
+.auth-page .hl-consent .hl-role input[type="radio"]{appearance:auto;width:16px;height:16px;flex:0 0 auto;padding:0;margin:0;accent-color:#eee}
+.auth-page .hl-consent-note{font-size:11px;line-height:1.7;color:#afaaa4;margin:0}

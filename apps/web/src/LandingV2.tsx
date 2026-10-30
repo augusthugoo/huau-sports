@@ -796,8 +796,8 @@ export function Landing({
             <button type="button" onClick={() => scrollToSection("lv2-tournaments")}>{c(content.nav.tournaments)}</button>
             <button type="button" onClick={() => scrollToSection("lv2-organize")}>{c(content.nav.organize)}</button>
             <button type="button" onClick={() => scrollToSection("lv2-help")}>{c(content.nav.help)}</button>
-            <span>{c(content.footer.terms)}</span>
-            <span>{c(content.footer.privacy)}</span>
+            <button type="button" onClick={() => go("/terms")}>{c(content.footer.terms)}</button>
+            <button type="button" onClick={() => go("/privacy")}>{c(content.footer.privacy)}</button>
             <button type="button" onClick={() => chooseLanguage(locale === "es" ? "en" : "es")}>{locale === "es" ? "English" : "Español"}</button>
           </div>
         </div>
