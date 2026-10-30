@@ -1,3 +1,5 @@
+
+/* HUAU_TOURNAMENT_LIVE_V4_20261029 — public, read-only. */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useMemo, useState } from "react";
 import type { Locale } from "./i18n";
@@ -5,262 +7,246 @@ import { PlayerPublicHeader } from "./PlayerPublicChrome";
 import "./TournamentLivePage.css";
 
 type Go = (path: string) => void;
+type View = "overview" | "schedule" | "groups" | "results";
+type Bundle = { ok: true; manifest: any; structure: any; live: any | null };
+type MatchBlock = { id: string; first: any; rows: any[]; startAt: number; endAt: number; team: boolean };
 const tr = (locale: Locale, es: string, en: string) => locale === "es" ? es : en;
+const asList = (value: any): any[] => Array.isArray(value) ? value : [];
 const toMs = (value: number) => value < 10_000_000_000 ? value * 1000 : value;
-const dateTime = (value: number, locale: Locale) => new Intl.DateTimeFormat(locale === "es" ? "es-UY" : "en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(toMs(value)));
-const time = (value: number) => new Date(toMs(value)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-const scheduleDayKey = (value: number) => {
-  const date = new Date(toMs(value));
-  const pad = (part: number) => String(part).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-};
-const scheduleDayLabel = (value: number, locale: Locale) =>
-  new Intl.DateTimeFormat(locale === "es" ? "es-UY" : "en-US", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-  }).format(new Date(toMs(value)));
+const localeCode = (locale: Locale) => locale === "es" ? "es-UY" : "en-US";
+const localDate = (time: number, locale: Locale) => new Intl.DateTimeFormat(localeCode(locale), { weekday: "short", day: "numeric", month: "short" }).format(new Date(toMs(time)));
+const localTime = (time: number, locale: Locale) => new Intl.DateTimeFormat(localeCode(locale), { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(toMs(time)));
+const dateKey = (time: number) => { const d = new Date(toMs(time)); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
+const text = (value: unknown, fallback = "—") => value == null || String(value).trim() === "" ? fallback : String(value);
+const number = (value: any) => value == null || value === "" || !Number.isFinite(Number(value)) ? "—" : String(value);
+const count = (value: any) => Number.isFinite(Number(value)) ? Number(value) : 0;
+const same = (a: any, b: any) => String(a ?? "") === String(b ?? "");
 
-function visibleRubberCode(rubber: any, index = 0) {
-  const candidate = String(rubber?.displayCode ?? rubber?.rubberCode ?? rubber?.key ?? "").trim();
-  if (candidate && !/^custom[-_:]/i.test(candidate) && !/^r?\d{8,}$/i.test(candidate)) return candidate;
-  const order = Math.max(1, Number(rubber?.order ?? rubber?.rubberOrder ?? index + 1) || index + 1);
-  return `R${order}`;
-}
-
-type PublicScheduleBlock = {
-  id: string;
-  rows: any[];
-  first: any;
-  startAt: number;
-  endAt: number;
-  team: boolean;
-};
-
-function publicScheduleBlocks(rows: any[]): PublicScheduleBlock[] {
-  const grouped = new Map<string, any[]>();
+function blockSchedule(rows: any[]): MatchBlock[] {
+  const groups = new Map<string, any[]>();
   for (const row of rows) {
     const team = String(row.kind ?? "") === "team" || Boolean(row.rubberKey || row.rubberCode);
-    const id = team
-      ? String(row.scheduleUnitId ?? `team:${row.categoryId}:${row.encounterId}`)
-      : String(row.scheduleUnitId ?? row.id);
-    const list = grouped.get(id) ?? [];
-    list.push(row);
-    grouped.set(id, list);
+    // Each ordinary match is independent; team rubbers are displayed as one encounter.
+    const id = team ? String(row.scheduleUnitId || `team:${row.categoryId}:${row.encounterId || row.id}`) : String(row.scheduleUnitId || row.id);
+    groups.set(id, [...(groups.get(id) ?? []), row]);
   }
-  return [...grouped.entries()].map(([id, blockRows]) => {
-    const ordered = [...blockRows].sort(
-      (a, b) =>
-        Number(a.rubberOrder ?? Number.MAX_SAFE_INTEGER) - Number(b.rubberOrder ?? Number.MAX_SAFE_INTEGER) ||
-        Number(a.startAt) - Number(b.startAt),
-    );
-    return {
-      id,
-      rows: ordered,
-      first: [...blockRows].sort((a, b) => Number(a.startAt) - Number(b.startAt))[0],
-      startAt: Math.min(...blockRows.map((row) => Number(row.startAt))),
-      endAt: Math.max(...blockRows.map((row) => Number(row.endAt))),
-      team: String(blockRows[0]?.kind ?? "") === "team" || blockRows.some((row) => Boolean(row.rubberKey || row.rubberCode)),
-    };
-  }).sort((a, b) => a.startAt - b.startAt || String(a.first?.court ?? "").localeCompare(String(b.first?.court ?? "")));
-}
-
-async function publicApi<T>(path: string): Promise<T> {
-  const response = await fetch(path);
-  const payload = await response.json() as T & { code?: string };
-  if (!response.ok) throw new Error(payload.code ?? `HTTP_${response.status}`);
-  return payload;
-}
-
-type Bundle = { ok: true; manifest: any; structure: any; live: any | null };
-type View = "overview" | "schedule" | "groups" | "results";
-
-function teamFormatText(locale: Locale, category: any) {
-  const format = category?.format;
-  if (!format) return "—";
-  const rubbers = format.encounter?.rubbers ?? [];
-  const groups = format.competition?.groupRounds ?? 1;
-  const qualifiers = format.competition?.qualifiersPerGroup ?? 2;
-  return tr(
-    locale,
-    `${groups} vuelta(s) · clasifican ${qualifiers}/grupo · ${rubbers.length} rubbers · ${rubbers.map((r:any,index:number)=>visibleRubberCode(r,index)).join(" → ")}`,
-    `${groups} round(s) · ${qualifiers}/group qualify · ${rubbers.length} rubbers · ${rubbers.map((r:any,index:number)=>visibleRubberCode(r,index)).join(" → ")}`,
-  );
-}
-
-function standardFormatText(locale: Locale, category: any) {
-  const format = category?.format;
-  if (!format) return "—";
-  const mode = String(format.playoffMode ?? "standard");
-  const modeText: Record<string,string> = {
-    standard: tr(locale,"cuadro estándar","standard bracket"),
-    top2_final: tr(locale,"Top 2 → final","Top 2 → final"),
-    top4_semis: tr(locale,"Top 4 → semifinales","Top 4 → semifinals"),
-    top3_step: tr(locale,"escalera Top 3","Top 3 ladder"),
-    league_only: tr(locale,"liga solamente","league only"),
-  };
-  return tr(locale,`${format.groupRounds ?? 1} vuelta(s) · clasifican ${format.qualifiersPerGroup ?? 2}/grupo · ${modeText[mode] ?? mode}`,`${format.groupRounds ?? 1} round(s) · ${format.qualifiersPerGroup ?? 2}/group qualify · ${modeText[mode] ?? mode}`);
+  return [...groups.entries()].map(([id, raw]) => {
+    const ordered = [...raw].sort((a,b) => count(a.rubberOrder) - count(b.rubberOrder) || count(a.startAt) - count(b.startAt));
+    const chrono = [...raw].sort((a,b) => count(a.startAt) - count(b.startAt));
+    return { id, first: chrono[0], rows: ordered, startAt: Math.min(...raw.map(x => count(x.startAt))), endAt: Math.max(...raw.map(x => count(x.endAt))), team: raw.some(x => String(x.kind) === "team" || x.rubberKey || x.rubberCode) };
+  }).sort((a,b) => a.startAt-b.startAt || String(a.first?.court ?? "").localeCompare(String(b.first?.court ?? "")));
 }
 
 function teamGroupRows(team: any) {
-  const groups = new Map<string,{ id:string; name:string; entries:any[] }>();
-  for (const row of team?.groups ?? []) {
+  const groups = new Map<string, { id: string; name: string; entries: any[] }>();
+  for (const row of asList(team?.groups)) {
     const id = String(row.id);
-    const target = groups.get(id) ?? { id, name: String(row.name ?? id), entries: [] };
-    target.entries.push({ id: String(row.entryId), name: String(row.entryName ?? "") });
-    groups.set(id,target);
+    const group = groups.get(id) ?? { id, name: String(row.name ?? id), entries: [] };
+    if (!group.entries.some(x => same(x.id, row.entryId))) group.entries.push({ id: String(row.entryId), name: String(row.entryName ?? "") });
+    groups.set(id, group);
   }
   return [...groups.values()];
 }
+function formatName(category: any, data: any, locale: Locale) {
+  const format = data?.format;
+  if (!format) return "";
+  if (category.entryType === "team") return tr(locale, "Encuentros por equipos", "Team encounters");
+  const modes: Record<string,string> = {
+    standard: tr(locale,"Fase de grupos y eliminación","Groups and knockout"),
+    top2_final: tr(locale,"Top 2 · final","Top 2 · final"),
+    top4_semis: tr(locale,"Top 4 · semifinales","Top 4 · semifinals"),
+    top3_step: tr(locale,"Escalera Top 3","Top 3 ladder"),
+    league_only: tr(locale,"Liga","League"),
+  };
+  return modes[String(format.playoffMode ?? "standard")] ?? "";
+}
+function resultPhase(locale: Locale, row: any) {
+  return row.groupName ? `${tr(locale,"Grupo","Group")} ${row.groupName}` : text(row.roundLabel ?? row.stage, tr(locale,"Fase final","Final stage"));
+}
+async function getBundle(slug: string): Promise<Bundle> {
+  const response = await fetch(`/api/public/tournaments/${encodeURIComponent(slug)}/day-live`, { cache: "no-store" });
+  if (!response.ok) throw new Error(`HTTP_${response.status}`);
+  return await response.json() as Bundle;
+}
+function scoreParts(result: any): string {
+  if (result?.scoreA != null && result?.scoreB != null) return `${result.scoreA} – ${result.scoreB}`;
+  return "—";
+}
+function scoreSets(result: any) {
+  return asList(result?.sets).filter(set => set && set.scoreA != null && set.scoreB != null).map((set:any) => `${set.scoreA}-${set.scoreB}`);
+}
+function ScheduleRow({ block, locale }: { block: MatchBlock; locale: Locale }) {
+  const first = block.first;
+  const label = first.sideA && first.sideB ? `${first.sideA}  vs  ${first.sideB}` : text(first.sideA ?? first.roundLabel ?? first.categoryName);
+  return <div className="tl4-schedule-row">
+    <div className="tl4-time"><strong>{localTime(block.startAt,locale)}</strong><span>{text(first.court)}</span></div>
+    <div className="tl4-schedule-main"><strong>{label}</strong><span>{text(first.categoryName)}{first.groupName ? ` · ${tr(locale,"Grupo","Group")} ${first.groupName}` : first.roundLabel ? ` · ${first.roundLabel}` : ""}</span>
+      {block.team && block.rows.length > 1 ? <small>{block.rows.length} {tr(locale,"partidos del encuentro","matches in encounter")}</small> : null}
+    </div>
+    <span className={`tl4-status ${String(first.status ?? "")}`}>{String(first.status) === "completed" ? tr(locale,"Finalizado","Final") : String(first.status) === "cancelled" ? tr(locale,"Cancelado","Cancelled") : ""}</span>
+  </div>;
+}
+function TeamScore({result,locale}:{result:any;locale:Locale}) {
+  let a=0,b=0;
+  for (const r of asList(result.rubbers)) {
+    if (!r.winnerSide || r.status === "skipped") continue;
+    const points = Number(r.weight ?? 1);
+    if (r.winnerSide === "A") a+=points; else if (r.winnerSide === "B") b+=points;
+  }
+  return <details className="tl4-team-result"><summary><span className="tl4-score-sides"><strong>{text(result.sideA)}</strong><b>{a} – {b}</b><strong>{text(result.sideB)}</strong></span><small>{tr(locale,"Ver partidos del encuentro","View encounter matches")}</small></summary>
+    <div className="tl4-team-rubbers">{asList(result.rubbers).sort((x:any,y:any) => count(x.order)-count(y.order)).map((r:any,i:number) => <div key={String(r.id ?? i)}><span>{text(r.label ?? r.key)}</span><span>{asList(r.lineupA).join(" / ") || "—"} · {asList(r.lineupB).join(" / ") || "—"}</span><strong>{r.status === "skipped" ? tr(locale,"No jugado","Not played") : scoreParts(r)}</strong></div>)}</div>
+  </details>;
+}
+function ResultRow({result,locale,team=false}:{result:any;locale:Locale;team?:boolean}) {
+  return <div className="tl4-result-row">
+    <div className="tl4-result-top"><span>{resultPhase(locale,result)}</span><small>{result.status === "in_progress" ? tr(locale,"En juego","In progress") : ""}</small></div>
+    {team ? <TeamScore result={result} locale={locale}/> : <div className="tl4-score-sides"><strong>{text(result.sideA)}</strong><b>{scoreParts(result)}</b><strong>{text(result.sideB)}</strong></div>}
+    {!team && scoreSets(result).length > 0 ? <div className="tl4-set-line">{scoreSets(result).map((s,i)=><span key={`${s}-${i}`}>{s}</span>)}</div> : null}
+  </div>;
+}
 
-function scheduleMatchesNeedle(row: any, needle: string, structure: any) {
-  if (!needle) return true;
-  const text = `${row.sideA ?? ""} ${row.sideB ?? ""} ${row.categoryName ?? ""}`.toLowerCase();
-  if (text.includes(needle)) return true;
-  const teams = structure?.teams ?? [];
-  const matchingTeams = new Set(teams.filter((team:any)=>(team.roster??[]).some((member:any)=>String(member.name??"").toLowerCase().includes(needle))).map((team:any)=>String(team.id)));
-  return [row.entryAId,row.entryBId].some((id)=>id&&matchingTeams.has(String(id)));
+type GroupRecord = { categoryId: string; groupId: string; groupName: string; rows: any[] };
+function GroupTable({ group, record, locale }: { group: any; record?: GroupRecord; locale: Locale }) {
+  const rows = asList(record?.rows);
+  const entries = asList(group.entries);
+  const records = rows.length ? rows : entries.map((entry:any,i:number)=>({ entryId: entry.id, name: entry.name, position: i+1 }));
+  const hasStandings = rows.length > 0;
+  return <div className="tl4-group"><div className="tl4-group-header"><strong>{tr(locale,"Grupo","Group")} {text(group.name)}</strong><span>{entries.length || records.length} {tr(locale,"participantes","entries")}</span></div>
+    <div className="tl4-table-scroll"><table className="tl4-table"><thead><tr><th title={tr(locale,"Posición","Position")}>#</th><th>{tr(locale,"Jugador / pareja / equipo","Player / pair / team")}</th><th title={tr(locale,"Partidos jugados","Played")}>PJ</th><th title={tr(locale,"Ganados","Won")}>G</th><th title={tr(locale,"Perdidos","Lost")}>P</th><th title={tr(locale,"Puntos a favor","Points for")}>PF</th><th title={tr(locale,"Puntos en contra","Points against")}>PC</th><th title={tr(locale,"Diferencia","Difference")}>+/-</th></tr></thead>
+    <tbody>{records.map((r:any,i:number)=>{
+      // Respect official published order and statistics. No invented standings or scores.
+      const pf = r.scored ?? r.pointsFor ?? r.pointsScored;
+      const pc = r.conceded ?? r.pointsAgainst ?? r.pointsConceded;
+      const diff = r.diff ?? (pf != null && pc != null ? Number(pf)-Number(pc) : null);
+      return <tr key={String(r.entryId ?? i)}><td>{hasStandings ? number(r.position ?? i+1) : "—"}</td><td className="tl4-entry-name">{text(r.name ?? r.entryName ?? entries.find((e:any)=>same(e.id,r.entryId))?.name)}</td><td>{number(r.played ?? r.matchesPlayed)}</td><td>{number(r.wins ?? r.won)}</td><td>{number(r.losses ?? r.lost)}</td><td>{number(pf)}</td><td>{number(pc)}</td><td>{number(diff)}</td></tr>;
+    })}</tbody></table></div>
+    {!hasStandings ? <p className="tl4-hint">{tr(locale,"Posiciones y estadísticas pendientes de publicación.","Standings and statistics have not been published yet.")}</p> : null}
+  </div>;
+}
+
+function phaseRank(label: string): number {
+  const s=label.toLowerCase();
+  if (/round.of.32|dieciseis|16avos|1\/16/.test(s)) return 10;
+  if (/round.of.16|octavos|1\/8/.test(s)) return 20;
+  if (/quarter|cuarto|1\/4/.test(s)) return 30;
+  if (/semifinal|semi.final/.test(s)) return 40;
+  if (/third|tercer|bronze/.test(s)) return 45;
+  if (/final/.test(s)) return 50;
+  return 25;
+}
+function BracketBoard({category,rows,standardResults,teamResults,locale}:{category:any;rows:any[];standardResults:any[];teamResults:any[];locale:Locale}) {
+  const rounds=new Map<string,any[]>();
+  for(const row of rows){const label=text(row.roundLabel ?? row.stage,tr(locale,"Ronda","Round"));rounds.set(label,[...(rounds.get(label)??[]),row]);}
+  const phases=[...rounds.entries()].sort((a,b)=>phaseRank(a[0])-phaseRank(b[0]));
+  if(!phases.length)return <p className="tl4-hint">{tr(locale,"El cuadro final todavía no está publicado.","The final bracket has not been published yet.")}</p>;
+  const resultRows=[...standardResults,...teamResults];
+  return <div className="tl4-bracket-scroll" tabIndex={0} aria-label={tr(locale,"Cuadro final; desplazamiento horizontal","Final bracket; horizontal scrolling")}><div className="tl4-bracket-board">{phases.map(([label,matches],phaseIndex)=><div className="tl4-bracket-round" key={label}><h4>{label}</h4><div className="tl4-bracket-matches">{matches.map((row:any,i:number)=>{
+    const result=resultRows.find(r=>same(r.categoryId,category.id) && (same(r.encounterId,row.id) || same(r.id,row.id)));
+    const score=result ? (result.rubbers ? (()=>{let a=0,b=0;for(const x of asList(result.rubbers)){if(!x.winnerSide||x.status==="skipped")continue; if(x.winnerSide==="A")a+=count(x.weight??1);else if(x.winnerSide==="B")b+=count(x.weight??1);}return `${a}–${b}`;})() : scoreParts(result)) : "";
+    return <div className="tl4-bracket-match" key={String(row.id??i)}><div className="tl4-bracket-side"><span>{text(row.sideA, tr(locale,"Por definir","TBD"))}</span></div><div className="tl4-bracket-side"><span>{text(row.sideB, row.status==="bye"?"BYE":tr(locale,"Por definir","TBD"))}</span></div>{score ? <small>{score}</small> : null}</div>;
+  })}</div>{phaseIndex < phases.length-1 ? <span className="tl4-bracket-link" aria-hidden="true"/>:null}</div>)}</div></div>;
 }
 
 export function TournamentLivePage({ slug, locale, go, authenticated = false, onSignOut }: { slug: string; locale: Locale; go: Go; authenticated?: boolean; onSignOut?: (() => void | Promise<void>) | undefined }) {
-  const [data, setData] = useState<Bundle | null>(null);
-  const [error, setError] = useState("");
-  const [view,setView]=useState<View | null>(null);
+  const [data,setData]=useState<Bundle|null>(null);
+  const [error,setError]=useState("");
+  const [view,setView]=useState<View|null>(null);
   const [categoryId,setCategoryId]=useState("");
   const [teamId,setTeamId]=useState("");
   const [player,setPlayer]=useState("");
   const [court,setCourt]=useState("");
+  const [activeDay,setActiveDay]=useState("");
+  const [showAllSchedule,setShowAllSchedule]=useState(false);
+  const [refresh,setRefresh]=useState(0);
+  useEffect(()=>{
+    let active=true;
+    const load=()=>{void getBundle(slug).then(payload=>{if(active){setData(payload);setError("");}}).catch(e=>{if(active)setError(e instanceof Error?e.message:"LIVE_LOAD_FAILED");});};
+    load();const timer=window.setInterval(load,15000);
+    return ()=>{active=false;window.clearInterval(timer);};
+  },[slug,refresh]);
+  useEffect(()=>{setShowAllSchedule(false);},[categoryId,teamId,player,court,activeDay]);
 
-  useEffect(() => {
-    let active = true;
-    const load = () => void publicApi<Bundle>(`/api/public/tournaments/${encodeURIComponent(slug)}/day-live`)
-      .then((bundle) => { if (active) { setData(bundle); setError(""); } })
-      .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "LIVE_LOAD_FAILED"); });
-    load();
-    const timer = window.setInterval(load, 15_000);
-    return () => { active = false; window.clearInterval(timer); };
-  }, [slug]);
-
-  const schedule = useMemo(() => {
-    const source = data?.live?.schedule ?? data?.structure?.schedule ?? [];
-    const needle = player.trim().toLowerCase();
-    return [...source].filter((row:any)=>{
-      if(categoryId&&String(row.categoryId)!==categoryId)return false;
-      if(court&&String(row.court).match(/\d+/)?.[0]!==court)return false;
-      if(teamId&&![row.entryAId,row.entryBId].map(String).includes(teamId))return false;
-      if(needle&&!scheduleMatchesNeedle(row,needle,data?.structure))return false;
+  const structure=data?.structure;
+  const live=data?.live;
+  const categories=asList(structure?.categories);
+  const teams=asList(structure?.teams);
+  const standardResults=asList(live?.results?.standard);
+  const teamResults=asList(live?.results?.team).filter(x=>x.status==="finished"||x.status==="in_progress"||asList(x.rubbers).some(r=>r.winnerSide||r.status==="finished"));
+  const scheduleSource=asList(live?.schedule ?? structure?.schedule);
+  const standardByCategory = useMemo(()=>new Map<string,any>(asList(structure?.standard).map((s:any)=>[String(s.categoryId),s] as const)),[structure]);
+  const teamByCategory = useMemo(()=>new Map<string,any>(asList(structure?.team).map((s:any)=>[String(s.categoryId),s] as const)),[structure]);
+  const filteredSchedule=useMemo(()=>{
+    const needle=player.trim().toLowerCase();
+    const matchingTeams=new Set(teams.filter(t=>asList(t.roster).some((m:any)=>String(m.name??"").toLowerCase().includes(needle))).map(t=>String(t.id)));
+    return scheduleSource.filter(row=>{
+      if(categoryId&&!same(row.categoryId,categoryId))return false;
+      if(teamId&&![row.entryAId,row.entryBId].some(id=>same(id,teamId)))return false;
+      if(court&&String(row.court??"").match(/\d+/)?.[0]!==court)return false;
+      if(needle&&!`${row.sideA??""} ${row.sideB??""} ${row.categoryName??""}`.toLowerCase().includes(needle)&&![row.entryAId,row.entryBId].some(id=>matchingTeams.has(String(id))))return false;
       return true;
-    }).sort((a:any,b:any)=>Number(a.startAt)-Number(b.startAt));
-  },[data,categoryId,teamId,player,court]);
-  const groupedSchedule = useMemo(() => publicScheduleBlocks(schedule), [schedule]);
-  const scheduleDays = useMemo(() => {
-    const days = new Map<string, PublicScheduleBlock[]>();
-    for (const block of groupedSchedule) {
-      const key = scheduleDayKey(block.startAt);
-      const list = days.get(key) ?? [];
-      list.push(block);
-      days.set(key, list);
-    }
+    });
+  },[scheduleSource,categoryId,teamId,player,court,teams]);
+  const scheduleBlocks=useMemo(()=>blockSchedule(filteredSchedule),[filteredSchedule]);
+  const scheduleDays=useMemo(()=>{
+    const days=new Map<string,MatchBlock[]>();
+    for(const b of scheduleBlocks){const key=dateKey(b.startAt);days.set(key,[...(days.get(key)??[]),b]);}
     return [...days.entries()];
-  }, [groupedSchedule]);
+  },[scheduleBlocks]);
+  const selectedDay=scheduleDays.some(([day])=>day===activeDay)?activeDay:scheduleDays[0]?.[0]??"";
+  const dayBlocks=scheduleDays.find(([day])=>day===selectedDay)?.[1]??[];
+  const visibleDayBlocks=showAllSchedule?dayBlocks:dayBlocks.slice(0,16);
+  const filteredCategories=categoryId?categories.filter(c=>same(c.id,categoryId)):categories;
+  const filteredResults=standardResults.filter(r=>!categoryId||same(r.categoryId,categoryId));
+  const filteredTeamResults=teamResults.filter(r=>!categoryId||same(r.categoryId,categoryId));
+  const filteredBrackets=[...asList(live?.bracket?.standard),...asList(live?.bracket?.team)].filter(r=>!categoryId||same(r.categoryId,categoryId));
+  const filteredStandings=[...asList(live?.standings?.standard),...asList(live?.standings?.team)];
+  const totalPublished=standardResults.length+teamResults.length;
+  const defaultView:View=data?.manifest?.status==="finished"?"results":data?.manifest?.status==="scheduled"?"schedule":"overview";
+  const activeView=view??defaultView;
+  const courts=[...new Set(scheduleSource.map(row=>String(row.court??"").match(/\d+/)?.[0]).filter(Boolean))];
+  const unfinished=scheduleBlocks.filter(b=>!b.rows.every(r=>["finished","completed","cancelled"].includes(String(r.status??""))));
+  const current=unfinished.filter(b=>b.startAt<=Date.now()/1000).slice(0,3);
+  const upcoming=unfinished.filter(b=>b.startAt>Date.now()/1000).slice(0,4);
+  const status=String(data?.manifest?.status??"scheduled");
+  const hero=String(structure?.tournament?.heroImageUrl??"");
+  const title=text(structure?.tournament?.name,tr(locale,"Torneo","Tournament"));
+  const updatedAt=count(live?.generatedAt??structure?.generatedAt??data?.manifest?.updatedAt);
 
-  if (!data) return <main className="live-page"><PlayerPublicHeader locale={locale} go={go} authenticated={authenticated} onSignOut={onSignOut}/><div className="live-empty">{error || tr(locale, "Cargando torneo…", "Loading tournament…")}</div></main>;
-
-  const structure=data.structure;
-  const live=data.live;
-  const manifest=data.manifest;
-  const activeView: View = view ?? (
-    manifest.status === "finished"
-      ? "results"
-      : manifest.status === "scheduled"
-        ? "schedule"
-        : "overview"
-  );
-  const heroImageUrl=String(structure.tournament.heroImageUrl??"");
-  const categories=structure.categories??[];
-  const teams=structure.teams??[];
-  const standardByCategory=new Map<string, any>((structure.standard??[]).map((row:any)=>[String(row.categoryId),row] as const));
-  const teamByCategory=new Map<string, any>((structure.team??[]).map((row:any)=>[String(row.categoryId),row] as const));
-  const courts=[...new Set((structure.schedule??[]).map((row:any)=>String(row.court).match(/\d+/)?.[0]).filter(Boolean))];
-  const now=Math.floor(Date.now()/1000);
-  const activeBlocks=groupedSchedule.filter((block)=>!block.rows.every((row:any)=>["completed","cancelled"].includes(String(row.status))));
-  const startedBlocks=activeBlocks.filter((block)=>block.startAt<=now);
-  const currentStart=startedBlocks.length?startedBlocks[0]!.startAt:null;
-  const current=currentStart===null?[]:startedBlocks.filter((block)=>block.startAt===currentStart);
-  const nextStart=currentStart===null
-    ? activeBlocks[0]?.startAt??null
-    : activeBlocks.find((block)=>block.startAt>currentStart)?.startAt??null;
-  const next=nextStart===null?[]:activeBlocks.filter((block)=>block.startAt===nextStart);
-  const standardResults=live?.results?.standard??[];
-  const teamResults=live?.results?.team??[];
-  const updatedAt=live?.generatedAt??structure.generatedAt??manifest.updatedAt;
-  const playerNeedle=player.trim().toLowerCase();
-  const myTeams=playerNeedle?teams.filter((team:any)=>(team.roster??[]).some((member:any)=>String(member.name??"").toLowerCase().includes(playerNeedle))):[];
-  const mySchedule=playerNeedle?groupedSchedule.filter((block)=>block.rows.some((row:any)=>scheduleMatchesNeedle(row,playerNeedle,structure))).slice(0,12):[];
-
-  return <main className="live-page">
-    <PlayerPublicHeader locale={locale} go={go} authenticated={authenticated} onSignOut={onSignOut}/>
-    <section className={`live-hero ${heroImageUrl?"has-cover":""}`} style={heroImageUrl?{backgroundImage:`linear-gradient(90deg,rgba(5,5,5,.84) 0%,rgba(5,5,5,.60) 58%,rgba(5,5,5,.72) 100%), url("${heroImageUrl}")`}:undefined}>
-      <div className="live-hero-main"><span className={`live-status ${manifest.status}`}>● {manifest.status === "live" ? "LIVE" : manifest.status === "finished" ? tr(locale,"FINALIZADO","FINISHED") : tr(locale,"PROGRAMADO","SCHEDULED")}</span><h1>{structure.tournament.name}</h1><p>{dateTime(structure.tournament.startAt,locale)} · {structure.tournament.courtCount} {tr(locale,"canchas","courts")}{structure.tournament.venue?` · ${structure.tournament.venue}`:""}</p></div>
-      <div className="live-hero-meta"><span>{tr(locale,"Actualizado","Updated")}</span><strong>{dateTime(updatedAt,locale)}</strong><small>{live?tr(locale,"Resultados publicados por dirección de torneo","Results published by tournament direction"):tr(locale,"Estructura publicada · resultados aún no publicados","Structure published · results not yet published")}</small></div>
+  return <main className="tl4-page"><PlayerPublicHeader locale={locale} go={go} authenticated={authenticated} onSignOut={onSignOut}/>
+    {!data ? <div className="tl4-loading">{error ? <><p>{tr(locale,"No se pudo cargar el torneo.","Could not load the tournament.")} ({error})</p><button onClick={()=>setRefresh(n=>n+1)}>{tr(locale,"Reintentar","Retry")}</button></> : tr(locale,"Cargando torneo…","Loading tournament…")}</div> : <>
+    <section className={`tl4-hero ${hero?"has-cover":""}`} style={hero?{backgroundImage:`linear-gradient(90deg,rgba(3,3,3,.85),rgba(3,3,3,.40)),url("${hero}")`}:undefined}>
+      <div className="tl4-hero-inner"><span className={`tl4-eyebrow tl4-state-${status}`}>● {status==="finished"?tr(locale,"FINALIZADO","FINISHED"):status==="live"?tr(locale,"EN JUEGO","LIVE"):tr(locale,"PROGRAMADO","SCHEDULED")}</span><h1>{title}</h1><p>{localDate(count(structure.tournament.startAt),locale)} · {count(structure.tournament.courtCount)} {tr(locale,"canchas","courts")}{structure.tournament.venue?` · ${structure.tournament.venue}`:""}</p></div>
     </section>
-
-    <nav className="live-nav">{(["overview","schedule","groups","results"] as View[]).map((key)=><button className={activeView===key?"active":""} key={key} onClick={()=>setView(key)}>{key==="overview"?tr(locale,"Resumen","Overview"):key==="schedule"?tr(locale,"Cronograma","Schedule"):key==="groups"?tr(locale,"Competencia","Competition"):tr(locale,"Resultados","Results")}</button>)}</nav>
-
-    <section className="live-filters"><select value={categoryId} onChange={(e)=>setCategoryId(e.target.value)}><option value="">{tr(locale,"Todas las categorías","All categories")}</option>{categories.map((category:any)=><option key={category.id} value={category.id}>{category.name}</option>)}</select><select value={teamId} onChange={(e)=>setTeamId(e.target.value)}><option value="">{tr(locale,"Todos los equipos","All teams")}</option>{teams.map((team:any)=><option key={team.id} value={team.id}>{team.name}</option>)}</select><input value={player} onChange={(e)=>setPlayer(e.target.value)} placeholder={tr(locale,"Buscar mi nombre…","Find my name…")} /><select value={court} onChange={(e)=>setCourt(e.target.value)}><option value="">{tr(locale,"Todas las canchas","All courts")}</option>{courts.map((value)=><option key={String(value)} value={String(value)}>Cancha {String(value)}</option>)}</select></section>
-
-    {playerNeedle?<section className="live-card live-my"><header><span>{tr(locale,"MI TORNEO","MY TOURNAMENT")}</span><b>{mySchedule.length}</b></header>{myTeams.length?<div className="live-my-teams">{myTeams.map((team:any)=><div key={team.id}><strong>{team.name}</strong><span>{categories.find((category:any)=>String(category.id)===String(team.categoryId))?.name??""}</span><small>{(team.roster??[]).map((member:any)=>member.name).join(" · ")}</small></div>)}</div>:null}{mySchedule.length?<div className="live-my-schedule">{mySchedule.map((block)=><ScheduleEncounterRow key={block.id} block={block} locale={locale}/>)}</div>:<p>{tr(locale,"No encontramos partidos con ese nombre. Probá con apellido o equipo.","No matches found for that name. Try a surname or team.")}</p>}</section>:null}
-
-    {activeView==="overview"?<>
-      <section className="live-grid"><article className="live-card live-now"><header><span>{tr(locale,"AHORA","NOW")}</span><b>{current.length}</b></header>{current.length?current.map((block)=><ScheduleEncounterRow key={block.id} block={block} locale={locale}/>):<p>{tr(locale,"No hay partidos activos.","No active matches.")}</p>}</article><article className="live-card"><header><span>{tr(locale,"PRÓXIMOS","NEXT")}</span><b>{next.length}</b></header>{next.length?next.map((block)=><ScheduleEncounterRow key={block.id} block={block} locale={locale}/>):<p>{tr(locale,"El cronograma todavía no tiene próximos partidos.","No upcoming matches are scheduled yet.")}</p>}</article></section>
-      <section className="live-card"><header><span>{tr(locale,"CATEGORÍAS Y FORMATO","CATEGORIES & FORMAT")}</span><b>{categories.length}</b></header><div className="live-category-grid">{categories.map((category:any)=>{const team=teamByCategory.get(String(category.id));const standard=standardByCategory.get(String(category.id));const groupCount=team?teamGroupRows(team).length:standard?.groups?.length??0;return <div key={category.id}><span>{category.entryType==="team"?"TEAM":"STANDARD"}</span><h3>{category.name}</h3><strong>{groupCount} {tr(locale,"grupo(s)","group(s)")}</strong><p>{team?teamFormatText(locale,team):standardFormatText(locale,standard)}</p></div>})}</div></section>
-      {live?<><Results locale={locale} categories={categories} standardResults={standardResults} teamResults={teamResults} categoryId={categoryId} compact/><Standings locale={locale} live={live}/></>:<section className="live-card live-pending"><h2>{tr(locale,"Estructura publicada","Structure published")}</h2><p>{tr(locale,"La dirección del torneo todavía no publicó resultados. El cronograma, los grupos y el formato ya están disponibles.","Tournament direction has not published results yet. Schedule, groups and format are already available.")}</p></section>}
-    </>:null}
-
-    {activeView==="schedule"?<section className="live-card"><header><span>{tr(locale,"CRONOGRAMA POR DÍA","SCHEDULE BY DAY")}</span><b>{groupedSchedule.length}</b></header><div className="live-schedule-days">{scheduleDays.map(([day,blocks])=><section className="live-schedule-day" key={day}><header><strong>{scheduleDayLabel(blocks[0]?.startAt??0,locale)}</strong><span>{blocks.length} {tr(locale,blocks.length===1?"enfrentamiento":"enfrentamientos",blocks.length===1?"encounter":"encounters")}</span></header><div>{blocks.map((block)=><ScheduleEncounterRow key={block.id} block={block} locale={locale}/>)}</div></section>)}</div></section>:null}
-
-    {activeView==="groups"?<section className="live-groups-view">{categories.map((category:any)=>{const standard=standardByCategory.get(String(category.id));const team=teamByCategory.get(String(category.id));if(!standard&&!team)return null;const groups=team?teamGroupRows(team):standard.groups??[];return <article className="live-card" key={category.id}><header><div><span>{category.entryType==="team"?"TEAM":"STANDARD"}</span><h2>{category.name}</h2></div><b>{groups.length} {tr(locale,"grupos","groups")}</b></header><p className="live-format-copy">{team?teamFormatText(locale,team):standardFormatText(locale,standard)}</p>{team?.format?.encounter?.rubbers?.length?<div className="live-rubber-sequence">{team.format.encounter.rubbers.map((rubber:any,index:number)=><span key={rubber.key}><b>{visibleRubberCode(rubber,index)}</b>{rubber.label}{rubber.play==="if_tied"?<em>{tr(locale,"si empate","if tied")}</em>:null}</span>)}</div>:null}<div className="live-group-grid">{groups.map((group:any)=><div key={group.id}><h3>{tr(locale,"Grupo","Group")} {group.name}</h3>{(group.entries??[]).map((entry:any,index:number)=><span key={entry.id}><b>{index+1}</b><strong>{entry.name}</strong></span>)}</div>)}</div></article>})}</section>:null}
-
-    {activeView==="results"?<>{live?<><Results locale={locale} categories={categories} standardResults={standardResults} teamResults={teamResults} categoryId={categoryId}/><Standings locale={locale} live={live}/><Bracket locale={locale} live={live}/></>:<section className="live-card live-pending"><h2>{tr(locale,"Resultados todavía no publicados","Results not published yet")}</h2><p>{tr(locale,"La dirección del torneo los habilitará desde Tournament Day.","Tournament direction will publish them from Tournament Day.")}</p></section>}</>:null}
+    <nav className="tl4-nav" aria-label={tr(locale,"Navegación del torneo","Tournament navigation")}>{(["overview","schedule","groups","results"] as View[]).map(key=><button type="button" key={key} aria-current={activeView===key?"page":undefined} className={activeView===key?"is-active":""} onClick={()=>setView(key)}>{key==="overview"?tr(locale,"Resumen","Overview"):key==="schedule"?tr(locale,"Cronograma","Schedule"):key==="groups"?tr(locale,"Grupos","Groups"):tr(locale,"Resultados","Results")}</button>)}</nav>
+    {error ? <div className="tl4-warning">{tr(locale,"La actualización falló; se muestran los últimos datos disponibles.","Refresh failed; showing the last available data.")} ({error})</div> : null}
+    <div className="tl4-shell">
+    <header className="tl4-section-head"><div><span className="tl4-kicker">HUAU · TOURNAMENT LIVE</span><h2>{activeView==="overview"?tr(locale,"El torneo, de un vistazo.","The tournament at a glance."):activeView==="schedule"?tr(locale,"Cronograma.","Schedule."):activeView==="groups"?tr(locale,"Grupos y posiciones.","Groups and standings."):tr(locale,"Resultados y cuadros.","Results and brackets.")}</h2></div>{updatedAt>0?<span className="tl4-updated">{tr(locale,"Actualizado","Updated")}: {localTime(updatedAt,locale)}</span>:null}</header>
+    {activeView!=="overview"?<section className="tl4-filters" aria-label={tr(locale,"Filtrar contenido","Filter content")}><label><span>{tr(locale,"Categoría","Category")}</span><select value={categoryId} onChange={(e:any)=>setCategoryId(e.target.value)}><option value="">{tr(locale,"Todas las categorías","All categories")}</option>{categories.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>{activeView==="schedule"?<><label><span>{tr(locale,"Jugador o pareja","Player or pair")}</span><input value={player} onChange={(e:any)=>setPlayer(e.target.value)} placeholder={tr(locale,"Buscar nombre…","Search name…")}/></label>{teams.length?<label><span>{tr(locale,"Equipo","Team")}</span><select value={teamId} onChange={(e:any)=>setTeamId(e.target.value)}><option value="">{tr(locale,"Todos los equipos","All teams")}</option>{teams.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>:null}<label><span>{tr(locale,"Cancha","Court")}</span><select value={court} onChange={(e:any)=>setCourt(e.target.value)}><option value="">{tr(locale,"Todas las canchas","All courts")}</option>{courts.map(c=><option key={c} value={c}>{tr(locale,"Cancha","Court")} {c}</option>)}</select></label></>:null}</section>:null}
+    {activeView==="overview"?<div className="tl4-overview">
+      <div className="tl4-overview-stats"><div><strong>{categories.length}</strong><span>{tr(locale,"Categorías","Categories")}</span></div><div><strong>{blockSchedule(scheduleSource).length}</strong><span>{tr(locale,"Enfrentamientos programados","Scheduled encounters")}</span></div><div><strong>{totalPublished}</strong><span>{tr(locale,"Resultados publicados","Published results")}</span></div></div>
+      <div className="tl4-two-col"><section className="tl4-panel"><header><h3>{tr(locale,"En curso o pendientes","In progress or pending")}</h3></header>{current.length?current.map(b=><ScheduleRow block={b} locale={locale} key={b.id}/>):<p className="tl4-hint">{tr(locale,"No hay partidos en curso.","No matches in progress.")}</p>}</section><section className="tl4-panel"><header><h3>{tr(locale,"Próximos partidos","Upcoming matches")}</h3><button type="button" className="tl4-text-action" onClick={()=>setView("schedule")}>{tr(locale,"Ver cronograma","View schedule")}</button></header>{upcoming.length?upcoming.map(b=><ScheduleRow block={b} locale={locale} key={b.id}/>):<p className="tl4-hint">{tr(locale,"No hay próximos partidos programados.","No upcoming matches scheduled.")}</p>}</section></div>
+      <div className="tl4-quick-actions"><button type="button" onClick={()=>setView("groups")}>{tr(locale,"Ver posiciones por grupo","View group standings")} <span>↗</span></button><button type="button" onClick={()=>setView("results")}>{tr(locale,"Ver resultados y finales","View results and finals")} <span>↗</span></button></div>
+    </div>:null}
+    {activeView==="schedule"?<div className="tl4-panel tl4-schedule-panel"><div className="tl4-panel-title"><h3>{tr(locale,"Por jornada","By day")}</h3><span>{scheduleBlocks.length} {tr(locale,"enfrentamientos","encounters")}</span></div>{scheduleDays.length?<><div className="tl4-day-tabs" role="group" aria-label={tr(locale,"Seleccionar jornada","Select day")}>{scheduleDays.map(([day,blocks])=><button type="button" className={day===selectedDay?"is-active":""} key={day} onClick={()=>{setActiveDay(day);setShowAllSchedule(false);}}><strong>{blocks[0] ? localDate(blocks[0].startAt,locale) : day}</strong><small>{blocks.length} {tr(locale,"partidos","matches")}</small></button>)}</div><div className="tl4-schedule-list">{visibleDayBlocks.map((b,i)=><ScheduleRow block={b} locale={locale} key={`${b.id}-${i}`}/>)}</div>{dayBlocks.length>visibleDayBlocks.length?<button className="tl4-more" onClick={()=>setShowAllSchedule(true)}>{tr(locale,`Ver los ${dayBlocks.length-16} restantes`,`Show ${dayBlocks.length-16} more`)} ↓</button>:null}{showAllSchedule&&dayBlocks.length>16?<button className="tl4-more" onClick={()=>setShowAllSchedule(false)}>{tr(locale,"Mostrar menos","Show less")} ↑</button>:null}</>:<p className="tl4-hint">{tr(locale,"No hay enfrentamientos para estos filtros.","No matches for these filters.")}</p>}</div>:null}
+    {activeView==="groups"?<div className="tl4-categories">{filteredCategories.map(category=>{
+      const id=String(category.id);
+      const team=teamByCategory.get(id);
+      const standard=standardByCategory.get(id);
+      const groups=team?teamGroupRows(team):asList(standard?.groups);
+      if(!team&&!standard)return null;
+      return <section className="tl4-panel tl4-category-panel" key={id}><header className="tl4-category-head"><div><span className="tl4-kicker">{category.entryType==="team"?tr(locale,"EQUIPOS","TEAMS"):tr(locale,"COMPETENCIA","COMPETITION")}</span><h3>{category.name}</h3><p>{formatName(category,team??standard,locale)}</p></div><span>{groups.length} {tr(locale,"grupos","groups")}</span></header><div className="tl4-groups-grid">{groups.map((g:any)=>{const record=filteredStandings.find((s:any)=>same(s.categoryId,id)&&same(s.groupId,g.id));return <GroupTable key={g.id} group={g} record={record} locale={locale}/>;})}</div>{!groups.length?<p className="tl4-hint">{tr(locale,"Grupos pendientes de publicación.","Groups not yet published.")}</p>:null}</section>;
+    })}{!filteredCategories.length?<p className="tl4-hint">{tr(locale,"No se encontraron categorías.","No categories found.")}</p>:null}</div>:null}
+    {activeView==="results"?<div className="tl4-results-page"><div className="tl4-overview-stats tl4-results-totals"><div><strong>{filteredResults.length+filteredTeamResults.length}</strong><span>{tr(locale,"Marcadores publicados","Published scores")}</span></div><div><strong>{new Set([...filteredResults,...filteredTeamResults].map(r=>String(r.categoryId))).size}</strong><span>{tr(locale,"Categorías con resultados","Categories with results")}</span></div></div>
+      {!live?<div className="tl4-panel"><p className="tl4-hint">{tr(locale,"La dirección del torneo todavía no publicó resultados.","Tournament direction has not published results yet.")}</p></div>:<>
+      {filteredCategories.map((category:any,categoryIndex:number)=>{const id=String(category.id);const standards=filteredResults.filter(r=>same(r.categoryId,id));const encounters=filteredTeamResults.filter(r=>same(r.categoryId,id));const br=filteredBrackets.filter(r=>same(r.categoryId,id));const all=[...standards.map(result=>({result,team:false})),...encounters.map(result=>({result,team:true}))];if(!all.length&&!br.length)return null;
+        const phases=new Map<string,typeof all>();for(const item of all){const label=resultPhase(locale,item.result);phases.set(label,[...(phases.get(label)??[]),item]);}
+        return <details className="tl4-panel tl4-results-category" key={id} open={categoryId===id || (!categoryId && categoryIndex===0) ? true : undefined}><summary><strong>{category.name}</strong><span>{all.length} {tr(locale,"resultados","results")}{br.length?` · ${br.length} ${tr(locale,"cruces finales","final-stage matches")}`:""}</span></summary>
+          {br.length?<section className="tl4-bracket-section"><h3>{tr(locale,"Cuadro final","Final bracket")}</h3><BracketBoard category={category} rows={br} standardResults={standards} teamResults={encounters} locale={locale}/></section>:null}
+          {phases.size?<section className="tl4-result-phases"><h3>{tr(locale,"Todos los partidos","All matches")}</h3>{[...phases.entries()].map(([label,items])=><details className="tl4-phase" key={label}><summary><strong>{label}</strong><span>{items.length} {tr(locale,"resultados","results")}</span></summary><div className="tl4-results-grid">{items.map((it:any,i:number)=><ResultRow key={String(it.result.encounterId??it.result.id??i)+String(i)} result={it.result} locale={locale} team={it.team}/>)}</div></details>)}</section>:null}
+        </details>;
+      })}
+      {!filteredCategories.some((c:any)=>[...filteredResults,...filteredTeamResults,...filteredBrackets].some(r=>same(r.categoryId,c.id)))?<div className="tl4-panel"><p className="tl4-hint">{tr(locale,"Todavía no hay resultados publicados para este filtro.","No published results for this filter yet.")}</p></div>:null}
+      </>}</div>:null}
+    </div></>}
   </main>;
 }
-
-function ScheduleEncounterRow({block,locale}:{block:PublicScheduleBlock;locale:Locale}){
-  const first=block.first;
-  const rubbers=block.team
-    ? [...block.rows].sort((a,b)=>Number(a.rubberOrder??0)-Number(b.rubberOrder??0)||Number(a.startAt)-Number(b.startAt))
-    : [];
-  return <div className={`live-match ${block.team?"live-team-encounter":""}`}><span>{time(block.startAt)}<small>{block.endAt>block.startAt?`${time(block.endAt)} · `:""}{first.court}</small></span><div className="live-match-main"><strong>{first.sideA||first.roundLabel||first.categoryName}{first.sideB?` vs ${first.sideB}`:""}</strong>{rubbers.length?<div className="live-match-rubbers">{rubbers.map((rubber,index)=><span key={rubber.id??`${block.id}-${index}`} title={String(rubber.rubberLabel??rubber.rubberCode??"")}>{visibleRubberCode(rubber,index)}</span>)}</div>:null}</div><em>{first.categoryName}{first.groupName?` · ${tr(locale,"Grupo","Group")} ${first.groupName}`:""}{first.roundNumber?` · R${first.roundNumber}`:""}</em></div>
-}
-
-function publicResultPhase(locale:Locale,result:any){
-  if(result.groupName)return `${tr(locale,"Grupo","Group")} ${result.groupName}`;
-  return String(result.roundLabel??result.stage??tr(locale,"Partido","Match"));
-}
-
-function Results({locale,categories,standardResults,teamResults,categoryId="",compact=false}:{locale:Locale;categories:any[];standardResults:any[];teamResults:any[];categoryId?:string;compact?:boolean}){
-  const standardFiltered=standardResults.filter((result:any)=>!categoryId||String(result.categoryId)===categoryId);
-  const teamFiltered=teamResults.filter((enc:any)=>(enc.status==="finished"||enc.status==="in_progress")&&(!categoryId||String(enc.categoryId)===categoryId));
-
-  if(compact){
-    const standardVisible=standardFiltered.slice().reverse().slice(0,16);
-    const teamVisible=teamFiltered.slice().reverse().slice(0,12);
-    return <section className="live-card"><header><span>{tr(locale,"RESULTADOS RECIENTES","RECENT RESULTS")}</span><b>{standardFiltered.length+teamFiltered.length}</b></header><div className="live-results-grid">{standardVisible.map((result:any)=><div key={result.id}><small>{categories.find((c:any)=>String(c.id)===String(result.categoryId))?.name??""} · {publicResultPhase(locale,result)}</small><strong>{result.sideA} <b>{result.scoreA??"—"}</b> — <b>{result.scoreB??"—"}</b> {result.sideB}</strong></div>)}{teamVisible.map((enc:any)=><TeamResult key={enc.encounterId} locale={locale} encounter={enc} categories={categories}/>)}</div></section>;
-  }
-
-  const categoryIds=[...new Set([...standardFiltered.map((result:any)=>String(result.categoryId)),...teamFiltered.map((result:any)=>String(result.categoryId))])];
-  return <section className="live-card"><header><span>{tr(locale,"TODOS LOS RESULTADOS","ALL RESULTS")}</span><b>{standardFiltered.length+teamFiltered.length}</b></header>{categoryIds.length?<div className="live-results-full">{categoryIds.map((id)=>{
-    const category=categories.find((candidate:any)=>String(candidate.id)===id);
-    const standardRows=standardFiltered.filter((result:any)=>String(result.categoryId)===id).slice().reverse();
-    const teamRows=teamFiltered.filter((result:any)=>String(result.categoryId)===id).slice().reverse();
-    const phases=[...new Set(standardRows.map((result:any)=>publicResultPhase(locale,result)))];
-    const teamPhases=[...new Set(teamRows.map((result:any)=>publicResultPhase(locale,result)))];
-    return <article key={id} className="live-result-category"><h2>{category?.name??id}</h2>{phases.map((phase)=><section key={phase}><h3>{phase}</h3><div className="live-results-grid">{standardRows.filter((result:any)=>publicResultPhase(locale,result)===phase).map((result:any)=><div key={result.id}><strong>{result.sideA} <b>{result.scoreA??"—"}</b> — <b>{result.scoreB??"—"}</b> {result.sideB}</strong></div>)}</div></section>)}{teamPhases.map((phase)=><section key={`team-${phase}`}><h3>{phase}</h3><div className="live-results-grid">{teamRows.filter((enc:any)=>publicResultPhase(locale,enc)===phase).map((enc:any)=><TeamResult key={enc.encounterId} locale={locale} encounter={enc} categories={categories}/>)}</div></section>)}</article>;
-  })}</div>:<p>{tr(locale,"Todavía no hay resultados publicados para este filtro.","No published results for this filter yet.")}</p>}</section>;
-}
-
-function TeamResult({locale,encounter,categories}:{locale:Locale;encounter:any;categories:any[]}){let a=0,b=0;for(const rubber of encounter.rubbers??[]){if(!rubber.winnerSide||rubber.status==="skipped")continue;const weight=Number(rubber.weight??1);if(rubber.winnerSide==="A")a+=weight;else if(rubber.winnerSide==="B")b+=weight}return <details className="live-team-result"><summary><small>{categories.find((c:any)=>String(c.id)===String(encounter.categoryId))?.name??"TEAM"} · {publicResultPhase(locale,encounter)}</small><strong>{encounter.sideA} <b>{a}</b> — <b>{b}</b> {encounter.sideB}</strong><span>{encounter.status}</span></summary><div className="live-team-rubbers">{[...(encounter.rubbers??[])].sort((x:any,y:any)=>Number(x.order)-Number(y.order)).map((rubber:any,index:number)=><div key={rubber.id}><span><b>{visibleRubberCode(rubber,index)}</b>{rubber.label??rubber.key}</span><strong>{rubber.lineupA?.join(" / ")||"—"}<em>vs</em>{rubber.lineupB?.join(" / ")||"—"}</strong><b>{rubber.status==="skipped"?tr(locale,"No necesario","Not needed"):rubber.scoreA!=null?`${rubber.scoreA} — ${rubber.scoreB}`:rubber.status}</b></div>)}</div></details>}
-
-function Standings({locale,live}:{locale:Locale;live:any}){const tables=[...(live.standings?.standard??[]).map((s:any)=>({title:s.groupName,rows:s.rows,name:(r:any)=>r.name,value:(r:any)=>`${r.wins}-${r.losses}`})),...(live.standings?.team??[]).map((s:any)=>({title:`${s.categoryName} · ${s.groupName}`,rows:s.rows,name:(r:any)=>r.entryName,value:(r:any)=>`${r.standingPoints} PTS`}))];if(!tables.length)return null;return <section className="live-card"><header><span>{tr(locale,"TABLAS","STANDINGS")}</span></header><div className="live-standing-grid">{tables.map((table:any,index:number)=><div key={`${table.title}-${index}`}><h3>{table.title}</h3>{table.rows.map((row:any,pos:number)=><span key={row.entryId}><b>{pos+1}</b><strong>{table.name(row)}</strong><em>{table.value(row)}</em></span>)}</div>)}</div></section>}
-
-function Bracket({locale,live}:{locale:Locale;live:any}){const rows=[...(live.bracket?.standard??[]),...(live.bracket?.team??[])];if(!rows.length)return null;return <section className="live-card"><header><span>{tr(locale,"FASE FINAL","FINAL BRACKET")}</span></header><div className="live-bracket">{rows.map((row:any)=><div key={`${row.categoryId}-${row.id}`}><small>{row.roundLabel??row.stage}</small><strong>{row.sideA??(row.status==="bye"?"BYE":"TBD")}<span>vs</span>{row.sideB??(row.status==="bye"?"BYE":"TBD")}</strong><em>{row.status}</em></div>)}</div></section>}
