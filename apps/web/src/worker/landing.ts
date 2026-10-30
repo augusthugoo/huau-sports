@@ -110,7 +110,6 @@ async function platformUser(request: Request, env: Env, access: AccessHelpers) {
 async function buildPublicLandingSnapshot(env: Env): Promise<PublicLandingSnapshot> {
   const generatedAt = unixNow();
   const activeCutoff = generatedAt - 86_400;
-  const completedCutoff = generatedAt - 30 * 86_400;
 
   const [rows, landingMetrics, tutorials, landingContent] = await Promise.all([
     env.HUAU_DB.prepare(
@@ -121,7 +120,7 @@ async function buildPublicLandingSnapshot(env: Env): Promise<PublicLandingSnapsh
         WHERE visibility='public'
           AND status IN ('registration_open','registration_closed','draw_ready','scheduled','live','completed')
           AND (
-            (status='completed' AND COALESCE(end_at,start_at) >= ?)
+            status='completed'
             OR
             (status<>'completed' AND (end_at IS NULL OR end_at >= ?))
           )
@@ -138,7 +137,7 @@ async function buildPublicLandingSnapshot(env: Env): Promise<PublicLandingSnapsh
           CASE WHEN status='completed' THEN start_at END DESC,
           CASE WHEN status<>'completed' THEN start_at END ASC
         LIMIT 12`,
-    ).bind(completedCutoff, activeCutoff).all<LandingTournamentRow>(),
+    ).bind(activeCutoff).all<LandingTournamentRow>(),
     loadLandingMetrics(env),
     loadPublicLandingTutorials(env),
     loadPublishedLandingV2Content(env),
