@@ -134,16 +134,50 @@ function phaseRank(label: string): number {
   if (/final/.test(s)) return 50;
   return 25;
 }
+/* HUAU_LIVE_V4_MOBILE_TABLE_BRACKET_POLISH_20261029 */
 function BracketBoard({category,rows,standardResults,teamResults,locale}:{category:any;rows:any[];standardResults:any[];teamResults:any[];locale:Locale}) {
   const rounds=new Map<string,any[]>();
   for(const row of rows){const label=text(row.roundLabel ?? row.stage,tr(locale,"Ronda","Round"));rounds.set(label,[...(rounds.get(label)??[]),row]);}
   const phases=[...rounds.entries()].sort((a,b)=>phaseRank(a[0])-phaseRank(b[0]));
   if(!phases.length)return <p className="tl4-hint">{tr(locale,"El cuadro final todavía no está publicado.","The final bracket has not been published yet.")}</p>;
   const resultRows=[...standardResults,...teamResults];
-  return <div className="tl4-bracket-scroll" tabIndex={0} aria-label={tr(locale,"Cuadro final; desplazamiento horizontal","Final bracket; horizontal scrolling")}><div className="tl4-bracket-board">{phases.map(([label,matches],phaseIndex)=><div className="tl4-bracket-round" key={label}><h4>{label}</h4><div className="tl4-bracket-matches">{matches.map((row:any,i:number)=>{
+  const scoresFor = (result:any,row:any):{a:string;b:string}|null => {
+    if(!result)return null;
+    let scoreA: number|string|null = null;
+    let scoreB: number|string|null = null;
+    if(Array.isArray(result.rubbers)) {
+      let a=0,b=0,played=false;
+      for(const rubber of result.rubbers){
+        if(!rubber.winnerSide || rubber.status === "skipped")continue;
+        const weight=Number(rubber.weight ?? 1);
+        if(!Number.isFinite(weight))continue;
+        if(rubber.winnerSide === "A"){a+=weight;played=true;}
+        else if(rubber.winnerSide === "B"){b+=weight;played=true;}
+      }
+      if(!played)return null;
+      scoreA=a;scoreB=b;
+    } else {
+      if(result.scoreA == null || result.scoreB == null)return null;
+      scoreA=result.scoreA;scoreB=result.scoreB;
+    }
+    // Never attribute a player's score to the opposite side if a published
+    // result lists the two sides in reverse order.
+    const normalized=(value:unknown)=>String(value??"").trim().toLocaleLowerCase();
+    const a=normalized(row.sideA),b=normalized(row.sideB);
+    const ra=normalized(result.sideA),rb=normalized(result.sideB);
+    if(a && b && ra && rb){
+      if(a === rb && b === ra)return {a:String(scoreB),b:String(scoreA)};
+      if(a !== ra || b !== rb)return null;
+    }
+    return {a:String(scoreA),b:String(scoreB)};
+  };
+  return <div className="tl4-bracket-scroll" tabIndex={0} aria-label={tr(locale,"Cuadro final; desplazamiento horizontal cuando sea necesario","Final bracket; scroll horizontally when needed")}><div className="tl4-bracket-board">{phases.map(([label,matches],phaseIndex)=><div className="tl4-bracket-round" key={label}><h4>{label}</h4><div className="tl4-bracket-matches">{matches.map((row:any,i:number)=>{
     const result=resultRows.find(r=>same(r.categoryId,category.id) && (same(r.encounterId,row.id) || same(r.id,row.id)));
-    const score=result ? (result.rubbers ? (()=>{let a=0,b=0;for(const x of asList(result.rubbers)){if(!x.winnerSide||x.status==="skipped")continue; if(x.winnerSide==="A")a+=count(x.weight??1);else if(x.winnerSide==="B")b+=count(x.weight??1);}return `${a}–${b}`;})() : scoreParts(result)) : "";
-    return <div className="tl4-bracket-match" key={String(row.id??i)}><div className="tl4-bracket-side"><span>{text(row.sideA, tr(locale,"Por definir","TBD"))}</span></div><div className="tl4-bracket-side"><span>{text(row.sideB, row.status==="bye"?"BYE":tr(locale,"Por definir","TBD"))}</span></div>{score ? <small>{score}</small> : null}</div>;
+    const scores=scoresFor(result,row);
+    return <div className="tl4-bracket-match" key={String(row.id??i)}>
+      <div className="tl4-bracket-side"><span>{text(row.sideA,tr(locale,"Por definir","TBD"))}</span>{scores?<b className="tl4-bracket-score" title={tr(locale,"Puntos del primer participante","First participant score")}>{scores.a}</b>:null}</div>
+      <div className="tl4-bracket-side"><span>{text(row.sideB,row.status==="bye"?"BYE":tr(locale,"Por definir","TBD"))}</span>{scores?<b className="tl4-bracket-score" title={tr(locale,"Puntos del segundo participante","Second participant score")}>{scores.b}</b>:null}</div>
+    </div>;
   })}</div>{phaseIndex < phases.length-1 ? <span className="tl4-bracket-link" aria-hidden="true"/>:null}</div>)}</div></div>;
 }
 
