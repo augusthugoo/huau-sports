@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { authClient } from "./lib/auth-client";
 import { detectLocale, t } from "./i18n";
@@ -107,8 +107,13 @@ function usePath() {
   const go = useCallback((next: string) => {
     window.history.pushState({}, "", next);
     setPath(next);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, []);
+  // Run after React commits the new route, before paint. This prevents a legal
+  // page opened from the landing footer from inheriting the footer scroll offset.
+  useLayoutEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [path]);
   return { path, go };
 }
 
@@ -372,8 +377,8 @@ function AuthScreen({ mode, locale, go, onDone }: { mode: "login"|"signup"; loca
             </label>
             <div className="hl-role" role="radiogroup" aria-label={copy(locale,"Responsable de la cuenta","Account holder")}>
               <strong>{copy(locale,"¿Quién administra esta cuenta?","Who manages this account?")}</strong>
-              <label><input type="radio" name="accountRole" value="adult" checked={legalRole==="adult"} onChange={()=>setLegalRole("adult")}/>{copy(locale,"Soy mayor de edad y creo mi cuenta.","I am an adult creating my own account.")}</label>
-              <label><input type="radio" name="accountRole" value="guardian" checked={legalRole==="guardian"} onChange={()=>setLegalRole("guardian")}/>{copy(locale,"Soy adulto y representante legal de un menor.","I am an adult and legal guardian of a minor.")}</label>
+              <label><input type="radio" name="accountRole" value="adult" checked={legalRole==="adult"} onChange={()=>setLegalRole("adult")}/><span>{copy(locale,"Soy mayor de edad y creo mi cuenta.","I am an adult creating my own account.")}</span></label>
+              <label><input type="radio" name="accountRole" value="guardian" checked={legalRole==="guardian"} onChange={()=>setLegalRole("guardian")}/><span>{copy(locale,"Soy adulto y representante legal de un menor.","I am an adult and legal guardian of a minor.")}</span></label>
             </div>
             {legalRole==="guardian" && <label><input type="checkbox" name="guardianAttested" required/>
               <span>{copy(locale,"Declaro que ejerzo la representación legal del menor y asumiré la administración de la cuenta. La participación del menor puede requerir verificación adicional.","I declare I am the minor’s legal guardian and will manage the account. A minor’s participation may require further verification.")}</span>

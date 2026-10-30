@@ -41,3 +41,90 @@
 .auth-page .hl-consent .hl-role label{align-items:center;margin:0}
 .auth-page .hl-consent .hl-role input[type="radio"]{appearance:auto;width:16px;height:16px;flex:0 0 auto;padding:0;margin:0;accent-color:#eee}
 .auth-page .hl-consent-note{font-size:11px;line-height:1.7;color:#afaaa4;margin:0}
+
+/* HUAU_LEGAL_UI_POLISH_20261030
+   Auth v3 has higher-specificity rules for labels and all form inputs.
+   Keep the legal controls two-column and restore native checkbox/radio sizing.
+   Scoped to legal signup: no global form or tournament modifications.
+*/
+.auth-page-v3 .auth-card .hl-consent {
+  display: grid;
+  gap: 14px;
+  padding: 9px 0 3px;
+  min-width: 0;
+}
+.auth-page-v3 .auth-card .hl-consent > label,
+.auth-page-v3 .auth-card .hl-consent .hl-role > label {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  margin: 0;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgba(255,255,255,.82);
+  cursor: pointer;
+}
+.auth-page-v3 .auth-card .hl-consent label > span {
+  display: block;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  font-weight: 400;
+  color: rgba(255,255,255,.82);
+  overflow-wrap: break-word;
+}
+.auth-page-v3 .auth-card .hl-consent label > input[type="checkbox"],
+.auth-page-v3 .auth-card .hl-consent label > input[type="radio"] {
+  display: block;
+  box-sizing: border-box;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  min-height: 20px;
+  max-width: 20px;
+  max-height: 20px;
+  padding: 0;
+  margin: 2px 0 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  accent-color: #f5f5f3;
+  justify-self: start;
+  align-self: start;
+  cursor: pointer;
+  appearance: auto;
+}
+.auth-page-v3 .auth-card .hl-consent label > input[type="checkbox"] {
+  -webkit-appearance: checkbox;
+}
+.auth-page-v3 .auth-card .hl-consent label > input[type="radio"] {
+  -webkit-appearance: radio;
+}
+.auth-page-v3 .auth-card .hl-consent .hl-role {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  padding: 18px 17px;
+  margin: 0;
+  border-radius: 14px;
+}
+.auth-page-v3 .auth-card .hl-consent .hl-role > strong {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.auth-page-v3 .auth-card .hl-consent a {
+  color: #fff;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.auth-page-v3 .auth-card .hl-consent-note {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.6;
+}
