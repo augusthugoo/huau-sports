@@ -2,8 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import type { FocusEvent } from "react";
 import type { Locale } from "./i18n";
 import { loadTournamentDaySession } from "./TournamentDayStorage";
-import { TournamentManagerStatus, summarizeTournamentDaySession, type LocalManagerStatus } from "./TournamentManagerStatus";
-import "./TournamentManagerStatus.css";
 import "./TournamentDay.css";
 
 type Props = {
@@ -70,9 +68,6 @@ export function TournamentHub({ organizationId, tournamentId, locale, go }: Prop
   const [core, setCore] = useState<CoreResponse | null>(null);
   const [dayState, setDayState] = useState<DayStateResponse | null>(null);
   const [hasLocalSession, setHasLocalSession] = useState(false);
-  const [localManagerStatus, setLocalManagerStatus] = useState<LocalManagerStatus | null>(null);
-  const [localReadFailed, setLocalReadFailed] = useState(false);
-  const [dayStateReadFailed, setDayStateReadFailed] = useState(false);
   const [operatorLink, setOperatorLink] = useState("");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -80,21 +75,16 @@ export function TournamentHub({ organizationId, tournamentId, locale, go }: Prop
 
   useEffect(() => {
     let active = true;
-    void Promise.allSettled([
+    void Promise.all([
       api<CoreResponse>(`/api/admin/tournaments/${encodeURIComponent(tournamentId)}/core`),
       api<DayStateResponse>(`/api/admin/tournaments/${encodeURIComponent(tournamentId)}/day-state`),
       loadTournamentDaySession(`admin:${tournamentId}`),
     ])
-      .then(([coreResult, stateResult, localResult]) => {
+      .then(([coreResult, stateResult, localSession]) => {
         if (!active) return;
-        if (coreResult.status === "rejected") throw coreResult.reason;
-        setCore(coreResult.value);
-        setDayState(stateResult.status === "fulfilled" ? stateResult.value : null);
-        setDayStateReadFailed(stateResult.status === "rejected");
-        const localSession = localResult.status === "fulfilled" ? localResult.value : null;
-        setLocalReadFailed(localResult.status === "rejected");
+        setCore(coreResult);
+        setDayState(stateResult);
         setHasLocalSession(Boolean(localSession));
-        setLocalManagerStatus(summarizeTournamentDaySession(localSession));
       })
       .catch((loadError) => {
         if (!active) return;
@@ -174,9 +164,7 @@ export function TournamentHub({ organizationId, tournamentId, locale, go }: Prop
   }
 
   const tournament = core.tournament;
-  const publishedCopy = dayStateReadFailed
-    ? tr(locale, "No se pudo consultar el checkpoint remoto.", "Unable to check remote checkpoint.")
-    : dayState?.hasPublishedSnapshot
+  const publishedCopy = dayState?.hasPublishedSnapshot
     ? dayState.syncStatus === "failed"
       ? tr(
           locale,
@@ -227,18 +215,6 @@ export function TournamentHub({ organizationId, tournamentId, locale, go }: Prop
       {error ? <div className="tpw-alert">{error}</div> : null}
       {notice ? <div className="notice-box">{notice}</div> : null}
 
-      <TournamentManagerStatus
-        organizationId={organizationId}
-        tournamentId={tournamentId}
-        slug={tournament.slug}
-        locale={locale}
-        go={go}
-        local={localManagerStatus}
-        localReadFailed={localReadFailed}
-        remote={dayState}
-        remoteReadFailed={dayStateReadFailed}
-      />
-
       <section className="td-hub-modes">
         <article className="td-mode-card">
           <div className="td-mode-icon">A</div>
@@ -281,11 +257,9 @@ export function TournamentHub({ organizationId, tournamentId, locale, go }: Prop
             <span className={hasLocalSession ? "td-dot on" : "td-dot"} />
             <div>
               <strong>
-                {localReadFailed
-                  ? tr(locale, "No se pudo leer la sesión local", "Unable to read local session")
-                  : hasLocalSession
-                    ? tr(locale, "Sesión local disponible", "Local session available")
-                    : tr(locale, "Sin sesión local", "No local session")}
+                {hasLocalSession
+                  ? tr(locale, "Sesión local disponible", "Local session available")
+                  : tr(locale, "Sin sesión local", "No local session")}
               </strong>
               <small>{publishedCopy}</small>
             </div>
