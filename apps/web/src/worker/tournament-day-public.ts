@@ -42,6 +42,20 @@ const PRIVATE_KEYS = new Set([
   "proofkey",
   "proofr2key",
   "userid",
+  // V3: fail closed when public Tournament Day models contain personal fields.
+  // This is an additional guard, not a complete audit of other public APIs.
+  "birthdate",
+  "dateofbirth",
+  "dob",
+  "age",
+  "exactage",
+  "city",
+  "ipaddress",
+  "streetaddress",
+  "address",
+  "guardianemail",
+  "duprid",
+  "identitydocument",
   "organizationpersonid",
   "registrationid",
   "notes",
@@ -62,7 +76,7 @@ function hasPrivateKey(value: unknown): boolean {
   return false;
 }
 
-function publicModelShape(value: unknown, kind: "structure" | "live", tournamentId: string) {
+export function publicModelShape(value: unknown, kind: "structure" | "live", tournamentId: string) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("PUBLIC_MODEL_INVALID");
   const model = value as Record<string, unknown>;
   if (model.schemaVersion !== 1 || model.kind !== kind) throw new Error("PUBLIC_MODEL_INVALID");
