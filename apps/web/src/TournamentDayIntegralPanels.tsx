@@ -94,6 +94,7 @@ function PlayerTable({ locale, snapshot, mutate }: { locale: Locale; snapshot: T
   const [gender, setGender] = useState("");
   const [source, setSource] = useState("");
   const [categoriesOpen, setCategoriesOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   const visible = players.filter((player) => {
     const text = `${player.displayName ?? ""} ${player.club ?? ""} ${player.contact ?? ""}`.toLowerCase();
     if (search && !text.includes(search.toLowerCase())) return false;
@@ -116,10 +117,19 @@ function PlayerTable({ locale, snapshot, mutate }: { locale: Locale; snapshot: T
       categoryIds,
     }), tr(locale, "Jugador creado localmente.", "Player created locally."));
     form.reset();
+    setAddOpen(false);
+    setCategoriesOpen(false);
   };
   return <>
-    <article className="panel td-dense-panel">
-      <form className="td-inline-form td-inline-dense" onSubmit={add}>
+    <article className="panel td-dense-panel h5-add-player-panel">
+      <div className="h5-add-player-prompt">
+        <div><strong>{tr(locale,"Participantes locales","Local participants")}</strong><small>{tr(locale,"Agregá jugadores solo a esta sesión deportiva; no crea una inscripción pública.","Add players only to this local competition session; this does not create a public registration.")}</small></div>
+        <button type="button" className="light h5-add-player-trigger" onClick={()=>setAddOpen(true)}>{tr(locale,"+ Agregar jugador","+ Add player")}</button>
+      </div>
+      <div className={`h5-add-backdrop${addOpen?" is-open":""}`} aria-hidden={!addOpen} onMouseDown={(event)=>{if(event.target===event.currentTarget){setAddOpen(false);setCategoriesOpen(false)}}} onKeyDown={(event)=>{if(event.key==="Escape"&&!categoriesOpen)setAddOpen(false)}}>
+        <section className="h4-modal h5-add-player-dialog" role="dialog" aria-modal={addOpen} aria-label={tr(locale,"Agregar jugador","Add player")}>
+          <header><div><h2>{tr(locale,"Agregar jugador","Add player")}</h2><small>{tr(locale,"Alta deportiva en este dispositivo","Local competition entry on this device")}</small></div><button type="button" className="h4-modal-close" onClick={()=>{setAddOpen(false);setCategoriesOpen(false)}} aria-label={tr(locale,"Cerrar","Close")}>×</button></header>
+          <form className="td-inline-form td-inline-dense h5-add-player-form" onSubmit={add}>
         <label><span>{tr(locale,"Nombre","Name")}</span><input name="name" required /></label>
         <label><span>{tr(locale,"Género","Gender")}</span><select name="sportGender" defaultValue="unspecified"><option value="unspecified">—</option><option value="male">M</option><option value="female">F</option></select></label>
         <label><span>Club</span><input name="club" /></label><label><span>{tr(locale,"Contacto","Contact")}</span><input name="contact" /></label>
@@ -133,8 +143,10 @@ function PlayerTable({ locale, snapshot, mutate }: { locale: Locale; snapshot: T
             </section>
           </div>
         </div>
-        <button className="light">{tr(locale,"Agregar","Add")}</button>
-      </form>
+        <div className="h5-add-player-actions"><button type="button" className="ghost" onClick={()=>{setAddOpen(false);setCategoriesOpen(false)}}>{tr(locale,"Cancelar","Cancel")}</button><button className="light">{tr(locale,"Agregar jugador","Add player")}</button></div>
+          </form>
+        </section>
+      </div>
     </article>
     <article className="panel wide td-dense-panel">
       <div className="td-filterbar"><input value={search} onChange={(e)=>setSearch(e.target.value)} placeholder={tr(locale,"Buscar jugador…","Search player…")} /><select value={category} onChange={(e)=>setCategory(e.target.value)}><option value="">{tr(locale,"Todas las categorías","All categories")}</option>{categories.map((cat)=><option key={cat.id} value={cat.id}>{cat.name}</option>)}</select><select value={gender} onChange={(e)=>setGender(e.target.value)}><option value="">{tr(locale,"Todos los géneros","All genders")}</option><option value="male">M</option><option value="female">F</option><option value="unspecified">—</option></select><select value={source} onChange={(e)=>setSource(e.target.value)}><option value="">{tr(locale,"Admin + local","Admin + local")}</option><option value="admin">Admin</option><option value="local">Local</option></select><span>{visible.length}/{players.length}</span></div>
@@ -423,7 +435,7 @@ export function IntegralSchedulePanel({ locale, snapshot, mutate }: { locale: Lo
             if(!active.length&&!notes.length)return null;
             return <div className="td-court-grid-wave" key={at}>
               <div className="td-court-grid-row" style={{gridTemplateColumns:`82px repeat(${courtCount}, minmax(150px,1fr))`}}>
-                <time>{new Date(at*1000).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</time>
+                <div className="h5-grid-time"><time>{new Date(at*1000).toLocaleTimeString(locale === "es" ? "es-UY" : "en-US", {hour:"2-digit",minute:"2-digit",hour12:false})}</time>{notes.length?<details className="h5-grid-reservation"><summary>{tr(locale,"Reserva activa","Active reservation")}</summary><p>{notes.join(" · ")}</p></details>:null}</div>
                 {Array.from({length:courtCount},(_,index)=>{
                   const court=index+1;
                   const row=active.find((candidate:any)=>Number(String(candidate.courtLabel).match(/\d+/)?.[0]??0)===court);
@@ -432,7 +444,6 @@ export function IntegralSchedulePanel({ locale, snapshot, mutate }: { locale: Lo
                   </div>;
                 })}
               </div>
-              {notes.length?<small className="td-reservation-note">{tr(locale,"Reserva activa","Active reservation")}: {notes.join(" · ")}</small>:null}
             </div>;
           })}
         </section>)}

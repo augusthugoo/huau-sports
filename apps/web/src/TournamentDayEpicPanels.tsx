@@ -1928,8 +1928,10 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
           event.dataTransfer.setData("text/plain",id);
         }}
       >☰</span>
+      <details className="h5-flow-details">
+        <summary className="h5-flow-summary"><strong>{index + 1}. {category.name}</strong><span>{isGroup ? `${realGroupMatches(id)} ${tr(locale,"partidos/series","matches/encounters")}` : tr(locale,"Fase final","Final phase")}</span><b aria-hidden="true">⌄</b></summary>
+        <div className="h5-flow-fields">
       <div className="epic-flow-category">
-        <strong>{index + 1}. {category.name}</strong>
         <small>
           {isGroup
             ? `${realGroupMatches(id)} ${tr(locale,"partidos/series de grupos","group matches/series")}`
@@ -1974,6 +1976,8 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
         <option value="strict">{tr(locale,"Estricto · no prestar huecos","Strict · do not lend gaps")}</option>
         <option value="flexible">{tr(locale,"Flexible · rellenar huecos","Flexible · fill gaps")}</option>
       </select></label>
+        </div>
+      </details>
     </div>;
   });
 
