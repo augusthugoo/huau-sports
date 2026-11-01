@@ -17,7 +17,6 @@ import { PlayerAvatar, PlayerPublicHeader } from "./PlayerPublicChrome";
 import { HuauLegalPage } from "./HuauLegalPage";
 import { HUAU_TERMS_VERSION, HUAU_PRIVACY_VERSION } from "./HuauLegalVersions";
 import "./PlayerPublic.css";
-import "./TournamentManagerExperience.css";
 
 // HUAU_PLAYER_PUBLIC_V3_HOTFIX_2026_10_27
 
@@ -107,8 +106,7 @@ function usePath() {
   }, []);
   const go = useCallback((next: string) => {
     window.history.pushState({}, "", next);
-    // The router matches pathname; stage deep-links may include a query string.
-    setPath(new URL(next, window.location.origin).pathname);
+    setPath(next);
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, []);
   // Run after React commits the new route, before paint. This prevents a legal
@@ -238,7 +236,7 @@ function HuauBrand({ onClick, center = false }: { onClick?: () => void; center?:
 
 function Shell({ children, locale, go, me }: { children: React.ReactNode; locale: Locale; go: (path: string) => void; me?: Me | null }) {
   return (
-    <div className={`app-shell${/^\/(admin|platform)(\/|$)/.test(window.location.pathname) ? " huau-console" : ""}`}>
+    <div className="app-shell">
       <PlayerPublicHeader
         locale={locale}
         go={go}

@@ -67,8 +67,6 @@ import {
   EpicSchedulePolicyPanel,
   EpicTournamentDayTV,
 } from "./TournamentDayEpicPanels";
-import { TournamentManagerTrail } from "./TournamentManagerExperience";
-import { initialDaySection } from "./TournamentManagerFlow";
 import "./TournamentDay.css";
 import "./TournamentDayIntegral.css";
 import "./TournamentDayEpic.css";
@@ -190,7 +188,9 @@ function standardResultFromForm(
 export function TournamentDayWorkspace(props: Props) {
   const { locale, go, organizationId, tournamentId, operatorToken } = props;
   const [session, setSession] = useState<TournamentDaySession<TournamentDaySnapshot> | null>(null);
-  const [tab, setTab] = useState<Tab>(() => initialDaySection(window.location.search));
+  const [tab, setTab] = useState<Tab>(() =>
+    new URLSearchParams(window.location.search).get("view") === "tv" ? "tv" : "overview",
+  );
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -751,18 +751,6 @@ export function TournamentDayWorkspace(props: Props) {
       <button className="section-back" onClick={back}>
         ← {operatorToken ? "HUAU" : "Tournament Hub"}
       </button>
-
-      {!operatorToken && organizationId && tournamentId && !tvOnly ? (
-        <TournamentManagerTrail
-          locale={locale}
-          organizationId={organizationId}
-          tournamentId={tournamentId}
-          area="day"
-          currentStage={tab === "schedule" ? "schedule" : tab === "results" || tab === "tv" ? "operations" : tab === "configuration" || tab === "recovery" ? "publication" : "preparation"}
-          onLocalSection={(section) => setTab(section as Tab)}
-          go={go}
-        />
-      ) : null}
 
       <header className="td-day-hero">
         <div>

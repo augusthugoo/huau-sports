@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { FocusEvent } from "react";
 import type { Locale } from "./i18n";
 import { loadTournamentDaySession } from "./TournamentDayStorage";
-import { TournamentManagerHome, type LocalManagerSummary } from "./TournamentManagerExperience";
 import "./TournamentDay.css";
 
 type Props = {
@@ -48,6 +48,11 @@ class HubApiError extends Error {
 }
 
 const tr = (locale: Locale, es: string, en: string) => (locale === "es" ? es : en);
+const toMs = (value: number) => (value < 10_000_000_000 ? value * 1000 : value);
+const date = (value: number) =>
+  new Intl.DateTimeFormat("es-UY", { dateStyle: "medium" }).format(new Date(toMs(value)));
+const dateTime = (value: number) =>
+  new Intl.DateTimeFormat("es-UY", { dateStyle: "short", timeStyle: "short" }).format(new Date(toMs(value)));
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -63,9 +68,6 @@ export function TournamentHub({ organizationId, tournamentId, locale, go }: Prop
   const [core, setCore] = useState<CoreResponse | null>(null);
   const [dayState, setDayState] = useState<DayStateResponse | null>(null);
   const [hasLocalSession, setHasLocalSession] = useState(false);
-  const [localStatus, setLocalStatus] = useState<LocalManagerSummary | null>(null);
-  const [localReadFailed, setLocalReadFailed] = useState(false);
-  const [dayStateReadFailed, setDayStateReadFailed] = useState(false);
   const [operatorLink, setOperatorLink] = useState("");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -73,31 +75,16 @@ export function TournamentHub({ organizationId, tournamentId, locale, go }: Prop
 
   useEffect(() => {
     let active = true;
-    void Promise.allSettled([
+    void Promise.all([
       api<CoreResponse>(`/api/admin/tournaments/${encodeURIComponent(tournamentId)}/core`),
       api<DayStateResponse>(`/api/admin/tournaments/${encodeURIComponent(tournamentId)}/day-state`),
       loadTournamentDaySession(`admin:${tournamentId}`),
     ])
-      .then(([coreResult, stateResult, localResult]) => {
+      .then(([coreResult, stateResult, localSession]) => {
         if (!active) return;
-        if (coreResult.status === "rejected") throw coreResult.reason;
-        setCore(coreResult.value);
-        setDayState(stateResult.status === "fulfilled" ? stateResult.value : null);
-        setDayStateReadFailed(stateResult.status !== "fulfilled");
-        const local = localResult.status === "fulfilled" ? localResult.value : null;
-        setLocalReadFailed(localResult.status !== "fulfilled");
-        setHasLocalSession(Boolean(local));
-        const meta = (local?.snapshot as { localMeta?: { publicDirty?: {
-          structureRevision?: number; liveRevision?: number; structure?: number; live?: number;
-        } } } | null)?.localMeta?.publicDirty;
-        setLocalStatus(local ? {
-          dirty: Boolean(local.dirty),
-          updatedAt: local.updatedAt,
-          structureRevision: Number(meta?.structureRevision ?? 0),
-          liveRevision: Number(meta?.liveRevision ?? 0),
-          structureDirty: Number(meta?.structure ?? 0),
-          liveDirty: Number(meta?.live ?? 0),
-        } : null);
+        setCore(coreResult);
+        setDayState(stateResult);
+        setHasLocalSession(Boolean(localSession));
       })
       .catch((loadError) => {
         if (!active) return;
@@ -107,6 +94,11 @@ export function TournamentHub({ organizationId, tournamentId, locale, go }: Prop
       active = false;
     };
   }, [tournamentId]);
+
+  const teamCount = useMemo(
+    () => core?.categories.filter((category) => category.entryType === "team").length ?? 0,
+    [core],
+  );
 
   const createOperatorLink = async () => {
     setBusy("share");
@@ -171,26 +163,166 @@ export function TournamentHub({ organizationId, tournamentId, locale, go }: Prop
     );
   }
 
+  const tournament = core.tournament;
+  const publishedCopy = dayState?.hasPublishedSnapshot
+    ? dayState.syncStatus === "failed"
+      ? tr(
+          locale,
+          `Checkpoint seguro · rev. ${dayState.publishedRevision} · sync D1 pendiente`,
+          `Safe checkpoint · rev. ${dayState.publishedRevision} · D1 sync pending`,
+        )
+      : dayState.syncStatus === "synced"
+        ? tr(
+            locale,
+            `Checkpoint + D1 sincronizados · rev. ${dayState.syncedRevision}${dayState.syncedAt ? ` · ${dateTime(dayState.syncedAt)}` : ""}`,
+            `Checkpoint + D1 synced · rev. ${dayState.syncedRevision}${dayState.syncedAt ? ` · ${dateTime(dayState.syncedAt)}` : ""}`,
+          )
+        : tr(
+            locale,
+            `Checkpoint publicado · rev. ${dayState.publishedRevision}${dayState.publishedAt ? ` · ${dateTime(dayState.publishedAt)}` : ""}`,
+            `Published checkpoint · rev. ${dayState.publishedRevision}${dayState.publishedAt ? ` · ${dateTime(dayState.publishedAt)}` : ""}`,
+          )
+    : tr(locale, "Todavía no hay checkpoint publicado.", "No checkpoint has been published yet.");
+
   return (
-    <TournamentManagerHome
-      locale={locale}
-      go={go}
-      organizationId={organizationId}
-      tournamentId={tournamentId}
-      tournament={core.tournament}
-      categoriesCount={core.categories.length}
-      playerCount={core.summary.playerCount}
-      hasLocalSession={hasLocalSession}
-      localStatus={localStatus}
-      localReadFailed={localReadFailed}
-      dayState={dayState}
-      dayStateReadFailed={dayStateReadFailed}
-      operatorLink={operatorLink}
-      busy={busy}
-      error={error}
-      notice={notice}
-      onCreateAccess={() => void createOperatorLink()}
-      onRevokeAccess={() => void revokeOperatorLink()}
-    />
+    <main className="td-hub">
+      <button
+        className="section-back"
+        onClick={() => go(`/admin/organizations/${organizationId}/tournaments`)}
+      >
+        ← HUAU Tournament
+      </button>
+
+      <header className="td-hub-hero">
+        <div>
+          <div className="eyebrow">
+            {tournament.sport.toUpperCase()} · {tournament.status.replaceAll("_", " ")}
+          </div>
+          <h1>{tournament.name}</h1>
+          <p>
+            {date(tournament.startAt)}
+            {tournament.endAt ? ` → ${date(tournament.endAt)}` : ""} · {tournament.courtCount}{" "}
+            {tr(locale, "canchas", "courts")}
+          </p>
+        </div>
+        <div className="td-hub-hero-actions">
+          <button className="ghost" onClick={() => go(`/tournaments/${tournament.slug}`)}>
+            {tr(locale, "Página pública", "Public page")} ↗
+          </button>
+        </div>
+      </header>
+
+      {error ? <div className="tpw-alert">{error}</div> : null}
+      {notice ? <div className="notice-box">{notice}</div> : null}
+
+      <section className="td-hub-modes">
+        <article className="td-mode-card">
+          <div className="td-mode-icon">A</div>
+          <div className="eyebrow">{tr(locale, "ONLINE", "ONLINE")}</div>
+          <h2>{tr(locale, "Administración", "Administration")}</h2>
+          <p>
+            {tr(
+              locale,
+              "Inscripciones, participantes, pagos, categorías, formato y configuración pública. Esta zona usa el servidor porque recibe cambios externos.",
+              "Registrations, participants, payments, categories, format and public settings. This area uses the server because it receives external changes.",
+            )}
+          </p>
+          <div className="td-mode-kpis">
+            <span><strong>{core.summary.playerCount}</strong>{tr(locale, "jugadores", "players")}</span>
+            <span><strong>{core.categories.length}</strong>{tr(locale, "categorías", "categories")}</span>
+            <span><strong>{teamCount}</strong>Team</span>
+          </div>
+          <button
+            className="light full"
+            onClick={() =>
+              go(`/admin/organizations/${organizationId}/tournaments/${tournamentId}/manage`)
+            }
+          >
+            {tr(locale, "Abrir administración", "Open administration")} →
+          </button>
+        </article>
+
+        <article className="td-mode-card td-mode-day">
+          <div className="td-mode-icon">D</div>
+          <div className="eyebrow">LOCAL FIRST</div>
+          <h2>Tournament Day</h2>
+          <p>
+            {tr(
+              locale,
+              "La jornada vive en este navegador. Resultados, lineups, tablas, cuadro, cronograma y TV no consultan D1 mientras operás.",
+              "The event runs in this browser. Results, lineups, standings, bracket, schedule and TV do not query D1 while you operate.",
+            )}
+          </p>
+          <div className="td-local-state">
+            <span className={hasLocalSession ? "td-dot on" : "td-dot"} />
+            <div>
+              <strong>
+                {hasLocalSession
+                  ? tr(locale, "Sesión local disponible", "Local session available")
+                  : tr(locale, "Sin sesión local", "No local session")}
+              </strong>
+              <small>{publishedCopy}</small>
+            </div>
+          </div>
+          <button
+            className="light full"
+            onClick={() =>
+              go(`/admin/organizations/${organizationId}/tournaments/${tournamentId}/day`)
+            }
+          >
+            {hasLocalSession
+              ? tr(locale, "Continuar Tournament Day", "Continue Tournament Day")
+              : tr(locale, "Preparar Tournament Day", "Prepare Tournament Day")}{" "}
+            →
+          </button>
+        </article>
+      </section>
+
+      <section className="td-share-panel">
+        <div>
+          <div className="eyebrow">{tr(locale, "ACCESO OPERADOR", "OPERATOR ACCESS")}</div>
+          <h2>{tr(locale, "Compartir sólo Tournament Day", "Share Tournament Day only")}</h2>
+          <p>
+            {tr(
+              locale,
+              "El link no da acceso a pagos, organización ni otros torneos. Descarga el último checkpoint publicado y después trabaja localmente.",
+              "The link does not grant access to payments, the organization or other tournaments. It downloads the latest published checkpoint and then works locally.",
+            )}
+          </p>
+        </div>
+        <div className="td-share-actions">
+          {operatorLink ? (
+            <div className="td-share-link">
+              <input readOnly value={operatorLink} onFocus={(event: FocusEvent<HTMLInputElement>) => event.currentTarget.select()} />
+              <button
+                className="light small"
+                onClick={() => void navigator.clipboard.writeText(operatorLink)}
+              >
+                {tr(locale, "Copiar", "Copy")}
+              </button>
+            </div>
+          ) : null}
+          <div className="form-actions">
+            <button className="light small" disabled={Boolean(busy)} onClick={() => void createOperatorLink()}>
+              {busy === "share"
+                ? "…"
+                : dayState?.hasOperatorAccess
+                  ? tr(locale, "Regenerar link", "Regenerate link")
+                  : tr(locale, "Generar link", "Generate link")}
+            </button>
+            {dayState?.hasOperatorAccess ? (
+              <button className="ghost small" disabled={Boolean(busy)} onClick={() => void revokeOperatorLink()}>
+                {busy === "revoke" ? "…" : tr(locale, "Revocar", "Revoke")}
+              </button>
+            ) : null}
+          </div>
+          <small className="muted">
+            {dayState?.hasOperatorAccess
+              ? tr(locale, "Hay un acceso compartido activo.", "A shared access is active.")
+              : tr(locale, "No hay acceso compartido activo.", "No shared access is active.")}
+          </small>
+        </div>
+      </section>
+    </main>
   );
 }
