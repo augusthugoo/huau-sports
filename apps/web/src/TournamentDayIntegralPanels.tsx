@@ -93,6 +93,7 @@ function PlayerTable({ locale, snapshot, mutate }: { locale: Locale; snapshot: T
   const [category, setCategory] = useState("");
   const [gender, setGender] = useState("");
   const [source, setSource] = useState("");
+  const [categoriesOpen, setCategoriesOpen] = useState(false);
   const visible = players.filter((player) => {
     const text = `${player.displayName ?? ""} ${player.club ?? ""} ${player.contact ?? ""}`.toLowerCase();
     if (search && !text.includes(search.toLowerCase())) return false;
@@ -123,7 +124,15 @@ function PlayerTable({ locale, snapshot, mutate }: { locale: Locale; snapshot: T
         <label><span>{tr(locale,"Género","Gender")}</span><select name="sportGender" defaultValue="unspecified"><option value="unspecified">—</option><option value="male">M</option><option value="female">F</option></select></label>
         <label><span>Club</span><input name="club" /></label><label><span>{tr(locale,"Contacto","Contact")}</span><input name="contact" /></label>
         <label><span>DUPR S</span><input name="duprSingles" type="number" min="0" max="8" step=".001" /></label><label><span>DUPR D</span><input name="duprDoubles" type="number" min="0" max="8" step=".001" /></label>
-        <details className="td-inline-details"><summary>{tr(locale,"Categorías","Categories")}</summary><div className="td-chip-list">{categories.map((cat)=><label className="check" key={cat.id}><input type="checkbox" name={`cat:${cat.id}`} /><span>{cat.name}</span></label>)}</div></details>
+        <div className="td-inline-details"><button type="button" className="h4-modal-launch" onClick={()=>setCategoriesOpen(true)}>{tr(locale,"Elegir categorías","Choose categories")}…</button>
+          <div className={`h4-modal-backdrop${categoriesOpen?" is-open":""}`} aria-hidden={!categoriesOpen} onMouseDown={(event)=>{if(event.target===event.currentTarget)setCategoriesOpen(false)}} onKeyDown={(event)=>{if(event.key==="Escape")setCategoriesOpen(false)}}>
+            <section className="h4-modal h4-category-modal" role="dialog" aria-modal={categoriesOpen} aria-label={tr(locale,"Elegir categorías","Choose categories")}>
+              <header><h2>{tr(locale,"Categorías del jugador","Player categories")}</h2><button type="button" className="h4-modal-close" onClick={()=>setCategoriesOpen(false)} aria-label={tr(locale,"Cerrar","Close")}>×</button></header>
+              <div className="td-chip-list">{categories.map((cat)=><label className="check" key={cat.id}><input type="checkbox" name={`cat:${cat.id}`} /><span>{cat.name}</span></label>)}</div>
+              <button type="button" className="h4-dialog-done" onClick={()=>setCategoriesOpen(false)}>{tr(locale,"Listo","Done")}</button>
+            </section>
+          </div>
+        </div>
         <button className="light">{tr(locale,"Agregar","Add")}</button>
       </form>
     </article>
@@ -138,6 +147,7 @@ function PlayerRow({ locale, snapshot, player, mutate }: { locale: Locale; snaps
   const categories = snapshot.workspace.core.categories as any[];
   const assigned = new Set((snapshot.workspace.participants.playerCategories as any[]).filter((row)=>String(row.playerProfileId)===String(player.id)).map((row)=>String(row.categoryId)));
   const tombstoned = Boolean(ensureDayLocalMeta(snapshot).participantTombstones[String(player.id)]);
+  const [editOpen, setEditOpen] = useState(false);
   const save = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const data = new FormData(event.currentTarget); await mutate((next) => {
     updateDayParticipant(next, String(player.id), { displayName:String(data.get("displayName")??"").trim(), sportGender:String(data.get("sportGender")??"unspecified") as any, club:String(data.get("club")??"").trim(), contact:String(data.get("contact")??"").trim(), duprSingles:Number(data.get("duprSingles")??0), duprDoubles:Number(data.get("duprDoubles")??0) });
     const current = new Set((next.workspace.participants.playerCategories as any[]).filter((row)=>String(row.playerProfileId)===String(player.id)).map((row)=>String(row.categoryId)));
@@ -148,14 +158,18 @@ function PlayerRow({ locale, snapshot, player, mutate }: { locale: Locale; snaps
       if (wanted&&!has) assignParticipantToCategory(next,String(player.id),categoryId);
       if (!wanted&&has) removeParticipantFromCategory(next,String(player.id),categoryId);
     }
-  }, tr(locale,"Jugador actualizado localmente.","Player updated locally.")); };
+  }, tr(locale,"Jugador actualizado localmente.","Player updated locally.")); setEditOpen(false); };
   const toggleNoShow = async () => {
     if (tombstoned) return mutate((next)=>restoreParticipant(next,String(player.id)),tr(locale,"Jugador restaurado localmente.","Player restored locally."));
     const impact = participantImpact(snapshot,String(player.id));
     if ((impact.structuredCategoryIds.length || impact.scheduledRows || impact.finishedMatches) && !window.confirm(tr(locale,`Este cambio afecta ${impact.structuredCategoryIds.length} categoría(s), ${impact.scheduledRows} bloque(s) programados y ${impact.finishedMatches} resultado(s). No se borrarán resultados silenciosamente. ¿Marcar no-show?`,`This affects ${impact.structuredCategoryIds.length} category structure(s), ${impact.scheduledRows} scheduled block(s) and ${impact.finishedMatches} result(s). Results will not be silently deleted. Mark no-show?`))) return;
     await mutate((next)=>setParticipantNoShow(next,String(player.id)),tr(locale,"Jugador marcado no-show localmente.","Player marked no-show locally."));
   };
-  return <tr className={tombstoned?"is-muted":""}><td><strong>{player.displayName}</strong><small>{player.club||"—"}</small></td><td>{player.sportGender==="male"?"M":player.sportGender==="female"?"F":"—"}</td><td>{rating(Number(player.duprSingles??0))}</td><td>{rating(Number(player.duprDoubles??0))}</td><td><small>{categoryNames(snapshot,String(player.id)).join(" · ")||"—"}</small></td><td><small>{playerTeam(snapshot,player)}</small></td><td><span className="pill">{tombstoned?"NO SHOW":player.playerStatus}</span></td><td><details className="td-row-menu"><summary>•••</summary><form className="td-row-editor" onSubmit={save}><label><span>{tr(locale,"Nombre","Name")}</span><input name="displayName" defaultValue={player.displayName} required /></label><label><span>{tr(locale,"Género","Gender")}</span><select name="sportGender" defaultValue={player.sportGender??"unspecified"}><option value="unspecified">—</option><option value="male">M</option><option value="female">F</option></select></label><label><span>Club</span><input name="club" defaultValue={player.club??""} /></label><label><span>{tr(locale,"Contacto","Contact")}</span><input name="contact" defaultValue={player.contact??""} /></label><label><span>DUPR S</span><input name="duprSingles" type="number" step=".001" defaultValue={player.duprSingles??0} /></label><label><span>DUPR D</span><input name="duprDoubles" type="number" step=".001" defaultValue={player.duprDoubles??0} /></label><div className="td-chip-list">{categories.map((cat)=><label className="check compact-check" key={cat.id}><input type="checkbox" name={`cat:${cat.id}`} defaultChecked={assigned.has(String(cat.id))}/><span>{cat.name}</span></label>)}</div><button className="light small">{tr(locale,"Guardar","Save")}</button><button type="button" className={tombstoned?"ghost small":"danger small"} onClick={()=>void toggleNoShow()}>{tombstoned?tr(locale,"Restaurar","Restore"):tr(locale,"No-show / retirar","No-show / withdraw")}</button></form></details></td></tr>;
+  return <tr className={tombstoned?"is-muted":""}><td><strong>{player.displayName}</strong><small>{player.club||"—"}</small></td><td>{player.sportGender==="male"?"M":player.sportGender==="female"?"F":"—"}</td><td>{rating(Number(player.duprSingles??0))}</td><td>{rating(Number(player.duprDoubles??0))}</td><td><small>{categoryNames(snapshot,String(player.id)).join(" · ")||"—"}</small></td><td><small>{playerTeam(snapshot,player)}</small></td><td><span className="pill">{tombstoned?"NO SHOW":player.playerStatus}</span></td><td><div className="td-row-menu"><button type="button" className="h4-menu-trigger" onClick={()=>setEditOpen(true)} aria-label={tr(locale,"Editar jugador","Edit player")}>•••</button>
+      <div className={`h4-modal-backdrop${editOpen?" is-open":""}`} aria-hidden={!editOpen} onMouseDown={(event)=>{if(event.target===event.currentTarget)setEditOpen(false)}} onKeyDown={(event)=>{if(event.key==="Escape")setEditOpen(false)}}>
+        <section className="h4-modal h4-player-modal" role="dialog" aria-modal={editOpen} aria-label={tr(locale,"Editar jugador","Edit player")}>
+          <header><h2>{tr(locale,"Editar jugador","Edit player")} · {player.displayName}</h2><button type="button" className="h4-modal-close" onClick={()=>setEditOpen(false)} aria-label={tr(locale,"Cerrar","Close")}>×</button></header>
+          <form className="td-row-editor" onSubmit={save}><label><span>{tr(locale,"Nombre","Name")}</span><input name="displayName" defaultValue={player.displayName} required /></label><label><span>{tr(locale,"Género","Gender")}</span><select name="sportGender" defaultValue={player.sportGender??"unspecified"}><option value="unspecified">—</option><option value="male">M</option><option value="female">F</option></select></label><label><span>Club</span><input name="club" defaultValue={player.club??""} /></label><label><span>{tr(locale,"Contacto","Contact")}</span><input name="contact" defaultValue={player.contact??""} /></label><label><span>DUPR S</span><input name="duprSingles" type="number" step=".001" defaultValue={player.duprSingles??0} /></label><label><span>DUPR D</span><input name="duprDoubles" type="number" step=".001" defaultValue={player.duprDoubles??0} /></label><div className="td-chip-list">{categories.map((cat)=><label className="check compact-check" key={cat.id}><input type="checkbox" name={`cat:${cat.id}`} defaultChecked={assigned.has(String(cat.id))}/><span>{cat.name}</span></label>)}</div><button className="light small">{tr(locale,"Guardar","Save")}</button><button type="button" className={tombstoned?"ghost small":"danger small"} onClick={()=>void toggleNoShow()}>{tombstoned?tr(locale,"Restaurar","Restore"):tr(locale,"No-show / retirar","No-show / withdraw")}</button></form></section></div></div></td></tr>;
 }
 
 function TeamCards({ locale, snapshot, mutate }: { locale: Locale; snapshot: TournamentDayReformSnapshot; mutate: DayMutate }) {
@@ -401,7 +415,7 @@ export function IntegralSchedulePanel({ locale, snapshot, mutate }: { locale: Lo
         {waveDays.map(({day,times})=><section className="td-court-grid-day" key={day}>
           <header className="td-court-grid-day-separator">
             <b>{scheduleDayHeading(locale,day)}</b>
-            <span>{day}</span>
+            <span>{locale === "es" ? `${day.slice(8,10)}/${day.slice(5,7)}/${day.slice(0,4)}` : day}</span>
           </header>
           {times.map((at)=>{
             const active=schedule.filter((row:any)=>Number(row.startAt)<=at&&Number(row.endAt)>at);

@@ -27,9 +27,9 @@ export const MANAGER_MENU: readonly Group[] = [
     { area: "admin", section: "payments", es: "Pagos y comprobantes", en: "Payments & proofs", source: "online" },
   ] },
   { es: "Preparación deportiva", en: "Competition preparation", items: [
-    { area: "day", section: "overview", es: "Estado deportivo", en: "Competition overview", source: "local" },
+    { area: "day", section: "overview", es: "Resumen deportivo", en: "Competition overview", source: "local" },
     { area: "day", section: "participants", es: "Participantes locales", en: "Local participants", source: "local" },
-    { area: "day", section: "format", es: "Formatos y sorteos", en: "Formats & draws", source: "local" },
+    { area: "day", section: "format", es: "Formatos", en: "Formats", source: "local" },
     { area: "day", section: "competition", es: "Grupos y cuadros", en: "Groups & brackets", source: "local" },
   ] },
   { es: "Operación", en: "Operations", items: [

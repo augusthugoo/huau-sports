@@ -38,7 +38,7 @@ export function FormatExplanationPanel({
     <section className={`official-format-explanation${compact ? " compact" : ""}`}>
       <div className="official-format-explanation-head">
         <div>
-          <div className="eyebrow">FORMAT EXPLANATION</div>
+          <div className="eyebrow">{tr(locale,"EXPLICACIÓN DEL FORMATO","FORMAT EXPLANATION")}</div>
           <h3>{title ?? tr(locale, "Cómo se juega", "How it works")}</h3>
         </div>
         <span className="pill strong">{tr(locale, "OFICIAL · AUTO", "OFFICIAL · AUTO")}</span>

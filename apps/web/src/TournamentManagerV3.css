@@ -127,3 +127,141 @@
 @media(prefers-reduced-motion:reduce){.huau-console-v3 *{scroll-behavior:auto!important;transition:none!important}}
 
 .huau-console-v3 :is(.tpw,.td-day)>.section-back{display:none}
+
+/* HUAU TM V3.1 — Visual consistency review, 31 October 2026.
+   Scoped to signed-in administrative console only. No rules for fullscreen TV
+   or operator-token view. The existing styles stay intact outside this shell. */
+.huau-console-v3{--h4-paper:#f2efe8;--h4-white:#fffdfa;--h4-soft:#f5efe7;--h4-tint:#f2e6db;--h4-ink:#181714;--h4-secondary:#615b52;--h4-line:#dad2c6;--h4-danger:#a53c35;--h4-danger-bg:#fff0ed}
+.huau-console-v3 :is(.dashboard,.tpw,.td-day) *,
+.huau-console-v3 :is(.dashboard,.tpw,.td-day) *::before,
+.huau-console-v3 :is(.dashboard,.tpw,.td-day) *::after{box-sizing:border-box}
+.huau-console-v3 :is(.dashboard,.tpw,.td-day) :is(h2,h3,h4,p,span,small,label,summary){overflow-wrap:break-word}
+.huau-console-v3 :is(.dashboard,.tpw,.td-day) :is(.panel,.tpw-stack,.td-stack,.td-grid,.epic-policy-panel,.epic-day-windows,.epic-flow-row){min-width:0}
+/* Administration: eliminate the inherited black tab band and its duplicated visual weight. */
+.huau-console-v3 .dashboard:not(.platform-admin-page)>.dashboard-head{gap:18px}
+.huau-console-v3 .dashboard .admin-module-strip{display:flex;gap:8px;flex-wrap:wrap;overflow:visible;width:fit-content;max-width:100%;padding:0;margin:0 0 25px;border:none;border-radius:0;background:transparent!important;box-shadow:none}
+.huau-console-v3 .dashboard .admin-module-strip button{min-height:36px;padding:8px 17px!important;border:1px solid var(--h4-line)!important;border-radius:999px!important;background:var(--h4-white)!important;color:var(--h4-ink)!important;font-weight:500!important;box-shadow:none!important}
+.huau-console-v3 .dashboard .admin-module-strip button.active{background:var(--h4-ink)!important;color:#fff!important;border-color:var(--h4-ink)!important}
+.huau-console-v3 .dashboard-head>.light,.huau-console-v3 .dashboard-head>button.light{background:var(--h4-white)!important;color:var(--h4-ink)!important;border:1px solid var(--h4-line)!important;font-weight:500!important;padding:11px 16px}
+/* Admin dark leftovers: placeholder, categories, participants, financial summary. */
+.huau-console-v3 .tpw :is(.tournament-hero-placeholder,.category-admin-card,.category-card,.player-card,.entry-row,.group-preview>div,.manual-groups>div,.live-draw,.draw-reveal,.snapshot-list article,.participant-assignment,.registration-cancel-all-list>div,.quick-stats div){background:var(--h4-white)!important;background-image:none!important;border:1px solid var(--h4-line)!important;color:var(--h4-ink)!important;box-shadow:none!important}
+.huau-console-v3 .tpw .tournament-hero-placeholder{background:var(--h4-soft)!important;color:var(--h4-secondary)!important;min-height:115px;height:auto;padding:22px}
+.huau-console-v3 .tpw :is(.category-admin-card,.category-card,.player-card,.entry-row,.participant-assignment){padding:16px 18px}
+.huau-console-v3 .tpw :is(.category-admin-card,.category-card,.player-card,.entry-row,.participant-assignment,.quick-stats div) :is(strong,h2,h3,b){color:var(--h4-ink)!important}
+.huau-console-v3 .tpw :is(.category-admin-card,.category-card,.player-card,.entry-row,.participant-assignment) :is(p,small,span){color:var(--h4-secondary)}
+.huau-console-v3 .tpw .participant-kpis button,.huau-console-v3 .tpw .payment-kpis>div{background:var(--h4-soft)!important;color:var(--h4-ink)!important;border:1px solid var(--h4-line)!important;box-shadow:none!important;border-radius:11px!important;padding:15px 17px;min-width:0;overflow-wrap:anywhere}
+.huau-console-v3 .tpw .participant-kpis button.active{background:var(--h4-tint)!important;border-color:#b99b86!important;box-shadow:inset 0 0 0 1px #b99b86!important}
+.huau-console-v3 .tpw .participant-kpis button strong,.huau-console-v3 .tpw .payment-kpis>div strong{color:var(--h4-ink)!important;font-weight:600;font-variant-numeric:tabular-nums}
+.huau-console-v3 .tpw .participant-kpis button span,.huau-console-v3 .tpw .payment-kpis>div span{color:var(--h4-secondary)!important}
+.huau-console-v3 .tpw :is(.participant-kpis,.payment-kpis){gap:10px}
+.huau-console-v3 .tpw :is(.registration-history-panel,.registration-history-row,.payment-order-card,.payment-order-head,.payment-settings-grid,.payment-admin-section,.team-config-block,.team-entry-card,.team-group-card,.team-standing-card,.team-encounter-card,.team-lineup-editor,.team-player-option,.team-competition-group,.team-rubber-row,.team-result-row,.team-global-result){background:var(--h4-white)!important;background-image:none!important;border-color:var(--h4-line)!important;color:var(--h4-ink)!important}
+.huau-console-v3 .tpw :is(.payment-settings-grid,.registration-history-panel,.team-encounter-card,.team-config-block){padding:14px}
+/* State chips stay distinct from information cards; important/destructive controls retain red. */
+.huau-console-v3 .tpw :is(.danger-zone,.registration-limit-note){border-color:#d3a8a0!important}
+.huau-console-v3 .tpw .tournament-hero-admin{gap:18px;padding:22px}
+.huau-console-v3 .tpw :is(.tournament-hero-admin,.tpw-form,.tournament-regulations-admin) :is(label,span,small){line-height:1.5}
+.huau-console-v3 .tpw .tournament-hero-admin+.asset-actions{margin-top:14px}
+/* Sport format: nested options need visual separation and comfortable text padding. */
+.huau-console-v3 .td-day :is(.epic-option-grid,.epic-format-controls,.epic-format-context,.epic-policy-panel,.epic-advanced,.epic-team-format-summary,.epic-flow-advanced-grid,.epic-final-plan,.epic-final-link){min-width:0}
+.huau-console-v3 .td-day :is(.epic-option-card,.epic-flow-row,.epic-policy-row,.epic-team-rubber-edit,.epic-group-entry,.epic-group-members,.epic-policy-mode,.epic-policy-summary,.epic-flow-advanced-grid>section,.epic-day-windows article){background:var(--h4-soft)!important;background-image:none!important;color:var(--h4-ink)!important;border:1px solid var(--h4-line)!important;border-radius:12px!important;padding:15px!important;box-shadow:none!important}
+.huau-console-v3 .td-day .epic-option-card:hover,.huau-console-v3 .td-day .epic-flow-row:hover{background:var(--h4-tint)!important;border-color:#bbab9b!important}
+.huau-console-v3 .td-day .epic-policy-panel{padding:22px!important;background:var(--h4-white)!important}
+.huau-console-v3 .td-day :is(.epic-advanced,.epic-format-controls,.epic-flow-advanced-grid,.epic-simulation-actions,.epic-format-context,.epic-option-kpis,.epic-team-format-summary){padding:15px!important;gap:12px}
+.huau-console-v3 .td-day :is(.epic-advanced,.epic-format-controls,.epic-policy-panel,.epic-option-card) :is(p,small,summary,label,span){line-height:1.55}
+.huau-console-v3 .td-day :is(.epic-advanced,.epic-format-controls,.epic-policy-panel) :is(label,summary){padding-block:4px}
+.huau-console-v3 .td-day :is(.epic-policy-legend,.epic-policy-row,.epic-capacity-grid>span,.epic-flow-row,.epic-flow-advanced-grid>section){background:var(--h4-soft)!important;border-color:var(--h4-line)!important;color:var(--h4-ink)!important}
+.huau-console-v3 .td-day .epic-capacity-grid>span{padding:15px!important;border:1px solid var(--h4-line)!important;border-radius:12px!important;min-width:0}
+.huau-console-v3 .td-day .epic-capacity-grid>span.tight{background:#fff4df!important;border-color:#d9b989!important}
+.huau-console-v3 .td-day .epic-capacity-grid>span.over{background:var(--h4-danger-bg)!important;border-color:#d69e96!important}
+.huau-console-v3 .td-day .epic-capacity-grid>span :is(b,strong,small){color:var(--h4-ink)!important;opacity:1}
+.huau-console-v3 .td-day .epic-capacity-grid>span small{color:var(--h4-secondary)!important}
+.huau-console-v3 .td-day :is(.format-options>article,.format-option-card,.format-explanation,.simulator-context){background:var(--h4-soft)!important;border:1px solid var(--h4-line)!important;color:var(--h4-ink)!important;box-shadow:none!important}
+.huau-console-v3 .td-day :is(.format-option-card,.format-options>article){padding:20px!important;border-radius:12px!important}
+.huau-console-v3 .td-day .format-option-card.recommended{background:#f7e9e0!important;border-color:#cba99c!important}
+.huau-console-v3 .td-day .format-explanation{padding:15px!important}
+.huau-console-v3 .td-day .format-explanation :is(p,strong,small){color:var(--h4-secondary)!important}
+.huau-console-v3 .td-day .format-explanation strong{color:var(--h4-ink)!important}
+.huau-console-v3 .td-day :is(.epic-policy-legend,.epic-team-format-summary,.epic-advanced,.epic-option-card) :is(strong,h3,h4){color:var(--h4-ink)!important}
+/* Deliberate white card rhythm; avoid edge-to-edge group names. */
+.huau-console-v3 .td-day :is(.epic-standard-groups,.epic-team-groups,.epic-group-competition,.epic-draw-groups,.epic-live-draw-groups,.epic-bracket-grid,.epic-bracket-round){gap:12px}
+.huau-console-v3 .td-day :is(.epic-group-entry,.epic-group-members,.epic-group-competition,.epic-bracket-round,.epic-team-rubbers){padding:14px 16px!important;min-width:0}
+.huau-console-v3 .td-day :is(.epic-group-entry,.epic-group-members,.epic-bracket-round) :is(h3,h4,strong){margin-inline:3px}
+/* Schedule: allow the form to reflow inside the main column, not behind adjacent fields. */
+.huau-console-v3 .td-day .epic-day-windows{padding:20px!important;background:var(--h4-white)!important;border:1px solid var(--h4-line)!important;border-radius:12px!important;gap:14px}
+.huau-console-v3 .td-day .epic-day-windows>header{align-items:flex-start;gap:12px}
+.huau-console-v3 .td-day .epic-day-windows>header :is(strong,small){color:var(--h4-ink)!important;line-height:1.55}
+.huau-console-v3 .td-day .epic-day-windows>header small{color:var(--h4-secondary)!important}
+.huau-console-v3 .td-day .epic-day-windows>div{grid-template-columns:repeat(auto-fit,minmax(min(100%,345px),1fr))!important;gap:12px}
+.huau-console-v3 .td-day .epic-day-windows article{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))!important;align-items:end;gap:11px!important;padding:16px!important}
+.huau-console-v3 .td-day .epic-day-windows article>b{grid-column:1/-1;white-space:normal;color:var(--h4-ink)!important}
+.huau-console-v3 .td-day :is(.epic-day-windows,.epic-final-link,.epic-flow-row,.epic-flow-advanced-grid) label{min-width:0;width:100%;overflow:visible}
+.huau-console-v3 .td-day :is(.epic-day-windows,.epic-final-link,.epic-flow-row,.epic-flow-advanced-grid) :is(input,select){width:100%!important;min-width:0!important;max-width:100%!important;box-sizing:border-box;padding:9px 7px!important;font-size:12px}
+.huau-console-v3 .td-day :is(.epic-day-windows,.epic-final-link,.epic-flow-row) label>span{display:block;min-height:1.8em;white-space:normal;line-height:1.35;font-size:11px!important;color:var(--h4-secondary)!important}
+.huau-console-v3 .td-day .epic-flow-table{min-width:0;gap:10px}
+.huau-console-v3 .td-day .epic-flow-row{display:grid;grid-template-columns:28px repeat(4,minmax(0,1fr))!important;align-items:start;gap:10px!important;padding:14px!important}
+.huau-console-v3 .td-day .epic-flow-category{grid-column:span 2;min-width:0;overflow-wrap:anywhere}
+.huau-console-v3 .td-day .epic-flow-row>*{min-width:0;max-width:100%}
+.huau-console-v3 .td-day .epic-flow-handle{color:var(--h4-secondary)!important}
+.huau-console-v3 .td-day .epic-flow-same-day{background:#eee5d8!important;color:#494339!important;border-color:var(--h4-line)!important}
+.huau-console-v3 .td-day :is(.epic-final-plan,.epic-final-link,.td-schedule-rest-authority,.td-schedule-authority-note,.td-schedule-fine-edit,.td-schedule-math,.td-court-grid-head,.td-conflict-summary){background:var(--h4-soft)!important;color:var(--h4-ink)!important;border-color:var(--h4-line)!important;box-shadow:none!important}
+.huau-console-v3 .td-day .epic-final-plan{padding:12px!important;display:flex!important;flex-wrap:wrap;gap:8px!important}
+.huau-console-v3 .td-day .epic-final-plan>span{min-width:0;overflow-wrap:anywhere}
+.huau-console-v3 .td-day .td-schedule-rest-authority{padding:11px 13px!important}
+.huau-console-v3 .td-day :is(.td-schedule-rest-authority,.td-schedule-authority-note) :is(b,strong,span,small){color:var(--h4-ink)!important;opacity:1}
+.huau-console-v3 .td-day .td-schedule-authority-note{padding:13px!important;align-items:flex-start}
+.huau-console-v3 .td-day :is(.td-schedule-dirty,.td-conflict-summary,.td-reservation-note){background:var(--h4-danger-bg)!important;color:var(--h4-danger)!important;border:1px solid #dab1a9!important;border-left:4px solid var(--h4-danger)!important;border-radius:8px!important;padding:12px 14px!important}
+.huau-console-v3 .td-day :is(.td-schedule-dirty,.td-conflict-summary,.td-reservation-note) :is(span,strong,b,small){color:var(--h4-danger)!important;opacity:1}
+.huau-console-v3 .td-day .td-reservation-note{display:block;margin:9px 0!important;line-height:1.5}
+.huau-console-v3 .td-day .td-court-grid-panel{overflow:hidden;min-width:0}
+.huau-console-v3 .td-day .td-court-grid{min-width:0;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-gutter:stable}
+.huau-console-v3 .td-day .td-court-grid-head{padding:12px!important;border-radius:9px!important}
+.huau-console-v3 .td-day .td-court-grid-head b{color:var(--h4-secondary)!important}
+.huau-console-v3 .td-day .td-court-grid-day-separator{background:#efe1d8!important;color:#633d31!important;border:1px solid #d0ae9e!important;padding:13px 15px;min-width:760px}
+.huau-console-v3 .td-day .td-court-grid-day-separator :is(b,span){color:#633d31!important;font-size:12px;line-height:1.5}
+.huau-console-v3 .td-day .td-court-grid-cell{background:var(--h4-white)!important;color:var(--h4-ink)!important;border:1px solid var(--h4-line)!important}
+.huau-console-v3 .td-day .td-court-grid-cell.idle{background:#f7f4ee!important}
+.huau-console-v3 .td-day .td-court-grid-cell :is(span,small,strong){color:var(--h4-secondary)!important}
+.huau-console-v3 .td-day .td-court-grid-cell strong{color:var(--h4-ink)!important}
+.huau-console-v3 .td-day .td-category-day.overridden{background:#fff1dd!important;border-color:#dcbd8e!important}
+/* Results: clear separation between rounds and dense rows. */
+.huau-console-v3 .td-day .td-results-operational{padding:20px!important;margin-bottom:18px;border:1px solid var(--h4-line)!important;border-radius:12px!important}
+.huau-console-v3 .td-day .td-results-operational>details{padding:14px 0!important;border-top:1px solid var(--h4-line)!important}
+.huau-console-v3 .td-day :is(.td-result-card,.td-team-result-encounter,.td-results-operational,.td-result-list>article){margin-block:6px}
+.huau-console-v3 .td-day .td-results-operational :is(summary,small,strong,span){line-height:1.55}
+/* Other retained sports components should never show the old dark-surface/light-text mixture. */
+.huau-console-v3 .td-day :is(.td-roster-current,.td-team-compact-card,.td-dense-panel,.td-local-state,.td-upcoming-list>div,.td-player-table tr,.td-compact-table tr){background:var(--h4-white)!important;color:var(--h4-ink)!important;border-color:var(--h4-line)!important}
+.huau-console-v3 .td-day :is(.td-segmented,.td-category-tabs){padding:5px;gap:6px}
+.huau-console-v3 .td-day :is(.td-segmented button,.td-category-tabs button){min-height:35px}
+/* Usable overlays for local player category selection and row editing. */
+.huau-console-v3 .td-day :is(.td-inline-details,.td-row-menu){min-width:0;align-self:end}
+.huau-console-v3 .td-day .h4-modal-launch,.huau-console-v3 .td-day .h4-menu-trigger{border:1px solid var(--h4-line);border-radius:999px;padding:9px 14px;background:var(--h4-white)!important;color:var(--h4-ink)!important;min-height:38px;cursor:pointer;font-size:12px}
+.huau-console-v3 .td-day .h4-modal-launch:hover,.huau-console-v3 .td-day .h4-menu-trigger:hover{background:var(--h4-tint)!important}
+.huau-console-v3 .td-day .h4-menu-trigger{min-width:44px;font-weight:700;letter-spacing:.08em}
+.huau-console-v3 .td-day .h4-modal-backdrop{position:fixed;inset:0;z-index:3000;display:flex;align-items:center;justify-content:center;background:rgba(20,18,16,.54);backdrop-filter:blur(6px);padding:20px;visibility:hidden;opacity:0;pointer-events:none;transition:opacity .15s ease}
+.huau-console-v3 .td-day .h4-modal-backdrop.is-open{visibility:visible;opacity:1;pointer-events:auto}
+.huau-console-v3 .td-day .h4-modal{display:grid;gap:15px;max-height:min(85dvh,850px);overflow-y:auto;overscroll-behavior:contain;width:min(650px,100%);padding:27px;background:var(--h4-white)!important;border:1px solid var(--h4-line);border-radius:16px;box-shadow:0 24px 80px rgba(0,0,0,.26);color:var(--h4-ink)!important}
+.huau-console-v3 .td-day .h4-modal>header{display:flex;justify-content:space-between;align-items:center;gap:12px;padding-bottom:13px;border-bottom:1px solid var(--h4-line)}
+.huau-console-v3 .td-day .h4-modal h2{margin:0;color:var(--h4-ink)!important;font-size:22px;font-weight:500}
+.huau-console-v3 .td-day .h4-modal :is(button.h4-modal-close,.h4-dialog-done){width:auto;min-width:42px;border:1px solid var(--h4-line)!important;background:var(--h4-soft)!important;color:var(--h4-ink)!important;border-radius:999px;padding:9px 16px;font-size:12px;cursor:pointer}
+.huau-console-v3 .td-day .h4-modal .h4-dialog-done{background:var(--h4-ink)!important;color:#fff!important;justify-self:end}
+.huau-console-v3 .td-day .h4-modal .td-chip-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;max-height:55vh;overflow-y:auto}
+.huau-console-v3 .td-day .h4-modal .td-chip-list>.check{display:flex;align-items:center;gap:10px;padding:11px!important;background:var(--h4-soft)!important;border:1px solid var(--h4-line)!important;border-radius:10px;color:var(--h4-ink)!important;cursor:pointer}
+.huau-console-v3 .td-day .h4-modal .td-chip-list>.check input{flex:0 0 auto;width:18px;height:18px}
+.huau-console-v3 .td-day .h4-modal .td-chip-list>.check span{color:var(--h4-ink)!important}
+.huau-console-v3 .td-day .h4-player-modal .td-row-editor{position:static!important;inset:auto!important;z-index:auto!important;width:100%!important;max-height:none!important;overflow:visible!important;background:transparent!important;border:0!important;box-shadow:none!important;padding:0!important;display:grid;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:12px}
+.huau-console-v3 .td-day .h4-player-modal .td-row-editor :is(label,input,select){min-width:0}
+.huau-console-v3 .td-day .h4-player-modal .td-row-editor>.td-chip-list{grid-column:1/-1}
+.huau-console-v3 .td-day .h4-player-modal .td-row-editor>button{grid-column:1/-1}
+.huau-console-v3 .td-day .h4-modal:focus-visible,.huau-console-v3 .td-day .h4-modal button:focus-visible{outline:2px solid #9a7040;outline-offset:2px}
+@media(max-width:1200px){.huau-console-v3 .td-day .epic-flow-row{grid-template-columns:28px repeat(3,minmax(0,1fr))!important}.huau-console-v3 .td-day .epic-flow-category{grid-column:span 2}}
+@media(max-width:760px){.huau-console-v3 .td-day .epic-day-windows>div{grid-template-columns:1fr!important}.huau-console-v3 .td-day .epic-flow-row{grid-template-columns:28px repeat(2,minmax(0,1fr))!important}.huau-console-v3 .td-day .epic-flow-category{grid-column:span 2}.huau-console-v3 .td-day .h4-modal{padding:19px}.huau-console-v3 .td-day .h4-player-modal .td-row-editor{grid-template-columns:1fr!important}.huau-console-v3 .td-day .h4-modal .td-chip-list{grid-template-columns:1fr}}
+@media(prefers-reduced-motion:reduce){.huau-console-v3 .td-day .h4-modal-backdrop{transition:none}}
+/* The format explanation was a separate component, still using its original black theme. */
+.huau-console-v3 :is(.tpw,.td-day) .official-format-explanation{background:var(--h4-white)!important;background-image:none!important;color:var(--h4-ink)!important;border:1px solid var(--h4-line)!important;border-radius:12px!important;padding:20px!important;box-shadow:none!important}
+.huau-console-v3 :is(.tpw,.td-day) .official-format-explanation.compact{padding:17px!important}
+.huau-console-v3 :is(.tpw,.td-day) .official-format-explanation :is(h3,h4,strong){color:var(--h4-ink)!important}
+.huau-console-v3 :is(.tpw,.td-day) .official-format-explanation :is(p,small,summary,li){color:var(--h4-secondary)!important}
+.huau-console-v3 :is(.tpw,.td-day) .official-format-explanation .official-format-explanation-details{border-color:var(--h4-line)!important;padding-top:13px}
+.huau-console-v3 :is(.tpw,.td-day) .official-format-explanation .official-format-explanation-sections{grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:12px}
+.huau-console-v3 :is(.tpw,.td-day) .official-format-explanation .official-format-explanation-sections article{background:var(--h4-soft)!important;border:1px solid var(--h4-line)!important;border-radius:10px!important;padding:15px!important}
+.huau-console-v3 :is(.tpw,.td-day) .official-format-explanation .official-format-explanation-head .pill{background:#eae1d4!important;color:var(--h4-ink)!important}
