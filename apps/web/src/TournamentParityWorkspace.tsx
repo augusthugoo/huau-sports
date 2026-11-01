@@ -14,6 +14,7 @@ import type {
   LegacySeedingMethod,
 } from "@huau/core";
 import type { Locale } from "./i18n";
+import { TournamentManagerNav, parseManagerSection } from "./TournamentManagerNav";
 import { TeamCompetitionPanel, TeamResultsPanel, TeamTVPanel, TeamTournamentPanel, preloadTeamSnapshot } from "./TeamTournamentPanel";
 import { TournamentPaymentsAdmin } from "./TournamentPayments";
 import "./TournamentCommunityLink.css";
@@ -342,7 +343,7 @@ export function TournamentParityWorkspace({organizationId,tournamentId,locale,go
   const [detail,setDetail]=useState<Detail|null>(null);
   const [pendingOperations,setPendingOperations]=useState<WorkspaceOperation[]>([]);
   const [baseRevision,setBaseRevision]=useState(0);
-  const [tab,setTab]=useState<Tab>("overview");
+  const [tab,setTab]=useState<Tab>(() => mode === "admin" ? (parseManagerSection(window.location.search, "admin") as Tab) : "overview");
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState("");
   const [notice,setNotice]=useState("");
@@ -772,6 +773,32 @@ export function TournamentParityWorkspace({organizationId,tournamentId,locale,go
       </div>
     </section>}
 
+    <div className="h3-layout">
+      {mode === "admin" ? (
+        <TournamentManagerNav
+          locale={locale}
+          organizationId={organizationId}
+          tournamentId={tournamentId}
+          area="admin"
+          active={tab}
+          onSelect={(section) => {
+            const target=section as Tab;
+            openTab(target);
+            if (!(pendingCount>0 && serverMutationTabs.has(target))) {
+              const url=new URL(window.location.href);
+              url.searchParams.set("section",target);
+              window.history.replaceState({},"",url.toString());
+            }
+          }}
+          go={(path) => {
+            if (pendingCount>0) {
+              setError(text(locale,"Guardá o descartá los resultados locales antes de salir.","Save or discard local results before leaving."));
+              return;
+            }
+            go(path);
+          }}
+        />
+      ) : (
     <nav className="tpw-tabs">
       {tabs.map(([key,label])=>
         <button
@@ -784,6 +811,8 @@ export function TournamentParityWorkspace({organizationId,tournamentId,locale,go
         </button>
       )}
     </nav>
+      )}
+      <div className="h3-pane">
 
     {error&&<div className="tpw-alert">{error}</div>}
     {notice&&<div className="notice-box">{notice}</div>}
@@ -832,6 +861,8 @@ export function TournamentParityWorkspace({organizationId,tournamentId,locale,go
         go={go}
       />}
     {tab==="recovery"&&<Recovery detail={detail} locale={locale} busy={busy} act={act}/>}
+      </div>
+    </div>
   </main>;
 }
 

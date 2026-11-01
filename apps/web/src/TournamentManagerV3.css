@@ -1,0 +1,129 @@
+/* HUAU / Tournament Manager v3
+   A light, complete admin skin derived from LandingV2's Montserrat / paper / ink system.
+   All selectors are explicitly scoped. TV fullscreen and token operator do not use .huau-console-v3.
+*/
+@import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&display=swap");
+.huau-console-v3{--h3-paper:#f2efe8;--h3-surface:#fffefa;--h3-ink:#11110f;--h3-muted:#706b63;--h3-border:#d8d1c5;--h3-soft:#e8e2d8;min-height:100vh;background:var(--h3-paper);color:var(--h3-ink);font-family:Montserrat,Inter,ui-sans-serif,system-ui,sans-serif;font-weight:400;color-scheme:light;-webkit-font-smoothing:antialiased}
+.huau-console-v3 *,.huau-console-v3 *::before,.huau-console-v3 *::after{box-sizing:border-box}
+.huau-console-v3 button,.huau-console-v3 input,.huau-console-v3 select,.huau-console-v3 textarea{font-family:inherit}
+.huau-console-v3 :focus-visible{outline:2px solid #9a7040;outline-offset:2px}
+.huau-console-v3 a{color:inherit}
+.huau-console-v3 .h3-home{background:var(--h3-paper);color:var(--h3-ink);padding:0 0 96px;min-height:calc(100vh - 82px)}
+.huau-console-v3 .h3-container{width:min(1380px,calc(100% - 8.4vw));margin:auto}
+.huau-console-v3 .h3-back{display:inline-flex;border:0;background:transparent;color:var(--h3-muted);padding:32px 0 12px;font-size:12px;letter-spacing:0;cursor:pointer}
+.huau-console-v3 .h3-back:hover{text-decoration:underline}
+.huau-console-v3 .h3-eyebrow{font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#81796e;margin:0}
+.huau-console-v3 .h3-hero{padding:34px 0 60px;display:flex;align-items:flex-end;justify-content:space-between;gap:38px;border-bottom:1px solid var(--h3-border)}
+.huau-console-v3 .h3-hero h1{margin:17px 0 18px;font-size:clamp(3rem,6.25vw,7.2rem);line-height:.96;font-weight:400;letter-spacing:-.06em;overflow-wrap:anywhere;color:var(--h3-ink)}
+.huau-console-v3 .h3-dot{color:#b9ac98}
+.huau-console-v3 .h3-hero-meta{display:flex;flex-wrap:wrap;align-items:center;gap:9px;font-size:13px;color:var(--h3-muted);line-height:1.6;margin:0}
+.huau-console-v3 .h3-link-outline{text-decoration:none;border:1px solid var(--h3-ink);border-radius:999px;padding:12px 17px;font-size:12px;font-weight:600;white-space:nowrap;transition:.18s}
+.huau-console-v3 .h3-link-outline:hover{background:var(--h3-ink);color:#fff}
+.huau-console-v3 .h3-intro{display:grid;grid-template-columns:1fr 1fr;gap:48px;padding:48px 0 32px;align-items:end}
+.huau-console-v3 .h3-intro h2{margin:0;font-size:clamp(1.9rem,3.7vw,3.6rem);line-height:1.04;letter-spacing:-.05em;font-weight:400;color:var(--h3-ink)}
+.huau-console-v3 .h3-intro p{max-width:530px;margin:0;color:var(--h3-muted);font-size:13px;line-height:1.8}
+.huau-console-v3 .h3-module-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.huau-console-v3 .h3-module{min-height:355px;display:flex;flex-direction:column;padding:24px 22px;background:#fffefa;border:1px solid var(--h3-border);border-radius:10px;color:var(--h3-ink)}
+.huau-console-v3 .h3-module-featured{background:#11110f;color:#f2efe8;border-color:#11110f}
+.huau-console-v3 .h3-module-number{color:#817b71;font-size:10px;letter-spacing:.11em;font-weight:600}
+.huau-console-v3 .h3-module-featured .h3-module-number{color:#c0b8ad}
+.huau-console-v3 .h3-module h3{font-weight:400;letter-spacing:-.045em;line-height:1.09;font-size:clamp(1.4rem,2.2vw,2.25rem);margin:44px 0 12px;color:inherit}
+.huau-console-v3 .h3-module p{font-size:12px;line-height:1.75;margin:0 0 28px;color:#6b675f}
+.huau-console-v3 .h3-module-featured p{color:#bfbcb5}
+.huau-console-v3 .h3-module-links{display:grid;gap:2px;margin-top:auto}
+.huau-console-v3 .h3-module-links button{width:100%;display:flex;justify-content:space-between;gap:10px;padding:12px 0;color:inherit;background:transparent;border:0;border-top:1px solid var(--h3-border);text-align:left;font-size:12px;font-weight:500;cursor:pointer}
+.huau-console-v3 .h3-module-featured .h3-module-links button{border-color:#44443e}
+.huau-console-v3 .h3-module-links button:hover{text-decoration:underline}
+.huau-console-v3 .h3-status{margin:65px 0 10px}
+.huau-console-v3 .h3-section-title{display:flex;justify-content:space-between;gap:40px;align-items:end;margin:0 0 20px}
+.huau-console-v3 .h3-section-title h2{margin:0;font-size:clamp(1.7rem,2.7vw,2.8rem);font-weight:400;letter-spacing:-.05em}
+.huau-console-v3 .h3-section-title p{font-size:12px;color:var(--h3-muted);max-width:500px;line-height:1.6;margin:0}
+.huau-console-v3 .h3-status-list{border-top:1px solid var(--h3-border)}
+.huau-console-v3 .h3-status-list>div{display:grid;grid-template-columns:minmax(140px,.6fr) minmax(180px,1fr) minmax(230px,1.1fr);gap:20px;align-items:center;border-bottom:1px solid var(--h3-border);padding:17px 4px}
+.huau-console-v3 .h3-status-list span{font-size:12px;color:var(--h3-muted)}
+.huau-console-v3 .h3-status-list strong{font-weight:600;font-size:13px;color:var(--h3-ink)}
+.huau-console-v3 .h3-status-list small{font-size:11px;color:#777168;line-height:1.5}
+.huau-console-v3 .h3-status-note{font-size:11px;color:var(--h3-muted);margin:13px 0 0;line-height:1.7}
+.huau-console-v3 .h3-operator{border-top:1px solid var(--h3-border);border-bottom:1px solid var(--h3-border);margin:38px 0 0;padding:10px 0}
+.huau-console-v3 .h3-operator summary{cursor:pointer;padding:12px 0;display:flex;justify-content:space-between;gap:15px;font-size:13px;font-weight:600;list-style:none}
+.huau-console-v3 .h3-operator summary::-webkit-details-marker{display:none}
+.huau-console-v3 .h3-operator-content{max-width:660px;padding:15px 0 24px;color:var(--h3-muted);font-size:12px;line-height:1.75}
+.huau-console-v3 .h3-operator-content label{color:var(--h3-ink);font-size:12px;margin:16px 0}
+.huau-console-v3 .h3-operator-actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:18px}
+.huau-console-v3 .h3-operator-actions button{border:1px solid var(--h3-ink);background:var(--h3-ink);color:#fff;border-radius:999px;padding:11px 17px;font-size:12px}
+.huau-console-v3 .h3-error{color:#963c34}.huau-console-v3 .h3-notice{color:#2c7044}
+/* One navigation rail: no stage-bar-on-top-of-tab-bar. */
+.huau-console-v3 .h3-layout{display:grid;grid-template-columns:245px minmax(0,1fr);gap:30px;align-items:start}
+.huau-console-v3 .h3-pane{min-width:0}
+.huau-console-v3 .h3-menu{position:sticky;top:96px;display:grid;gap:0;padding:12px 0 20px;border-top:1px solid var(--h3-border);max-height:calc(100vh - 115px);overflow:auto;scrollbar-width:thin}
+.huau-console-v3 .h3-menu-home{border:0;background:transparent;color:var(--h3-muted);text-align:left;padding:10px 9px 19px;font-size:12px;cursor:pointer}
+.huau-console-v3 .h3-menu-home:hover{text-decoration:underline}
+.huau-console-v3 .h3-menu-group{padding:13px 0 10px;border-top:1px solid var(--h3-border)}
+.huau-console-v3 .h3-menu-group h2{margin:0 0 6px;padding:0 9px;color:#777168;letter-spacing:.08em;font-size:10px;text-transform:uppercase;font-weight:600}
+.huau-console-v3 .h3-menu-item{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;border:0;background:transparent;text-align:left;color:#4b4842;font-size:12px;font-weight:500;line-height:1.42;padding:10px 9px;border-radius:6px;cursor:pointer}
+.huau-console-v3 .h3-menu-item:hover{background:#e8e1d7}
+.huau-console-v3 .h3-menu-item.is-active{background:#11110f;color:#fff}
+.huau-console-v3 .h3-menu-source{font-size:15px;opacity:.55;flex:none}
+.huau-console-v3 .h3-menu-tv{border:1px solid var(--h3-border);background:#fffefa;border-radius:999px;padding:11px 14px;margin:14px 8px 5px;text-align:left;color:var(--h3-ink);font-size:12px;cursor:pointer}
+.huau-console-v3 .h3-menu-foot{font-size:10px;color:#878076;padding:12px 9px;margin:0}
+/* Unified admin surfaces. Scoped beneath the authenticated shell, never the public landing, TV-only view, or operator token. */
+.huau-console-v3 :is(.dashboard,.tpw,.td-day){color:var(--h3-ink);font-family:inherit}
+.huau-console-v3 .dashboard{width:min(1360px,calc(100% - 8.4vw));padding:50px 0 90px}
+.huau-console-v3 :is(.tpw,.td-day){width:min(1380px,calc(100% - 8.4vw));padding:40px 0 100px}
+.huau-console-v3 :is(.dashboard-head,.tpw-hero,.td-day-hero){border-bottom:1px solid var(--h3-border);padding-bottom:26px;margin-bottom:28px}
+.huau-console-v3 :is(.dashboard-head h1,.tpw-hero h1,.td-day-hero h1){font-weight:400!important;color:var(--h3-ink)!important;letter-spacing:-.055em}
+.huau-console-v3 :is(.dashboard-head p,.tpw-hero p,.td-day-hero p,.section-back,.eyebrow,.muted){color:var(--h3-muted)}
+.huau-console-v3 .section-back{padding:8px 0 17px;color:#6e675e;border:0;background:transparent;font-size:12px}
+.huau-console-v3 :is(.tpw-hero,.td-day-hero){align-items:flex-end}
+.huau-console-v3 :is(.panel,.tournament-card-shell,.tournament-card,.tpw-workspace-bar,.tpw-alert,.notice-box,.empty-state,.request-list>article){background:#fffefa!important;background-image:none!important;border:1px solid var(--h3-border)!important;color:var(--h3-ink)!important;border-radius:9px!important;box-shadow:none!important}
+.huau-console-v3 .panel :is(h1,h2,h3,h4,strong),.huau-console-v3 :is(.tpw,.td-day) :is(h2,h3,h4,strong){color:var(--h3-ink)}
+.huau-console-v3 .panel h2{font-size:clamp(16px,1.7vw,23px);font-weight:500;letter-spacing:-.03em}
+.huau-console-v3 :is(.panel,.tpw,.td-day) :is(p,small,em,.muted){line-height:1.65}
+.huau-console-v3 :is(.panel,.tpw,.td-day) :is(.eyebrow,.panel-title span,.muted,small){color:var(--h3-muted)}
+.huau-console-v3 :is(.tpw,.td-day,.dashboard) label{color:#5f584f!important;font-size:12px}
+.huau-console-v3 :is(.tpw,.td-day,.dashboard) :is(input:not([type="checkbox"]):not([type="radio"]),select,textarea){background:#fff!important;background-image:none!important;color:#161512!important;border-color:#c8c0b4!important;box-shadow:none;border-radius:7px!important;min-height:38px}
+.huau-console-v3 :is(.tpw,.td-day,.dashboard) :is(input,select,textarea)::placeholder{color:#8a8379}
+.huau-console-v3 :is(.tpw,.td-day,.dashboard) :is(input,select,textarea):focus{border-color:#777066!important;outline:2px solid #b7a18b;outline-offset:1px}
+.huau-console-v3 :is(.tpw,.td-day,.dashboard) input[type="checkbox"]{accent-color:#1d1c19}
+.huau-console-v3 :is(.tpw,.td-day,.dashboard) :is(button.light,button.ghost,button.small,.tpw-flow button,.td-quick button,.td-file-action,.file-button){background:#fffefa!important;background-image:none!important;border:1px solid #bcb3a8!important;color:var(--h3-ink)!important;border-radius:999px!important;box-shadow:none!important;text-shadow:none!important;transform:none}
+.huau-console-v3 :is(.tpw,.td-day,.dashboard) button.light:not(:disabled){background:var(--h3-ink)!important;color:#fff!important;border-color:var(--h3-ink)!important}
+.huau-console-v3 :is(.tpw,.td-day,.dashboard) button:disabled{opacity:.45}
+.huau-console-v3 :is(.tpw,.td-day,.dashboard) button.danger{background:#fff0ed!important;border-color:#c6988f!important;color:#853b33!important}
+.huau-console-v3 :is(.tpw,.td-day,.dashboard) :is(.pill,.compact-check,.td-chip-list span,.td-local-chip){background:#ece7dc!important;color:#3e3a33!important;border-color:#d5ccbd!important}
+.huau-console-v3 :is(.tpw,.td-day,.dashboard) :is(.pill.strong,.td-local-chip.dirty){background:#e7dbc6!important;color:#51412c!important}
+/* The old dark microsurfaces were the main contrast regression. Change backgrounds and text together. */
+.huau-console-v3 :is(.tpw,.td-day) :is(.tpw-kpis>div,.tpw-kpis>span,.td-day-status>div,.td-kpis>div,.td-group-grid>div,.td-standing-card,.td-team-card,.td-lineup-encounter,.td-lineup-side,.td-rubber-settings>div,.td-schedule-row,.td-result-card,.td-recovery-meta>span,.td-live-draw-reveal,.td-upcoming-list>div,.td-local-state,.td-share-panel,.td-mode-card,.td-mode-kpis span,.td-dense-panel,.td-format-simulator,.td-sim-output,.td-roster-current,.td-team-compact-card,.td-team-result-encounter,.td-schedule-block,.td-category-day,.td-admin-diff,.td-public-state,.format-simulator,.format-option-card,.format-card,.format-explanation,.standings-card,.bracket-row,.result-row,.schedule-row,.tournament-regulations-admin,.tournament-hero-admin,.tpw-fieldset,.tpw-category-list,.td-row-editor,.td-inline-details,.td-results-operational){background:#fffefa!important;background-image:none!important;color:var(--h3-ink)!important;border-color:var(--h3-border)!important;box-shadow:none!important}
+.huau-console-v3 :is(.tpw,.td-day) :is(.td-day-status,.td-kpis,.tpw-kpis) strong{color:var(--h3-ink)!important}
+.huau-console-v3 :is(.tpw,.td-day) :is(.td-day-status,.td-kpis,.tpw-kpis) span{color:var(--h3-muted)!important}
+.huau-console-v3 :is(.tpw,.td-day) :is(.td-category-tabs button,.td-segmented button,.epic-segmented button){background:#fffefa!important;border:1px solid var(--h3-border)!important;color:var(--h3-ink)!important}
+.huau-console-v3 :is(.tpw,.td-day) :is(.td-category-tabs button.active,.td-segmented button.active,.epic-segmented button.active){background:var(--h3-ink)!important;color:white!important}
+.huau-console-v3 :is(.tpw,.td-day) :is(.tpw-flow button,.td-quick button,.td-file-action){text-align:left}
+.huau-console-v3 :is(.tpw,.td-day) :is(.td-compact-table,.td-player-table,.schedule-table,.td-team-compact-grid) :is(th,td){background:#fffefa!important;color:var(--h3-ink)!important;border-color:var(--h3-border)!important}
+.huau-console-v3 :is(.tpw,.td-day,.dashboard) :is(.notice-box,.tpw-alert){color:#5d4f37!important}
+/* Explicit Epic v4 surfaces. TV, event modal and modal backdrops remain their intentional contrast themes. */
+.huau-console-v3 .td-day :is(.epic-format-hero,.epic-format-context,.epic-competition-hero,.epic-option-card,.epic-option-kpis,.epic-advanced,.epic-format-controls,.epic-rounds,.epic-round-heading,.epic-encounter,.epic-encounter-score,.epic-team-rubbers,.epic-team-rubber-edit,.epic-team-format-summary,.epic-lineup-side,.epic-group-competition,.epic-group-entry,.epic-group-members,.epic-simulation-actions,.epic-policy-panel,.epic-policy-row,.epic-policy-mode,.epic-policy-summary,.epic-policy-legend,.epic-capacity-grid,.epic-day-windows,.epic-flow-category,.epic-flow-phase,.epic-flow-row,.epic-flow-advanced-grid,.epic-final-plan,.epic-final-link,.epic-bracket-grid,.epic-public-link,.epic-public-url,.epic-live-draw-reveal,.epic-draw-groups,.epic-live-draw-groups,.td-court-grid-cell,.td-court-grid-head,.td-court-grid-day,.td-schedule-math,.td-schedule-rest-authority,.td-schedule-fine-edit,.td-conflict-summary,.td-schedule-dirty,.td-config-grid,.td-danger-tools){background:#fffefa!important;background-image:none!important;color:var(--h3-ink)!important;border-color:var(--h3-border)!important;box-shadow:none!important}
+.huau-console-v3 .td-day :is(.epic-format-hero,.epic-competition-hero,.epic-option-card,.epic-flow-row,.epic-policy-row,.td-court-grid-cell) :is(strong,h2,h3,h4){color:var(--h3-ink)!important}
+.huau-console-v3 .td-day :is(.epic-policy-row,.epic-flow-row,.td-court-grid-cell,.epic-option-card) :is(span,small,p){color:#6c675e}
+.huau-console-v3 .td-day :is(.epic-option-card,.epic-flow-row,.td-court-grid-cell) button:not(.light):not(.danger){color:var(--h3-ink);border-color:#bfb7ac;background:#fffefa}
+.huau-console-v3 .td-day .epic-badge{background:#ece6dc!important;color:#4d463e!important;border-color:var(--h3-border)!important}
+/* Preserve deliberate fullscreen TV and dark privacy overlays instead of globally recoloring them. */
+.huau-console-v3 :is(.td-tv,.epic-tv,.epic-tv-layout,.tv-fullscreen-root,.epic-error-modal){color:#f4f3ee}
+.huau-console-v3 :is(.td-tv,.epic-tv,.epic-tv-layout) :is(strong,h1,h2,h3){color:#f4f3ee}
+/* Platform, organization and tournament list share the same design tokens. */
+.huau-console-v3 :is(.dashboard,.public-org,.platform-admin-page) :is(.dashboard-head h1,h1){font-weight:400;letter-spacing:-.055em;color:var(--h3-ink)}
+.huau-console-v3 .admin-module-strip button{border:1px solid var(--h3-border);color:#4e4840;background:#fffefa}
+.huau-console-v3 .admin-module-strip button.active{background:#11110f;color:#fff;border-color:#11110f}
+.huau-console-v3 .tournament-card{display:flex;text-align:left;justify-content:space-between}
+.huau-console-v3 .tournament-card h3{font-size:20px;font-weight:500;color:var(--h3-ink)}
+.huau-console-v3 .tournament-card-meta strong,.huau-console-v3 .request-list strong{color:var(--h3-ink)}
+.huau-console-v3 .tournament-card-meta span{color:var(--h3-muted)}
+.huau-console-v3 .tournament-delete{color:#943f35;background:transparent}
+.huau-console-v3 .dashboard :is(.panel,.tournament-card-shell){padding:22px}
+/* Lightweight but legible, responsive first. */
+@media(max-width:1250px){.huau-console-v3 .h3-module-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.huau-console-v3 .h3-layout{grid-template-columns:220px minmax(0,1fr);gap:18px}}
+@media(max-width:900px){.huau-console-v3 .h3-layout{display:block}.huau-console-v3 .h3-menu{position:static;max-height:none;display:flex;flex-wrap:wrap;gap:14px;border-bottom:1px solid var(--h3-border);margin:0 0 24px}.huau-console-v3 .h3-menu-group{flex:1 1 170px;border-top:0}.huau-console-v3 .h3-menu-home{flex:1 1 100%;padding:5px 0}.huau-console-v3 .h3-menu-tv{border:1px solid var(--h3-border);background:#fffefa;border-radius:999px;padding:11px 14px;margin:14px 8px 5px;text-align:left;color:var(--h3-ink);font-size:12px;cursor:pointer}
+.huau-console-v3 .h3-menu-foot{flex:1 1 100%;padding:0}.huau-console-v3 .h3-intro{grid-template-columns:1fr;gap:16px}.huau-console-v3 .h3-status-list>div{grid-template-columns:1fr 1fr}.huau-console-v3 .h3-status-list small{grid-column:1/-1}}
+@media(max-width:620px){.huau-console-v3 .h3-container,.huau-console-v3 :is(.dashboard,.tpw,.td-day){width:calc(100% - 30px)}.huau-console-v3 .h3-hero{display:block;padding-bottom:32px}.huau-console-v3 .h3-link-outline{display:inline-block;margin-top:24px}.huau-console-v3 .h3-module-grid{grid-template-columns:1fr}.huau-console-v3 .h3-module{min-height:270px}.huau-console-v3 .h3-module h3{margin-top:26px}.huau-console-v3 .h3-section-title{display:block}.huau-console-v3 .h3-status-list>div{grid-template-columns:1fr;gap:7px}.huau-console-v3 .h3-status-list small{grid-column:auto}.huau-console-v3 .h3-menu-group{flex-basis:calc(50% - 14px)}}
+@media(prefers-reduced-motion:reduce){.huau-console-v3 *{scroll-behavior:auto!important;transition:none!important}}
+
+.huau-console-v3 :is(.tpw,.td-day)>.section-back{display:none}

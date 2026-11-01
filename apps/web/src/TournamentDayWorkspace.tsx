@@ -67,6 +67,7 @@ import {
   EpicSchedulePolicyPanel,
   EpicTournamentDayTV,
 } from "./TournamentDayEpicPanels";
+import { TournamentManagerNav, parseManagerSection } from "./TournamentManagerNav";
 import "./TournamentDay.css";
 import "./TournamentDayIntegral.css";
 import "./TournamentDayEpic.css";
@@ -188,9 +189,7 @@ function standardResultFromForm(
 export function TournamentDayWorkspace(props: Props) {
   const { locale, go, organizationId, tournamentId, operatorToken } = props;
   const [session, setSession] = useState<TournamentDaySession<TournamentDaySnapshot> | null>(null);
-  const [tab, setTab] = useState<Tab>(() =>
-    new URLSearchParams(window.location.search).get("view") === "tv" ? "tv" : "overview",
-  );
+  const [tab, setTab] = useState<Tab>(() => (new URLSearchParams(window.location.search).get("view") === "tv" ? "tv" : parseManagerSection(window.location.search, "day")) as Tab);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -808,6 +807,24 @@ export function TournamentDayWorkspace(props: Props) {
         </div>
       </section>
 
+      <div className="h3-layout">
+        {!operatorToken && organizationId && tournamentId ? (
+          <TournamentManagerNav
+            locale={locale}
+            organizationId={organizationId}
+            tournamentId={tournamentId}
+            area="day"
+            active={tab}
+            onSelect={(section) => {
+              setTab(section as Tab);
+              const url=new URL(window.location.href);
+              url.searchParams.delete("view");
+              url.searchParams.set("section",section);
+              window.history.replaceState({},"",url.toString());
+            }}
+            go={go}
+          />
+        ) : (
       <nav className="td-day-tabs">
         {tabs.map(([key, label]) => (
           <button key={key} className={tab === key ? "active" : ""} onClick={() => setTab(key)}>
@@ -815,6 +832,8 @@ export function TournamentDayWorkspace(props: Props) {
           </button>
         ))}
       </nav>
+        )}
+        <div className="h3-pane">
 
       <EpicErrorModal locale={locale} error={error} onClose={() => setError("")} />
       {notice ? <div className="notice-box">{notice}</div> : null}
@@ -899,6 +918,8 @@ export function TournamentDayWorkspace(props: Props) {
         />
         </section>
       ) : null}
+        </div>
+      </div>
     </main>
   );
 }
