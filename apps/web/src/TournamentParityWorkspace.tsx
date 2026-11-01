@@ -14,6 +14,8 @@ import type {
   LegacySeedingMethod,
 } from "@huau/core";
 import type { Locale } from "./i18n";
+import { TournamentManagerTrail } from "./TournamentManagerExperience";
+import { initialAdminSection } from "./TournamentManagerFlow";
 import { TeamCompetitionPanel, TeamResultsPanel, TeamTVPanel, TeamTournamentPanel, preloadTeamSnapshot } from "./TeamTournamentPanel";
 import { TournamentPaymentsAdmin } from "./TournamentPayments";
 import "./TournamentCommunityLink.css";
@@ -342,7 +344,7 @@ export function TournamentParityWorkspace({organizationId,tournamentId,locale,go
   const [detail,setDetail]=useState<Detail|null>(null);
   const [pendingOperations,setPendingOperations]=useState<WorkspaceOperation[]>([]);
   const [baseRevision,setBaseRevision]=useState(0);
-  const [tab,setTab]=useState<Tab>("overview");
+  const [tab,setTab]=useState<Tab>(() => mode === "admin" ? initialAdminSection(window.location.search) : "overview");
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState("");
   const [notice,setNotice]=useState("");
@@ -710,6 +712,18 @@ export function TournamentParityWorkspace({organizationId,tournamentId,locale,go
     >
       ← {mode==="admin"?"Tournament Hub":"HUAU Tournament"}
     </button>
+
+    {mode === "admin" ? (
+      <TournamentManagerTrail
+        locale={locale}
+        organizationId={organizationId}
+        tournamentId={tournamentId}
+        area="admin"
+        currentStage={tab === "participants" || tab === "payments" ? "registration" : "setup"}
+        onLocalSection={(section) => openTab(section as Tab)}
+        go={go}
+      />
+    ) : null}
 
     <header className="tpw-hero">
       <div>
