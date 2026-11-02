@@ -136,6 +136,7 @@ function OrderBreakdown({ order }: { order: PaymentOrder }) {
 
 export function MyTournamentPayments({ locale }: { locale: Locale }) {
   const [orders, setOrders] = useState<PaymentOrder[]>([]);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -147,6 +148,7 @@ export function MyTournamentPayments({ locale }: { locale: Locale }) {
       setOrders(data.orders);
       setError("");
     } catch (e) { setError(e instanceof Error ? e.message : "PAYMENTS_ERROR"); }
+    finally { setInitialLoading(false); }
   }, []);
   useEffect(() => { void load(); }, [load]);
 
@@ -177,7 +179,12 @@ export function MyTournamentPayments({ locale }: { locale: Locale }) {
 
   const active = orders.filter((order) => !["paid", "refunded", "partially_refunded"].includes(order.status));
   const history = orders.filter((order) => ["paid", "refunded", "partially_refunded"].includes(order.status));
-  if (!orders.length && !error) return null;
+  if (!orders.length && !error) return initialLoading ? (
+    <section className="payments-user-section" aria-live="polite" aria-busy="true">
+      <div className="section-heading"><div><h1>{tr(locale, "Mis pagos", "My payments")}</h1><p>{tr(locale, "Estamos sincronizando tus órdenes de pago.", "We are syncing your payment orders.")}</p></div></div>
+      <div className="huau-payment-loading" role="status"><span className="huau-public-spinner" aria-hidden="true" />{tr(locale, "Cargando pagos y métodos disponibles…", "Loading payments and available methods…")}</div>
+    </section>
+  ) : null;
 
   return <section className="payments-user-section">
     <div className="section-heading"><div><div className="eyebrow">PAYMENTS</div><h1>{tr(locale, "Mis pagos", "My payments")}</h1><p>{tr(locale, "Un pago puede cubrir varias categorías del mismo torneo.", "One payment can cover several categories in the same tournament.")}</p></div></div>

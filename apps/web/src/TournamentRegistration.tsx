@@ -999,9 +999,12 @@ export function PublicTournamentRegistration({ slug, locale, go, authenticated =
                 type="button"
                 className="light"
                 disabled={busy === "basket" || (Boolean(data.regulations.text.trim()) && !regulationsAccepted)}
+                aria-busy={busy === "basket"}
                 onClick={() => void confirmBasket()}
               >
-                {busy === "basket" ? "…" : tr(locale, "Confirmar inscripción", "Confirm registration")}
+                <span className="huau-public-button-feedback" role="status">
+                  {busy === "basket" ? <><span className="huau-public-spinner" aria-hidden="true" />{tr(locale, "Registrando inscripción…", "Submitting registration…")}</> : tr(locale, "Confirmar inscripción", "Confirm registration")}
+                </span>
               </button>
             </div>
           </section>

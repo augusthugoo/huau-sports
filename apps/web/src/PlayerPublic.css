@@ -2903,3 +2903,124 @@
     gap: 8px;
   }
 }
+
+/* HUAU_PUBLIC_FLOW_V35_20261102
+   Tournament player areas: override legacy DARK global dialog and format rules.
+   Explicit scope protects platform admin, TV and other non-public surfaces.
+*/
+.public-tournament-page-v3 .public-format-modal .public-format-modal-header {
+  padding: 0 46px 20px 0;
+  border-bottom: 1px solid var(--pp-line);
+  background: transparent;
+  color: var(--pp-ink);
+}
+.public-tournament-page-v3 .public-format-modal .public-format-modal-header :is(h2, h3, strong) {
+  color: var(--pp-ink);
+}
+.public-tournament-page-v3 .public-format-modal .public-format-modal-header p {
+  color: var(--pp-muted);
+}
+.public-tournament-page-v3 .public-format-modal .public-format-modal-scroll {
+  padding: 0;
+  margin-top: 22px;
+  background: transparent;
+  color: var(--pp-ink);
+}
+.public-tournament-page-v3 .public-regulations-modal .public-regulations-text {
+  color: var(--pp-ink);
+  background: transparent;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.public-tournament-page-v3 .public-regulations-modal .public-regulations-modal-footer {
+  border-color: var(--pp-line);
+  background: var(--pp-surface);
+  color: var(--pp-ink);
+}
+.public-tournament-page-v3 .public-regulations-modal .public-regulations-modal-footer :is(label, span) {
+  color: var(--pp-ink);
+}
+/* Format details can be opened both in the tournament modal and My registrations.
+   Legacy styles.css otherwise paints their cards almost black. */
+.public-tournament-page-v3 .public-format-modal .official-format-explanation,
+.my-registrations-page-v3 .registration-format-explanation .official-format-explanation {
+  background: var(--pp-surface);
+  border: 1px solid var(--pp-line);
+  border-radius: 14px;
+  color: var(--pp-ink);
+  box-shadow: none;
+}
+.public-tournament-page-v3 .public-format-modal .official-format-explanation :is(h3,h4,strong),
+.my-registrations-page-v3 .registration-format-explanation .official-format-explanation :is(h3,h4,strong) {
+  color: var(--pp-ink);
+}
+.public-tournament-page-v3 .public-format-modal .official-format-explanation :is(p,li,small),
+.my-registrations-page-v3 .registration-format-explanation .official-format-explanation :is(p,li,small) {
+  color: var(--pp-muted);
+}
+.public-tournament-page-v3 .public-format-modal .official-format-explanation-details,
+.my-registrations-page-v3 .registration-format-explanation .official-format-explanation-details {
+  border-color: var(--pp-line);
+}
+.public-tournament-page-v3 .public-format-modal .official-format-explanation-details > summary,
+.my-registrations-page-v3 .registration-format-explanation .official-format-explanation-details > summary {
+  color: var(--pp-ink);
+}
+.public-tournament-page-v3 .public-format-modal .official-format-explanation-sections article,
+.my-registrations-page-v3 .registration-format-explanation .official-format-explanation-sections article {
+  border: 1px solid var(--pp-line);
+  background: rgba(255,255,255,.6);
+  border-radius: 11px;
+}
+.public-tournament-page-v3 .public-format-modal .official-format-explanation-head .pill,
+.my-registrations-page-v3 .registration-format-explanation .official-format-explanation-head .pill {
+  background: #ece8dd;
+  border-color: var(--pp-line);
+  color: var(--pp-ink);
+}
+/* Transaction feedback: no silent or misleading three-dot wait states. */
+.public-tournament-page-v3 .huau-public-button-feedback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 22px;
+}
+.player-area-v3 .huau-payment-loading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 70px;
+  padding: 18px;
+  border: 1px solid var(--pp-line);
+  border-radius: 14px;
+  background: var(--pp-surface);
+  color: var(--pp-ink);
+  font-size: 12px;
+}
+.public-tournament-page-v3 .huau-public-spinner,
+.player-area-v3 .huau-public-spinner {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  display: inline-block;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: huau-public-spinner-turn .75s linear infinite;
+}
+@keyframes huau-public-spinner-turn { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .public-tournament-page-v3 .huau-public-spinner,
+  .player-area-v3 .huau-public-spinner { animation: none; border-right-color: currentColor; }
+}
+@media (max-width: 900px) {
+  .public-tournament-page-v3 .public-format-modal .public-format-modal-header {
+    padding: 0 42px 16px 0;
+  }
+  .public-tournament-page-v3 .public-format-modal .public-format-modal-scroll {
+    margin-top: 18px;
+  }
+}
