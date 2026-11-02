@@ -378,3 +378,43 @@
 .huau-console-v3 .td-day .h5-grid-reservation>p{position:relative;width:min(290px,60vw);z-index:2;padding:10px 12px!important;margin:6px 0 0!important;border:1px solid #d8aaa1;border-radius:9px;background:#fff0ed!important;color:#833b34!important;box-shadow:0 6px 22px rgba(30,20,10,.09);font-size:11px;line-height:1.5}
 .huau-console-v3 .td-day .td-court-grid-wave{gap:0!important}
 @media(prefers-reduced-motion:reduce){.huau-console-v3 .td-day .h5-add-backdrop{transition:none}.huau-console-v3 .td-day .h5-flow-summary>b{transition:none}}
+
+/* V3.3: visible choice even under the V3.2 light-theme !important overrides. */
+.huau-console-v3 .td-day .epic-option-card.selected {
+  position: relative;
+  box-sizing: border-box;
+  background: #eee4d8 !important;
+  border: 2px solid #a33d36 !important;
+  box-shadow: 0 0 0 3px rgba(163,61,54,.12) !important;
+}
+.huau-console-v3 .td-day .epic-option-card.selected:hover {
+  background: #eadbcc !important;
+  border-color: #93312c !important;
+}
+.huau-console-v3 .td-day .epic-option-card:focus-visible {
+  outline: 3px solid #a33d36 !important;
+  outline-offset: 4px;
+}
+.huau-console-v3 .td-day .epic-option-selection {
+  display: inline-flex;
+  max-width: 100%;
+  padding: 6px 9px;
+  margin-top: 11px;
+  border-radius: 8px;
+  background: #a33d36 !important;
+  color: #fffefa !important;
+  font-size: .65rem;
+  font-weight: 800;
+  line-height: 1.4;
+  letter-spacing: .035em;
+}
+.huau-console-v3 .td-day .epic-format-inherited {
+  margin: 0 0 14px;
+  padding: 11px 13px;
+  border-radius: 11px;
+  border: 1px solid #d5c7b6;
+  background: #f6efe6;
+  color: #50443a;
+  font-size: .78rem;
+  line-height: 1.5;
+}

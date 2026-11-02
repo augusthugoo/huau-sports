@@ -55,6 +55,17 @@ const STANDARD_STANDING_CRITERIA: Array<{
 const DEFAULT_STANDARD_CRITERIA =
   STANDARD_STANDING_CRITERIA.map((criterion) => criterion.id);
 
+// Only competition rules travel to the next unconfigured category.
+// Group counts, entries, teams and generated fixtures never carry over.
+const FORMAT_DRAFT_FIELDS = [
+  "groupRounds", "qualifiers", "wildcards", "playoffMode", "bronze",
+  "crossGroupMethod", "finalDrawMethod", "consolationMode", "medalSchedule",
+  "preBestOf", "preTarget", "medalBestOf", "medalTarget",
+  "avoidGroupRematches", "preferredRestSlots",
+  ...STANDARD_STANDING_CRITERIA.map((criterion) => `standardCriterionOrder:${criterion.id}`),
+];
+const FORMAT_DRAFT_CHECKBOXES = new Set(["bronze", "avoidGroupRematches"]);
+
 function standardCriterionLabel(
   locale: Locale,
   id: StandardStandingCriterion,
@@ -276,15 +287,80 @@ export function EpicFormatStudio({
   const [seeding, setSeeding] = useState<"snake" | "random">(storedSeeding === "random" ? "random" : "snake");
   const formRef = useRef<HTMLFormElement | null>(null);
   const [simulation, setSimulation] = useState<any>(null);
+  const formatDrafts = useRef<Record<string, Record<string, string>>>({});
+  const groupDrafts = useRef<Record<string, number>>({});
+  const lastRules = useRef<{
+    source: string;
+    kind: "team" | "standard";
+    fields: Record<string, string>;
+  } | null>(null);
+  const [inheritedFrom, setInheritedFrom] = useState("");
+
+  const selectFormatCategory = (nextCategory: any) => {
+    if (!category || String(category.id) === String(nextCategory.id)) return;
+    const form = formRef.current;
+    if (form) {
+      const data = new FormData(form);
+      const fields: Record<string, string> = {};
+      for (const name of FORMAT_DRAFT_FIELDS) {
+        if (data.has(name)) fields[name] = String(data.get(name) ?? "");
+        else if (FORMAT_DRAFT_CHECKBOXES.has(name)) fields[name] = "";
+      }
+      formatDrafts.current[String(category.id)] = fields;
+      groupDrafts.current[String(category.id)] = groups;
+      lastRules.current = {
+        source: String(category.name),
+        kind: category.entryType === "team" ? "team" : "standard",
+        fields,
+      };
+    }
+    setCategoryId(String(nextCategory.id));
+  };
 
   useEffect(() => {
     if (!category) return;
     const current = activeGroupCount(snapshot, String(category.id), category.entryType === "team");
     const count = categoryEntryCount(snapshot, category);
-    setGroups(current || suggestedGroups(count, preferred, Math.max(1, Math.floor(count / 2))));
+    setGroups(groupDrafts.current[String(category.id)] ?? (current || suggestedGroups(count, preferred, Math.max(1, Math.floor(count / 2)))));
     const method = seedingMethodFor(snapshot, category);
     setSeeding(method === "random" ? "random" : "snake");
-    setSimulation(null);
+
+    const ownDraft = formatDrafts.current[String(category.id)];
+    const prior = lastRules.current;
+    const canInherit = current === 0 && !categoryFormat(snapshot, category) &&
+      prior?.kind === (category.entryType === "team" ? "team" : "standard");
+    const draft = ownDraft ?? (canInherit ? prior?.fields ?? null : null);
+    const form = formRef.current;
+    if (draft && form) {
+      for (const [name, value] of Object.entries(draft)) {
+        const control = form.elements.namedItem(name);
+        if (control instanceof HTMLInputElement) {
+          if (control.type === "checkbox") control.checked = value === "on";
+          else control.value = value;
+        } else if (control instanceof HTMLSelectElement) {
+          control.value = value;
+        }
+      }
+      const data = new FormData(form);
+      const dailyStart = String(data.get("dailyStart") ?? settings.dailyStart ?? "09:00");
+      const dailyEnd = String(data.get("dailyEnd") ?? settings.dailyEnd ?? "20:00");
+      setSimulation({
+        rounds: Number(data.get("groupRounds")) === 2 ? 2 : 1,
+        qualifiers: Math.max(1, Number(data.get("qualifiers") ?? 2)),
+        wildcards: Math.max(0, Number(data.get("wildcards") ?? 0)),
+        playoffMode: String(data.get("playoffMode") ?? "standard"),
+        bronze: data.get("bronze") === "on",
+        courts: Math.max(1, Number(data.get("courts") ?? tournament.courtCount ?? 1)),
+        availableMinutes: dayMinutes(dailyStart, dailyEnd),
+        matchMinutes: Math.max(5, Number(data.get("matchMinutes") ?? settings.defaultMatchMinutes ?? 30)),
+        rubberSlots: category.entryType === "team"
+          ? (categoryFormat(snapshot, category)?.encounter?.rubbers ?? []).length
+          : 1,
+      });
+    } else {
+      setSimulation(null);
+    }
+    setInheritedFrom(canInherit && !ownDraft ? prior?.source ?? "" : "");
   }, [categoryId]);
 
   if (!category) return <div className="empty-state">{tr(locale, "No hay categorías.", "No categories.")}</div>;
@@ -526,7 +602,7 @@ export function EpicFormatStudio({
               type="button"
               key={row.id}
               className={String(row.id) === String(category.id) ? "light small" : "ghost small"}
-              onClick={() => setCategoryId(String(row.id))}
+              onClick={() => selectFormatCategory(row)}
             >
               {row.name}
             </button>
@@ -551,6 +627,9 @@ export function EpicFormatStudio({
             ) : null}
           </div>
 
+          {inheritedFrom ? <p className="epic-format-inherited" role="status">
+            {tr(locale, `Reglas tomadas de ${inheritedFrom} como punto de partida. Esta categoría no cambia hasta aplicar el formato.`, `Rules copied from ${inheritedFrom} as a starting point. This category will not change until you apply the format.`)}
+          </p> : null}
           <div className="epic-format-controls">
             <label>
               <span>{tr(locale, "Vueltas en grupos", "Group rounds")}</span>
@@ -698,8 +777,13 @@ export function EpicFormatStudio({
               const recommendedOption = count === recommended;
               const selected = count === groups;
               return (
-                <button type="button" key={count} className={`epic-option-card ${selected ? "selected" : ""}`} onClick={() => setGroups(count)}>
+                <button type="button" key={count} aria-pressed={selected} className={`epic-option-card ${selected ? "selected" : ""}`} onClick={() => setGroups(count)}>
                   <header><span>{recommendedOption ? tr(locale,"RECOMENDADA","RECOMMENDED") : tr(locale,"OPCIÓN","OPTION")}</span><b className={estimate.fits ? "fits" : "over"}>{estimate.fits ? tr(locale,"Entra en horario","Fits") : tr(locale,"Excede estimación","Over estimate")}</b></header>
+                  {selected ? <span className="epic-option-selection" aria-live="polite">
+                    {activeGroups === count
+                      ? tr(locale, "✓ ESTRUCTURA ACTUAL", "✓ CURRENT STRUCTURE")
+                      : tr(locale, "✓ ELEGIDA · PENDIENTE DE APLICAR", "✓ SELECTED · NOT APPLIED")}
+                  </span> : null}
                   <h3>{count} {count === 1 ? tr(locale,"grupo","group") : tr(locale,"grupos","groups")}</h3>
                   <p>{estimate.sizes.map((size, index) => `${String.fromCharCode(65 + index)}: ${size}`).join(" · ")}</p>
                   <div className="epic-option-kpis">
