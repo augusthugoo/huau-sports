@@ -2715,3 +2715,191 @@
     padding-bottom: 4px;
   }
 }
+
+
+/* HUAU_PUBLIC_PLAYER_V34_20261102
+   Player-side UX contrast and pair layout only. All rules scoped to My registrations
+   or the public participants drawer; no admin, public hero or tournament-day changes.
+*/
+
+/* The invitations list was missing in the V3 player restyle and inherited
+   background:#090909 while its text inherited the light page's near-black ink. */
+.my-registrations-page-v3 .registration-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-direction: row;
+  gap: 18px;
+  min-height: 88px;
+  margin: 0 0 9px;
+  padding: 16px 18px;
+  border: 1px solid var(--pp-line-strong);
+  border-radius: 13px;
+  background: var(--pp-surface);
+  color: var(--pp-ink);
+  box-shadow: none;
+}
+.my-registrations-page-v3 .registration-row > div:first-child {
+  display: grid;
+  align-content: center;
+  min-width: 0;
+  gap: 6px;
+}
+.my-registrations-page-v3 .registration-row strong {
+  display: block;
+  color: var(--pp-ink);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.my-registrations-page-v3 .registration-row small {
+  display: block;
+  color: var(--pp-muted);
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.my-registrations-page-v3 .registration-row .pill {
+  border: 1px solid var(--pp-line);
+  border-radius: 999px;
+  background: var(--pp-paper-soft);
+  color: var(--pp-ink);
+}
+.my-registrations-page-v3 .registration-row .form-actions {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.my-registrations-page-v3 .registration-row .ghost,
+.my-registrations-page-v3 .registration-row .light {
+  min-height: 36px;
+  padding: 8px 16px;
+  white-space: nowrap;
+}
+
+/* Keep the remaining personal registration surfaces readable as they change state:
+   searching, pending invitation, team creation, cancellation and history. */
+.my-registrations-page-v3 :is(
+  .registration-card,
+  .registration-entry-manager,
+  .registration-group-actions,
+  .registration-outgoing,
+  .registration-candidate-list,
+  .registration-history-row,
+  .registration-format-explanation
+) {
+  color: var(--pp-ink);
+}
+.my-registrations-page-v3 :is(
+  .registration-outgoing > div,
+  .registration-history-row strong,
+  .registration-group-actions strong,
+  .registration-candidate strong,
+  .registration-member strong
+) {
+  color: var(--pp-ink);
+}
+.my-registrations-page-v3 :is(
+  .registration-history-row small,
+  .registration-outgoing > .muted,
+  .registration-candidate small,
+  .registration-member small,
+  .registration-format-explanation > summary
+) {
+  color: var(--pp-muted);
+}
+.my-registrations-page-v3 .registration-outgoing .text-button {
+  color: var(--pp-ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.my-registrations-page-v3 .registration-history-panel,
+.my-registrations-page-v3 .registration-history-list {
+  background: transparent;
+}
+.my-registrations-page-v3 .registration-team-builder :is(input,select),
+.my-registrations-page-v3 .registration-candidate,
+.my-registrations-page-v3 .registration-member {
+  color: var(--pp-ink);
+}
+.player-area-v3 .payment-order-card :is(
+  .payment-breakdown,
+  .payment-total,
+  .payment-bank-data,
+  .payment-history-row
+) {
+  color: var(--pp-ink);
+}
+.player-area-v3 .payment-order-card :is(
+  .payment-order-head p,
+  .payment-history-row span,
+  .payment-order-detail > summary
+) {
+  color: var(--pp-muted);
+}
+
+/* One competition entry = one pair row. The backend already supplies both names
+   under a single entry. If only one member exists, the empty slot retains the
+   'Buscando pareja' placeholder rather than creating a duplicate entry. */
+.public-tournament-page-v3 .public-v3-participant-entry.is-pair {
+  padding: 15px 0 17px;
+}
+.public-tournament-page-v3 .public-v3-participant-entry.is-pair .public-v3-pair-label {
+  display: block;
+  margin: 0 0 10px;
+  color: var(--pp-muted);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: .02em;
+}
+.public-tournament-page-v3 .public-v3-participant-entry.is-pair .public-v3-participant-members {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: center;
+  gap: 12px;
+}
+.public-tournament-page-v3 .public-v3-participant-entry.is-pair .public-v3-participant-member {
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+.public-tournament-page-v3 .public-v3-participant-entry.is-pair .public-v3-participant-member strong {
+  min-width: 0;
+  color: var(--pp-ink);
+  font-size: 10px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.public-tournament-page-v3 .public-v3-participant-entry.is-pair .public-v3-participant-member.is-seeking strong {
+  color: var(--pp-muted);
+}
+.public-tournament-page-v3 .public-v3-participant-entry.is-pair .player-avatar,
+.public-tournament-page-v3 .public-v3-participant-entry.is-pair .public-v3-seeking-mark {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+}
+@media (max-width: 740px) {
+  .my-registrations-page-v3 .registration-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+    padding: 15px;
+  }
+  .my-registrations-page-v3 .registration-row .form-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .my-registrations-page-v3 .registration-row .form-actions button {
+    flex: 1 1 130px;
+  }
+  .public-tournament-page-v3 .public-v3-participant-entry.is-pair .public-v3-participant-members {
+    gap: 8px;
+  }
+}

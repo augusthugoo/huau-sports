@@ -834,8 +834,17 @@ export function PublicTournamentRegistration({ slug, locale, go, authenticated =
                 <div className="public-participant-empty">{tr(locale,"Cargando inscriptos…","Loading players…")}</div>
               ) : publishedParticipantCategory?.entries.length ? (
                 publishedParticipantCategory.entries.map((entry, index) => (
-                  <article className="public-v3-participant-entry" key={`${participantCategory.id}-${index}`}>
+                  <article className={`public-v3-participant-entry${entry.entryType === "pair" ? " is-pair" : ""}`} key={`${participantCategory.id}-${index}`}>
                     {entry.entryType === "team" && entry.label && <small>{entry.label}</small>}
+                    {entry.entryType === "pair" && (
+                      <small className="public-v3-pair-label">
+                        {entry.waitlisted
+                          ? tr(locale, "Pareja en lista de espera", "Waitlisted pair")
+                          : entry.members.length === 2 && !entry.seeking
+                            ? tr(locale, "Pareja formada", "Paired entry")
+                            : tr(locale, "Pareja en formación", "Pair in progress")}
+                      </small>
+                    )}
                     <div className="public-v3-participant-members">
                       {entry.members.map((name, memberIndex) => (
                         <div className="public-v3-participant-member" key={`${name}-${memberIndex}`}>
