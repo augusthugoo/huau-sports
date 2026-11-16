@@ -49,11 +49,27 @@ export type DayMutate = (
 const tr = (locale: Locale, es: string, en: string) => (locale === "es" ? es : en);
 const rating = (value: number) => value > 0 ? value.toFixed(3) : "—";
 
+function teamCategoryIdsForPlayer(snapshot: TournamentDayReformSnapshot, player: any): Set<string> {
+  const personId = String(player.organizationPersonId ?? player.id);
+  const assigned = new Set<string>();
+  for (const category of snapshot.team.categories as any[]) {
+    for (const entry of category.entries ?? []) {
+      if ((entry.roster ?? []).some((member: any) => String(member.personId) === personId)) {
+        assigned.add(String(category.id));
+      }
+    }
+  }
+  return assigned;
+}
+
 function categoryNames(snapshot: TournamentDayReformSnapshot, profileId: string) {
   const names = new Map((snapshot.workspace.core.categories as any[]).map((category) => [String(category.id), String(category.name)] as const));
-  return (snapshot.workspace.participants.playerCategories as any[])
+  const assigned = new Set((snapshot.workspace.participants.playerCategories as any[])
     .filter((row) => String(row.playerProfileId) === profileId)
-    .map((row) => names.get(String(row.categoryId)) ?? String(row.categoryId));
+    .map((row) => String(row.categoryId)));
+  const player = (snapshot.workspace.participants.players as any[]).find((row) => String(row.id) === profileId);
+  if (player) for (const categoryId of teamCategoryIdsForPlayer(snapshot, player)) assigned.add(categoryId);
+  return [...assigned].map((id) => names.get(id) ?? id);
 }
 
 function playerTeam(snapshot: TournamentDayReformSnapshot, player: any) {
@@ -101,7 +117,7 @@ function PlayerTable({ locale, snapshot, mutate }: { locale: Locale; snapshot: T
     if (gender && String(player.sportGender) !== gender) return false;
     if (source === "local" && !meta.localParticipantIds.includes(String(player.id))) return false;
     if (source === "admin" && meta.localParticipantIds.includes(String(player.id))) return false;
-    if (category && !(snapshot.workspace.participants.playerCategories as any[]).some((row) => String(row.playerProfileId) === String(player.id) && String(row.categoryId) === category)) return false;
+    if (category && !(snapshot.workspace.participants.playerCategories as any[]).some((row) => String(row.playerProfileId) === String(player.id) && String(row.categoryId) === category) && !teamCategoryIdsForPlayer(snapshot, player).has(category)) return false;
     return true;
   });
   const add = async (event: FormEvent<HTMLFormElement>) => {
@@ -158,12 +174,15 @@ function PlayerTable({ locale, snapshot, mutate }: { locale: Locale; snapshot: T
 function PlayerRow({ locale, snapshot, player, mutate }: { locale: Locale; snapshot: TournamentDayReformSnapshot; player: any; mutate: DayMutate }) {
   const categories = snapshot.workspace.core.categories as any[];
   const assigned = new Set((snapshot.workspace.participants.playerCategories as any[]).filter((row)=>String(row.playerProfileId)===String(player.id)).map((row)=>String(row.categoryId)));
+  for (const categoryId of teamCategoryIdsForPlayer(snapshot, player)) assigned.add(categoryId);
   const tombstoned = Boolean(ensureDayLocalMeta(snapshot).participantTombstones[String(player.id)]);
   const [editOpen, setEditOpen] = useState(false);
   const save = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const data = new FormData(event.currentTarget); await mutate((next) => {
     updateDayParticipant(next, String(player.id), { displayName:String(data.get("displayName")??"").trim(), sportGender:String(data.get("sportGender")??"unspecified") as any, club:String(data.get("club")??"").trim(), contact:String(data.get("contact")??"").trim(), duprSingles:Number(data.get("duprSingles")??0), duprDoubles:Number(data.get("duprDoubles")??0) });
     const current = new Set((next.workspace.participants.playerCategories as any[]).filter((row)=>String(row.playerProfileId)===String(player.id)).map((row)=>String(row.categoryId)));
     for (const category of categories) {
+      // Team categories are owned by the roster, not by per-player assignments.
+      if (String(category.entryType) === "team") continue;
       const categoryId = String(category.id);
       const wanted=data.get(`cat:${category.id}`)==="on";
       const has=current.has(categoryId);
@@ -181,7 +200,7 @@ function PlayerRow({ locale, snapshot, player, mutate }: { locale: Locale; snaps
       <div className={`h4-modal-backdrop${editOpen?" is-open":""}`} aria-hidden={!editOpen} onMouseDown={(event)=>{if(event.target===event.currentTarget)setEditOpen(false)}} onKeyDown={(event)=>{if(event.key==="Escape")setEditOpen(false)}}>
         <section className="h4-modal h4-player-modal" role="dialog" aria-modal={editOpen} aria-label={tr(locale,"Editar jugador","Edit player")}>
           <header><h2>{tr(locale,"Editar jugador","Edit player")} · {player.displayName}</h2><button type="button" className="h4-modal-close" onClick={()=>setEditOpen(false)} aria-label={tr(locale,"Cerrar","Close")}>×</button></header>
-          <form className="td-row-editor" onSubmit={save}><label><span>{tr(locale,"Nombre","Name")}</span><input name="displayName" defaultValue={player.displayName} required /></label><label><span>{tr(locale,"Género","Gender")}</span><select name="sportGender" defaultValue={player.sportGender??"unspecified"}><option value="unspecified">—</option><option value="male">M</option><option value="female">F</option></select></label><label><span>Club</span><input name="club" defaultValue={player.club??""} /></label><label><span>{tr(locale,"Contacto","Contact")}</span><input name="contact" defaultValue={player.contact??""} /></label><label><span>DUPR S</span><input name="duprSingles" type="number" step=".001" defaultValue={player.duprSingles??0} /></label><label><span>DUPR D</span><input name="duprDoubles" type="number" step=".001" defaultValue={player.duprDoubles??0} /></label><div className="td-chip-list">{categories.map((cat)=><label className="check compact-check" key={cat.id}><input type="checkbox" name={`cat:${cat.id}`} defaultChecked={assigned.has(String(cat.id))}/><span>{cat.name}</span></label>)}</div><button className="light small">{tr(locale,"Guardar","Save")}</button><button type="button" className={tombstoned?"ghost small":"danger small"} onClick={()=>void toggleNoShow()}>{tombstoned?tr(locale,"Restaurar","Restore"):tr(locale,"No-show / retirar","No-show / withdraw")}</button></form></section></div></div></td></tr>;
+          <form className="td-row-editor" onSubmit={save}><label><span>{tr(locale,"Nombre","Name")}</span><input name="displayName" defaultValue={player.displayName} required /></label><label><span>{tr(locale,"Género","Gender")}</span><select name="sportGender" defaultValue={player.sportGender??"unspecified"}><option value="unspecified">—</option><option value="male">M</option><option value="female">F</option></select></label><label><span>Club</span><input name="club" defaultValue={player.club??""} /></label><label><span>{tr(locale,"Contacto","Contact")}</span><input name="contact" defaultValue={player.contact??""} /></label><label><span>DUPR S</span><input name="duprSingles" type="number" step=".001" defaultValue={player.duprSingles??0} /></label><label><span>DUPR D</span><input name="duprDoubles" type="number" step=".001" defaultValue={player.duprDoubles??0} /></label><div className="td-chip-list">{categories.map((cat)=><label className="check compact-check" key={cat.id}><input type="checkbox" name={`cat:${cat.id}`} key={`${cat.id}:${assigned.has(String(cat.id))}`} defaultChecked={assigned.has(String(cat.id))} disabled={String(cat.entryType)==="team"} title={String(cat.entryType)==="team" ? tr(locale,"La categoría Team se administra desde el roster","Team categories are managed in the roster") : undefined}/><span>{cat.name}</span></label>)}</div><button className="light small">{tr(locale,"Guardar","Save")}</button><button type="button" className={tombstoned?"ghost small":"danger small"} onClick={()=>void toggleNoShow()}>{tombstoned?tr(locale,"Restaurar","Restore"):tr(locale,"No-show / retirar","No-show / withdraw")}</button></form></section></div></div></td></tr>;
 }
 
 function TeamCards({ locale, snapshot, mutate }: { locale: Locale; snapshot: TournamentDayReformSnapshot; mutate: DayMutate }) {

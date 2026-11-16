@@ -805,7 +805,7 @@ export function PublicTournamentRegistration({ slug, locale, go, authenticated =
             )}
             <div className="registration-basket-total"><span>{tr(locale, "Total", "Total")}</span><strong>{basket.length ? money(basketTotal, basket[0]?.category.currency ?? "UYU", locale) : "$0"}</strong></div>
             {data.pricingPolicy.paymentType === "base_plus_extra" && <p className="muted">{tr(locale, "El total contempla automáticamente la tarifa base y las categorías extra.", "The total automatically includes base and extra-category pricing.")}</p>}
-            <button type="button" className="registration-review-trigger" disabled={!basket.length || busy === "basket"} onClick={() => setReviewOpen(true)}>
+            <button type="button" className="registration-review-trigger" disabled={!basket.length || busy === "basket"} onClick={() => { setError(""); setReviewOpen(true); }}>
               {tr(locale, "Continuar", "Continue")} <span aria-hidden="true">→</span>
             </button>
             {limitAfterSelection !== null && data.maxCategoriesPerPlayer !== null && <small>{tr(locale, `${limitAfterSelection}/${data.maxCategoriesPerPlayer} categorías`, `${limitAfterSelection}/${data.maxCategoriesPerPlayer} categories`)}</small>}
@@ -991,6 +991,12 @@ export function PublicTournamentRegistration({ slug, locale, go, authenticated =
               </div>
             )}
 
+            {error && (
+              <div className="launch-review-error" role="alert" aria-live="assertive">
+                <strong>{tr(locale, "No pudimos confirmar tu inscripción", "We could not confirm your registration")}</strong>
+                <span>{error}</span>
+              </div>
+            )}
             <div className="launch-review-actions">
               <button type="button" className="ghost" onClick={() => setReviewOpen(false)}>
                 {tr(locale, "Volver", "Back")}

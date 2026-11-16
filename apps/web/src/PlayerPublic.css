@@ -3024,3 +3024,21 @@
     margin-top: 18px;
   }
 }
+
+
+/* QA: eligibility errors must remain inside the registration confirmation dialog. */
+.public-tournament-page-v3 .launch-review-error {
+  display: grid;
+  gap: 7px;
+  margin: 16px 0 0;
+  padding: 17px 18px;
+  color: #802b22;
+  background: #fff0e9;
+  border: 2px solid #b8463a;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.48;
+  overflow-wrap: anywhere;
+}
+.public-tournament-page-v3 .launch-review-error strong {color:#802b22;font-weight:750;font-size:15px}
+.public-tournament-page-v3 .launch-review-error span {color:#802b22}

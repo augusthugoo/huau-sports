@@ -418,3 +418,80 @@
   font-size: .78rem;
   line-height: 1.5;
 }
+
+
+/* HUAU QA 2026-11-16: remaining dark microsurfaces in the light admin skin.
+   The broadcast TV, the fullscreen result display and public pages are not touched. */
+/* Participant / registration cards: their legacy backgrounds were still #0b0b0b. */
+.huau-console-v3 .tpw :is(.participant-card,.participant-subpanel) {
+  background: #fffefa !important;
+  background-image:none!important;
+  color: #171613 !important;
+  border: 1px solid #d8d1c5 !important;
+  box-shadow: none !important;
+}
+.huau-console-v3 .tpw .participant-subpanel { background: #f8f5ef !important; }
+.huau-console-v3 .tpw .participant-state {
+  background: #f2efe8 !important;
+  border: 1px solid #ded6ca !important;
+  color: #171613 !important;
+}
+.huau-console-v3 .tpw .participant-state.strong {
+  background: #e7dbc6 !important;
+  border-color: #cdbda6 !important;
+}
+.huau-console-v3 .tpw :is(.participant-card,.participant-subpanel,.participant-state) :is(h2,h3,strong,b) {
+  color: #171613 !important;
+}
+.huau-console-v3 .tpw :is(.participant-identity span,.participant-subpanel small,.participant-registration-row small,.participant-state span,.participant-order-list small) {
+  color: #706b63 !important;
+}
+.huau-console-v3 .tpw :is(.participant-tags span,.participant-order-status,.participant-assignment) {
+  color: #554f47 !important;
+  background: #eee8de !important;
+  border-color: #d8d1c5 !important;
+}
+.huau-console-v3 .tpw :is(.participant-manage,.participant-registration-row,.participant-order-list>div,.participant-assignments) {
+  border-color: #d8d1c5 !important;
+}
+.huau-console-v3 .tpw .participant-manage>summary {color:#514e48!important}
+.huau-console-v3 .tpw .participant-assignments legend {color:#706b63!important}
+
+.huau-console-v3 .tpw .payment-admin-order {
+  background: #fffefa !important;
+  background-image: none !important;
+  color: #171613 !important;
+  border: 1px solid #d8d1c5 !important;
+  box-shadow: none !important;
+  border-radius: 12px !important;
+}
+.huau-console-v3 .tpw .payment-admin-order :is(h3,h4,strong,b) { color:#171613 !important; }
+.huau-console-v3 .tpw .payment-admin-order :is(small,span,p) { color:#706b63; }
+.huau-console-v3 .tpw .payment-admin-order :is(.payment-admin-items span,.payment-admin-upload) {
+  color: #514e48 !important;
+  background: #f0ebe3 !important;
+  border-color: #d8d1c5 !important;
+}
+.huau-console-v3 .tpw .payment-admin-order :is(.payment-admin-upload summary,.payment-admin-upload span) {
+  color: #514e48 !important;
+}
+.huau-console-v3 .td-day .td-drawer {
+  background: #fffefa !important;
+  background-image: none !important;
+  color: #171613 !important;
+  border-left: 1px solid #d8d1c5 !important;
+  box-shadow: -18px 0 46px rgba(24,21,17,.15);
+}
+.huau-console-v3 .td-day .td-drawer :is(h2,h3,strong,b,label) { color:#171613 !important; }
+.huau-console-v3 .td-day .td-drawer :is(.eyebrow,small,header span) { color:#706b63 !important; }
+.huau-console-v3 .td-day .td-roster-current>div {
+  background: #f2efe8 !important;
+  border: 1px solid #ded6ca;
+  color: #171613 !important;
+}
+.huau-console-v3 .td-day .td-drawer .check span { color: #171613 !important; }
+.huau-console-v3 .td-day .td-drawer :is(input:not([type="checkbox"]),select) {
+  color:#171613 !important; background:#fff !important; border:1px solid #c8c0b4 !important;
+}
+.huau-console-v3 .td-day .td-drawer button.light {background:#171613!important;color:#fff!important;border-color:#171613!important}
+@media(max-width:650px){.huau-console-v3 .td-day .td-drawer{width:min(100vw,620px)}}
