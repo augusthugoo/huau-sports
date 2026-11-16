@@ -29,6 +29,7 @@ import {
   type TournamentDayReformSnapshot,
 } from "./TournamentDayReformEngine";
 import { FormatExplanationPanel, explanationForPersistedFormat } from "./FormatExplanationPanel";
+import { HuauBroadcastTV } from "./HuauBroadcastTV";
 
 export type EpicDayMutate = (
   fn: (snapshot: TournamentDayReformSnapshot) => void,
@@ -2418,6 +2419,57 @@ export function EpicTournamentDayTV({ snapshot, locale, embedded = false }: { sn
     finalBrackets=finalBrackets.filter(
       (bracket:any)=>String(bracket.categoryId)===categoryId
     );
+  }
+
+  // Only the dedicated ?view=tv screen uses Broadcast.
+  // The embedded admin TV stays untouched; no engine/API/data changes.
+  if (!embedded) {
+    return <HuauBroadcastTV
+      locale={locale}
+      title={String(snapshot.workspace.core.tournament.name ?? "HUAU")}
+      mode={mode}
+      onModeChange={setMode}
+      categoryId={categoryId}
+      onCategoryChange={setCategoryId}
+      court={court}
+      onCourtChange={setCourt}
+      categories={categories.map((category) => ({ id: String(category.id), name: String(category.name ?? "") }))}
+      courtCount={Math.max(1, Number(snapshot.workspace.core.tournament.courtCount ?? 1))}
+      blocks={display.map((block) => {
+        const first = block.first;
+        const teamCategory = first.categoryEntryType === "team"
+          ? teamCategories.find((item) => String(item.id) === String(first.categoryId))
+          : undefined;
+        const encounter = teamCategory?.encounters?.find((item: any) => String(item.id) === String(first.encounterId));
+        const teamScore = teamCategory && encounter ? teamEncounterScore(teamCategory, encounter) : null;
+        const orderedRubbers = [...(encounter?.matches ?? [])].sort((a: any, b: any) => Number(a.rubberOrder) - Number(b.rubberOrder));
+        const activeRubber = orderedRubbers.find((row: any) => ["ready", "in_progress"].includes(String(row.status)))
+          ?? orderedRubbers.find((row: any) => !["finished", "skipped"].includes(String(row.status)))
+          ?? orderedRubbers[orderedRubbers.length - 1];
+        const rubberDef = (teamCategory?.format?.encounter?.rubbers ?? []).find((row: any) => String(row.key) === String(activeRubber?.rubberKey));
+        return {
+          id: String(block.id),
+          categoryId: String(first.categoryId ?? ""),
+          categoryName: String(first.categoryName ?? teamCategory?.name ?? ""),
+          courtLabel: String(first.courtLabel ?? ""),
+          startAt: Number(first.startAt ?? 0),
+          roundLabel: String(first.roundLabel ?? first.stage ?? ""),
+          sideA: String(first.sideA ?? encounter?.sideA ?? ""),
+          sideB: String(first.sideB ?? encounter?.sideB ?? ""),
+          score: teamScore && (encounter?.status === "finished" || encounter?.status === "in_progress")
+            ? `${teamScore.a} — ${teamScore.b}` : null,
+          teamDetail: teamCategory && encounter && activeRubber ? {
+            label: String(rubberDef?.label ?? activeRubber.rubberKey ?? ""),
+            lineupA: teamTvLineupNames(teamCategory, encounter, String(encounter.entryAId), String(activeRubber.rubberKey)),
+            lineupB: teamTvLineupNames(teamCategory, encounter, String(encounter.entryBId), String(activeRubber.rubberKey)),
+            score: activeRubber.resultStatus ? `${activeRubber.scoreA ?? "—"} — ${activeRubber.scoreB ?? "—"}` : null,
+          } : null,
+        };
+      })}
+      standings={visibleStandings}
+      brackets={finalBrackets}
+      results={finishedResults}
+    />;
   }
 
   return (
