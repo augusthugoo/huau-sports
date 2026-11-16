@@ -654,7 +654,7 @@ export function PublicTournamentRegistration({ slug, locale, go, authenticated =
         </div>
 
         <div className="public-v3-facts">
-          <div><span>{tr(locale, "Fecha", "Date")}</span><strong>{date(data.tournament.startAt)}</strong></div>
+          <div><span>{tr(locale, "Fecha", "Date")}</span><strong>{date(data.tournament.startAt)}{data.tournament.endAt ? ` – ${date(data.tournament.endAt)}` : ""}</strong></div>
           <div><span>{tr(locale, "Sede", "Venue")}</span><strong>{data.publicInfo.location || data.publicInfo.club || data.publicInfo.city || tr(locale, "A confirmar", "TBC")}</strong></div>
           <div><span>{tr(locale, "Inscripción", "Registration")}</span><strong>{data.registrationCloseAt ? `${tr(locale, "Hasta", "Until")} ${date(data.registrationCloseAt)}` : tournamentStatusCopy(locale, data.tournament.status)}</strong></div>
           <div><span>{tr(locale, "Entrada", "Entry")}</span><strong>{categoryPriceLabel}</strong></div>
