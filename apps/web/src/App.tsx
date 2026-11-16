@@ -164,8 +164,20 @@ export function App() {
     void refreshMe();
   }, [refreshMe]);
 
+  // The public landing fetches its content while the auth session resolves.
+  // Keep one boot screen until both operations settle.
+  if (path === "/") {
+    return (
+      <Landing
+        locale={locale}
+        setLocale={changeLocale}
+        go={go}
+        authenticated={Boolean(session?.user)}
+        authenticationPending={isPending}
+      />
+    );
+  }
   if (isPending) return <LoadingScreen />;
-  if (path === "/") return <Landing locale={locale} setLocale={changeLocale} go={go} authenticated={Boolean(session?.user)} />;
   if (path === "/terms" || path === "/privacy") return <HuauLegalPage kind={path === "/terms" ? "terms" : "privacy"} locale={locale} go={go} authenticated={Boolean(session?.user)} onSignOut={() => authClient.signOut().then(() => go("/"))} />;
   if (path === "/verify-email") return <EmailVerificationScreen locale={locale} go={go} authenticated={Boolean(session?.user)} onDone={refreshMe} />;
   if (path === "/reset-password") return <ResetPasswordScreen locale={locale} go={go} />;
@@ -962,5 +974,4 @@ function PasswordField({name,label,locale,autoComplete}:{name:string;label:strin
 }
 
 function Field({name,label,type="text",required=true,defaultValue}:{name:string;label:string;type?:string;required?:boolean;defaultValue?:string}) { return <label><span>{label}</span><input name={name} type={type} required={required} defaultValue={defaultValue} min={type==="number"?"0":undefined} minLength={type==="password"?8:undefined}/></label>; }
-function LocaleToggle({locale,setLocale}:{locale:Locale;setLocale:(l:Locale)=>void}) { return <div className="locale-toggle"><button className={locale==="es"?"active":""} onClick={()=>setLocale("es")}>ES</button><button className={locale==="en"?"active":""} onClick={()=>setLocale("en")}>EN</button></div>; }
 function LoadingScreen(){ return <main className="loading-screen"><HuauBrand center /></main>; }

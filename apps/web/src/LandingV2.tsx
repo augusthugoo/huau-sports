@@ -33,60 +33,6 @@ type LandingData = {
   content?: LandingV2Content;
 };
 
-type JourneyItem = {
-  number: string;
-  labelEs: string;
-  labelEn: string;
-  titleEs: string;
-  titleEn: string;
-  bodyEs: string;
-  bodyEn: string;
-  image: string;
-};
-
-const journey: JourneyItem[] = [
-  {
-    number: "01",
-    labelEs: "Antes de competir",
-    labelEn: "Before competing",
-    titleEs: "Inscripciones.",
-    titleEn: "Registration.",
-    bodyEs: "Entrá al torneo, elegí tu categoría y seguí el estado de tu inscripción desde un mismo lugar.",
-    bodyEn: "Enter the tournament, choose your category and follow your registration status from one place.",
-    image: "/landing-v2/journey-01.jpg",
-  },
-  {
-    number: "02",
-    labelEs: "Todo en orden",
-    labelEn: "Everything in order",
-    titleEs: "Cronograma.",
-    titleEn: "Schedule.",
-    bodyEs: "Horarios, canchas y orden del día quedan disponibles para saber cuándo y dónde jugás.",
-    bodyEn: "Times, courts and the order of play stay available so you know when and where you play.",
-    image: "/landing-v2/journey-02.jpg",
-  },
-  {
-    number: "03",
-    labelEs: "Mientras avanza",
-    labelEn: "As it unfolds",
-    titleEs: "Competencia.",
-    titleEn: "Competition.",
-    bodyEs: "Grupos, cruces y cuadros acompañan el torneo mientras cada resultado mueve la competencia.",
-    bodyEn: "Groups, matchups and brackets follow the tournament as each result moves the competition forward.",
-    image: "/landing-v2/journey-03.jpg",
-  },
-  {
-    number: "04",
-    labelEs: "Cuando termina",
-    labelEn: "When it ends",
-    titleEs: "Resultados.",
-    titleEn: "Results.",
-    bodyEs: "El torneo no desaparece al terminar: resultados y recorridos quedan disponibles para volver a verlos.",
-    bodyEn: "The tournament does not disappear when it ends: results and paths remain available to revisit.",
-    image: "/landing-v2/journey-04.jpg",
-  },
-];
-
 async function jsonApi<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
@@ -139,11 +85,13 @@ export function Landing({
   setLocale,
   go,
   authenticated = false,
+  authenticationPending = false,
 }: {
   locale: Locale;
   setLocale: (locale: Locale) => void;
   go: Go;
   authenticated?: boolean;
+  authenticationPending?: boolean;
 }) {
   const [showLanguageGate, setShowLanguageGate] = useState(() => !localStorage.getItem("huau.locale"));
   const [data, setData] = useState<LandingData | null>(null);
@@ -466,9 +414,9 @@ export function Landing({
 
   const metricsVisible = Boolean((data?.metrics?.players ?? 0) || (data?.metrics?.matches ?? 0));
 
-  if (!landingLoadSettled || !data) {
+  if (authenticationPending || !landingLoadSettled || !data) {
     return (
-      <main className="landing-v2 lv2-boot" aria-busy={!landingLoadSettled}>
+      <main className="landing-v2 lv2-boot" aria-busy={authenticationPending || !landingLoadSettled}>
         <div className="lv2-boot-screen">
           <img src="/huau-logo.png" alt="HUAU" />
           {landingLoadSettled && !data && (
