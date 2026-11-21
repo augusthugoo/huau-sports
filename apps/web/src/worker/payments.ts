@@ -499,6 +499,11 @@ async function syncUserOrder(env: Env, tournamentId: string, userId: string) {
   });
 }
 
+/** Dedicated organizer reconciliation used after a courtesy; not exposed as an HTTP endpoint. */
+export async function refreshOrganizerCourtesyOrder(env: Env, tournamentId: string, userId: string): Promise<void> {
+  await syncUserOrder(env, tournamentId, userId);
+}
+
 async function coveredManualCategory(env: Env, profileId: string, categoryId: string) {
   const row = await env.HUAU_DB.prepare(
     `SELECT poi.id FROM payment_order_items poi JOIN payment_orders po ON po.id=poi.order_id
@@ -1245,17 +1250,47 @@ async function updatePaymentSettings(tournamentId: string, request: Request, env
   return json({ ok: true });
 }
 
-async function adminMarkPaid(orderId: string, request: Request, env: Env, access: AccessHelpers) {
+/** Operation scoped to a single verified organizer/tournament assignment. */
+async function organizerFinancialWriteAccess(tournamentId: string, request: Request, env: Env, access: AccessHelpers) {
+  const user = await access.requireUser(request, env);
+  if (!user) return { response: json({ ok: false, code: "UNAUTHENTICATED" }, { status: 401 }) } as const;
+  if (!(await hasTournamentOrganizerAccess(env, user.id, tournamentId, "finance"))) {
+    return { response: json({ ok: false, code: "FORBIDDEN" }, { status: 403 }) } as const;
+  }
+  const tournament = await tournamentById(env, tournamentId);
+  if (!tournament) return { response: json({ ok: false, code: "TOURNAMENT_NOT_FOUND" }, { status: 404 }) } as const;
+  return { user, tournament } as const;
+}
+
+async function adminMarkPaid(orderId: string, request: Request, env: Env, access: AccessHelpers, organizerMode = false) {
+  if (organizerMode && !(await access.requireUser(request, env))) {
+    return json({ ok: false, code: "UNAUTHENTICATED" }, { status: 401 });
+  }
   const order = await orderById(env, orderId);
   if (!order) return json({ ok: false, code: "PAYMENT_ORDER_NOT_FOUND" }, { status: 404 });
-  const allowed = await requireAdmin(order.tournamentId, request, env, access);
+  const allowed = organizerMode
+    ? await organizerFinancialWriteAccess(order.tournamentId, request, env, access)
+    : await requireAdmin(order.tournamentId, request, env, access);
   if ("response" in allowed) return allowed.response;
   if (!["draft", "awaiting_payment", "pending_review"].includes(order.status)) return json({ ok: false, code: "PAYMENT_ORDER_ALREADY_SETTLED" }, { status: 409 });
+  if (organizerMode) {
+    if (order.totalAmountMinor <= 0 || order.amountPaidMinor > 0 || order.amountRefundedMinor > 0) {
+      return json({ ok: false, code: "MANUAL_PAYMENT_REQUIRES_OUTSTANDING_ORDER" }, { status: 409 });
+    }
+    if (order.selectedMethod === "mercado_pago") return json({ ok: false, code: "MERCADO_PAGO_CHECKOUT_ACTIVE" }, { status: 409 });
+    const mpActive = await env.HUAU_DB.prepare(
+      `SELECT id FROM payment_attempts WHERE order_id=? AND method='mercado_pago'
+         AND status IN ('created','pending') AND external_id IS NOT NULL LIMIT 1`,
+    ).bind(order.id).first<{ id: string }>();
+    if (mpActive) return json({ ok: false, code: "MERCADO_PAGO_CHECKOUT_ACTIVE" }, { status: 409 });
+  }
   const body = await readJson<{ method?: "bank_transfer" | "cash"; note?: string; reference?: string }>(request);
   if (!body.method || !["bank_transfer", "cash"].includes(body.method)) return json({ ok: false, code: "INVALID_MANUAL_PAYMENT_METHOD" }, { status: 400 });
   const settings = await paymentSettings(env, order.tournamentId, order.currency);
-  if (body.method === "bank_transfer" && !settings.bankTransferEnabled) return json({ ok: false, code: "BANK_TRANSFER_DISABLED" }, { status: 409 });
-  if (body.method === "cash" && !settings.cashEnabled) return json({ ok: false, code: "CASH_DISABLED" }, { status: 409 });
+  // Offline settlement may be received even when that method was not offered on checkout.
+  // Preserve the original admin endpoint's behavior; only organizer-mode bypasses this checkout setting.
+  if (!organizerMode && body.method === "bank_transfer" && !settings.bankTransferEnabled) return json({ ok: false, code: "BANK_TRANSFER_DISABLED" }, { status: 409 });
+  if (!organizerMode && body.method === "cash" && !settings.cashEnabled) return json({ ok: false, code: "CASH_DISABLED" }, { status: 409 });
   const stamp = now();
   const attemptId = uuid();
   await env.HUAU_DB.prepare(
@@ -1266,14 +1301,33 @@ async function adminMarkPaid(orderId: string, request: Request, env: Env, access
   return json({ ok: true });
 }
 
-async function adminReviewAttempt(attemptId: string, request: Request, env: Env, access: AccessHelpers) {
+async function adminReviewAttempt(attemptId: string, request: Request, env: Env, access: AccessHelpers, organizerMode = false) {
+  if (organizerMode && !(await access.requireUser(request, env))) {
+    return json({ ok: false, code: "UNAUTHENTICATED" }, { status: 401 });
+  }
   const attempt = await env.HUAU_DB.prepare(
     `SELECT pa.id,pa.order_id as orderId,pa.method,pa.status,pa.amount_minor as amountMinor,po.tournament_id as tournamentId FROM payment_attempts pa JOIN payment_orders po ON po.id=pa.order_id WHERE pa.id=?`,
   ).bind(attemptId).first<{ id: string; orderId: string; method: PaymentMethod; status: string; amountMinor: number; tournamentId: string }>();
   if (!attempt) return json({ ok: false, code: "PAYMENT_ATTEMPT_NOT_FOUND" }, { status: 404 });
-  const allowed = await requireAdmin(attempt.tournamentId, request, env, access);
+  const allowed = organizerMode
+    ? await organizerFinancialWriteAccess(attempt.tournamentId, request, env, access)
+    : await requireAdmin(attempt.tournamentId, request, env, access);
   if ("response" in allowed) return allowed.response;
   if (!["bank_transfer", "cash"].includes(attempt.method)) return json({ ok: false, code: "AUTOMATIC_PAYMENT_REVIEW_FORBIDDEN" }, { status: 409 });
+  if (organizerMode) {
+    if (attempt.status !== "submitted") return json({ ok: false, code: "PAYMENT_PROOF_NOT_SUBMITTED" }, { status: 409 });
+    const order = await orderById(env, attempt.orderId);
+    if (!order || !["draft", "awaiting_payment", "pending_review"].includes(order.status) ||
+        order.amountPaidMinor > 0 || order.amountRefundedMinor > 0) {
+      return json({ ok: false, code: "PAYMENT_ORDER_ALREADY_SETTLED" }, { status: 409 });
+    }
+    if (order.selectedMethod === "mercado_pago") return json({ ok: false, code: "MERCADO_PAGO_CHECKOUT_ACTIVE" }, { status: 409 });
+    const mpActive = await env.HUAU_DB.prepare(
+      `SELECT id FROM payment_attempts WHERE order_id=? AND method='mercado_pago'
+         AND status IN ('created','pending') AND external_id IS NOT NULL LIMIT 1`,
+    ).bind(order.id).first<{ id: string }>();
+    if (mpActive) return json({ ok: false, code: "MERCADO_PAGO_CHECKOUT_ACTIVE" }, { status: 409 });
+  }
   const body = await readJson<{ decision?: "approve" | "reject"; note?: string }>(request);
   if (body.decision === "approve") {
     await applyOrderPaid(env, attempt.orderId, attempt.id, attempt.amountMinor, allowed.user.id, "manual_approved");
@@ -1631,6 +1685,15 @@ export async function handlePaymentApi(request: Request, env: Env, access: Acces
   const organizerPaymentsRoute = url.pathname.match(/^\/api\/organizer\/tournaments\/([^/]+)\/payments$/);
   if (organizerPaymentsRoute && request.method === "GET") {
     return organizerPayments(decodeURIComponent(organizerPaymentsRoute[1]!), request, env, access);
+  }
+
+  const organizerMarkPaid = url.pathname.match(/^\/api\/organizer\/payment-orders\/([^/]+)\/mark-paid$/);
+  if (organizerMarkPaid && request.method === "POST") {
+    return adminMarkPaid(decodeURIComponent(organizerMarkPaid[1]!), request, env, access, true);
+  }
+  const organizerReview = url.pathname.match(/^\/api\/organizer\/payment-attempts\/([^/]+)\/review$/);
+  if (organizerReview && request.method === "POST") {
+    return adminReviewAttempt(decodeURIComponent(organizerReview[1]!), request, env, access, true);
   }
 
   const admin = url.pathname.match(/^\/api\/admin\/tournaments\/([^/]+)\/payments$/);

@@ -19,6 +19,7 @@ type CurrentUser = { id: string; name: string; email: string };
 type AccessHelpers = {
   requireUser: (request: Request, env: Env) => Promise<CurrentUser | null>;
   isOrgAdmin: (userId: string, organizationId: string, env: Env, request?: Request) => Promise<boolean>;
+  refreshOrganizerCourtesyOrder?: (env: Env, tournamentId: string, userId: string) => Promise<void>;
 };
 
 type TournamentRow = {
@@ -2570,12 +2571,48 @@ async function adminPromote(registrationId: string, request: Request, env: Env, 
   return json({ ok: true });
 }
 
-async function adminAdjustment(registrationId: string, request: Request, env: Env, access: AccessHelpers) {
+async function adminAdjustment(registrationId: string, request: Request, env: Env, access: AccessHelpers, organizerMode = false) {
+  // For an organizer, deny anonymous requests before even looking up an ID in D1.
+  if (organizerMode && !(await access.requireUser(request, env))) {
+    return json({ ok: false, code: "UNAUTHENTICATED" }, { status: 401 });
+  }
   const reg = await registrationById(env, registrationId);
   if (!reg) return json({ ok: false, code: "REGISTRATION_NOT_FOUND" }, { status: 404 });
-  const allowed = await adminAccess(reg.tournamentId, request, env, access);
+  const allowed = organizerMode
+    ? await organizerFinanceAccess(reg.tournamentId, request, env, access)
+    : await adminAccess(reg.tournamentId, request, env, access);
   if ("response" in allowed) return allowed.response;
   const body = await readJson<{ kind?: "discount" | "courtesy" | "fixed_total"; amountMinor?: number; note?: string }>(request);
+  if (organizerMode) {
+    if (body.kind !== "courtesy") return json({ ok: false, code: "ORGANIZER_COURTESY_ONLY" }, { status: 403 });
+    if (!access.refreshOrganizerCourtesyOrder) return json({ ok: false, code: "FINANCIAL_SYNC_UNAVAILABLE" }, { status: 503 });
+    if (typeof body.note !== "string" || body.note.trim().length < 3 || body.note.trim().length > 300) {
+      return json({ ok: false, code: "COURTESY_REASON_REQUIRED" }, { status: 400 });
+    }
+    // Paid / in-review / MP-in-progress fees require HUAU financial administration.
+    if (reg.status !== "awaiting_payment" || reg.baseAmountMinor <= 0 || reg.finalAmountMinor <= 0 ||
+        reg.paidAmountMinor > 0 || reg.refundedAmountMinor > 0 || reg.coveredByRegistrationId) {
+      return json({ ok: false, code: "COURTESY_REQUIRES_UNPAID_REGISTRATION" }, { status: 409 });
+    }
+    const category = await categoryById(env, reg.categoryId);
+    if (!category || category.entryType === "team") {
+      return json({ ok: false, code: "TEAM_COURTESY_REQUIRES_HUAU" }, { status: 409 });
+    }
+    const locked = await env.HUAU_DB.prepare(
+      `SELECT 1 as locked FROM payment_order_items poi
+         JOIN payment_orders po ON po.id=poi.order_id
+        WHERE poi.registration_id=?
+          AND po.status IN ('pending_review','paid','partially_refunded','refunded') LIMIT 1`,
+    ).bind(registrationId).first<{ locked: number }>();
+    if (locked) return json({ ok: false, code: "COURTESY_ORDER_ALREADY_SETTLED" }, { status: 409 });
+    const checkout = await env.HUAU_DB.prepare(
+      `SELECT 1 as active FROM payment_order_items poi
+         JOIN payment_attempts pa ON pa.order_id=poi.order_id
+        WHERE poi.registration_id=? AND pa.method='mercado_pago'
+          AND pa.status IN ('created','pending') AND pa.external_id IS NOT NULL LIMIT 1`,
+    ).bind(registrationId).first<{ active: number }>();
+    if (checkout) return json({ ok: false, code: "MERCADO_PAGO_CHECKOUT_ACTIVE" }, { status: 409 });
+  }
   if (!body.kind || !["discount", "courtesy", "fixed_total"].includes(body.kind)) return json({ ok: false, code: "INVALID_ADJUSTMENT" }, { status: 400 });
   const amount = Math.max(0, Math.trunc(Number(body.amountMinor ?? 0)));
   let discount = 0;
@@ -2586,11 +2623,20 @@ async function adminAdjustment(registrationId: string, request: Request, env: En
   await env.HUAU_DB.batch([
     env.HUAU_DB.prepare(
       `INSERT INTO registration_adjustments (id,registration_id,kind,amount_minor,note,created_by_user_id,created_at) VALUES (?,?,?,?,?,?,?)`,
-    ).bind(uuid(), registrationId, body.kind, amount, body.note?.trim() || null, allowed.user.id, stamp),
+    ).bind(uuid(), registrationId, body.kind, organizerMode ? discount : amount, body.note?.trim() || null, allowed.user.id, stamp),
     env.HUAU_DB.prepare(`UPDATE tournament_registrations SET discount_minor=?,updated_at=?,version=version+1 WHERE id=?`).bind(discount, stamp, registrationId),
   ]);
   await recalcPersonalRegistration(env, registrationId);
   if (reg.entryId) await recalcCompetitiveEntry(env, reg.entryId);
+  if (organizerMode && access.refreshOrganizerCourtesyOrder) {
+    try {
+      // Avoid leaving an open payment order with the old, now-exonerated amount.
+      await access.refreshOrganizerCourtesyOrder(env, reg.tournamentId, reg.userId);
+    } catch (error) {
+      console.error("HUAU organizer courtesy: order sync deferred", error);
+      return json({ ok: true, paymentSyncPending: true });
+    }
+  }
   return json({ ok: true });
 }
 
@@ -2694,6 +2740,11 @@ export async function handleRegistrationApi(request: Request, env: Env, access: 
     const response = await adminPromote(registrationId, request, env, access);
     if (response.ok) await invalidatePublicParticipantsForRegistration(env, registrationId);
     return response;
+  }
+
+  const organizerCourtesy = url.pathname.match(/^\/api\/organizer\/registrations\/([^/]+)\/courtesy$/);
+  if (organizerCourtesy && request.method === "POST") {
+    return adminAdjustment(decodeURIComponent(organizerCourtesy[1]!), request, env, access, true);
   }
 
   const adjustment = url.pathname.match(/^\/api\/admin\/registrations\/([^/]+)\/adjustment$/);

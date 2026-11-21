@@ -13,7 +13,7 @@ import { createLegalSignupIntent, signupWithLegalAcceptance, reconcileLegalSignu
 import { handleTournamentAdminApi } from "./tournament-admin";
 import { handleTeamAdminApi } from "./team-admin";
 import { handleRegistrationApi } from "./registration";
-import { handlePaymentApi } from "./payments";
+import { handlePaymentApi, refreshOrganizerCourtesyOrder } from "./payments";
 import { handleTournamentDayApi } from "./tournament-day";
 import { handleTournamentDayPublicApi } from "./tournament-day-public";
 import { handleLandingApi } from "./landing";
@@ -613,7 +613,7 @@ export default {
     const paymentResponse = await handlePaymentApi(request, env, { requireUser, isOrgAdmin });
     if (paymentResponse) return paymentResponse;
 
-    const registrationResponse = await handleRegistrationApi(request, env, { requireUser, isOrgAdmin });
+    const registrationResponse = await handleRegistrationApi(request, env, { requireUser, isOrgAdmin, refreshOrganizerCourtesyOrder });
     if (registrationResponse) return registrationResponse;
 
     const teamAdminResponse = await handleTeamAdminApi(request, env, url, {
