@@ -13,6 +13,7 @@ import {
   type TeamRosterMember,
 } from "@huau/core";
 import { sendTransactionalEmailOnce } from "./email";
+import { hasTournamentOrganizerAccess } from "./tournament-organizer";
 
 type CurrentUser = { id: string; name: string; email: string };
 type AccessHelpers = {
@@ -2479,8 +2480,21 @@ async function adminAccess(tournamentId: string, request: Request, env: Env, acc
   return { user, tournament };
 }
 
-async function adminRegistrations(tournamentId: string, request: Request, env: Env, access: AccessHelpers) {
-  const allowed = await adminAccess(tournamentId, request, env, access);
+async function organizerFinanceAccess(tournamentId: string, request: Request, env: Env, access: AccessHelpers) {
+  const user = await access.requireUser(request, env);
+  if (!user) return { response: json({ ok: false, code: "UNAUTHENTICATED" }, { status: 401 }) };
+  const tournament = await tournamentById(env, tournamentId);
+  if (!tournament) return { response: json({ ok: false, code: "TOURNAMENT_NOT_FOUND" }, { status: 404 }) };
+  if (!(await hasTournamentOrganizerAccess(env, user.id, tournamentId, "finance"))) {
+    return { response: json({ ok: false, code: "FORBIDDEN" }, { status: 403 }) };
+  }
+  return { user, tournament };
+}
+
+async function adminRegistrations(tournamentId: string, request: Request, env: Env, access: AccessHelpers, organizerMode = false) {
+  const allowed = organizerMode
+    ? await organizerFinanceAccess(tournamentId, request, env, access)
+    : await adminAccess(tournamentId, request, env, access);
   if ("response" in allowed) return allowed.response;
   const rows = await env.HUAU_DB.prepare(
     `SELECT tr.id,tr.user_id as userId,tr.registration_number as registrationNumber,tr.status,tr.participant_count as participantCount,tr.price_scope as priceScope,
@@ -2656,6 +2670,11 @@ export async function handleRegistrationApi(request: Request, env: Env, access: 
     const response = await cancelRegistration(registrationId, request, env, access);
     if (response.ok) await invalidatePublicParticipantsForRegistration(env, registrationId);
     return response;
+  }
+
+  const organizerRegistrations = url.pathname.match(/^\/api\/organizer\/tournaments\/([^/]+)\/registrations$/);
+  if (organizerRegistrations && request.method === "GET") {
+    return adminRegistrations(decodeURIComponent(organizerRegistrations[1]!), request, env, access, true);
   }
 
   const admin = url.pathname.match(/^\/api\/admin\/tournaments\/([^/]+)\/registrations$/);

@@ -8,6 +8,7 @@ import {
 } from "@huau/core";
 import { cancelRegistrationForPaymentAdmin, recalcCompetitiveEntry, repairOnlineIndividualCompetitiveEntries } from "./registration";
 import { sendTransactionalEmailOnce } from "./email";
+import { hasTournamentOrganizerAccess } from "./tournament-organizer";
 
 type CurrentUser = { id: string; name: string; email: string };
 type AccessHelpers = {
@@ -1101,6 +1102,46 @@ async function rejectAttempt(env: Env, attemptId: string, actorUserId: string | 
   await addEvent(env, { tournamentId: row.tournamentId, orderId: row.orderId, attemptId, eventType: "payment.rejected", actorUserId, summary: "Pago/comprobante rechazado", metadata: { note } });
 }
 
+/** Organizer GET is deliberately separate from the broad administrative payments payload. */
+async function organizerPayments(tournamentId: string, request: Request, env: Env, access: AccessHelpers) {
+  const user = await access.requireUser(request, env);
+  if (!user) return json({ ok: false, code: "UNAUTHENTICATED" }, { status: 401 });
+  if (!(await hasTournamentOrganizerAccess(env, user.id, tournamentId, "finance"))) {
+    return json({ ok: false, code: "FORBIDDEN" }, { status: 403 });
+  }
+  const orders = await detailedOrders(env, `WHERE po.tournament_id=? AND po.status<>'cancelled'`, [tournamentId]);
+  const summary = orders.reduce((acc, order) => {
+    if (!["refunded", "cancelled"].includes(order.status)) acc.expectedMinor += order.totalAmountMinor;
+    acc.paidMinor += Math.max(0, order.amountPaidMinor - order.amountRefundedMinor);
+    acc.refundedMinor += order.amountRefundedMinor;
+    if (order.status === "pending_review") acc.reviewMinor += order.totalAmountMinor;
+    if (["draft", "awaiting_payment"].includes(order.status)) acc.pendingMinor += order.totalAmountMinor;
+    return acc;
+  }, { expectedMinor: 0, paidMinor: 0, refundedMinor: 0, reviewMinor: 0, pendingMinor: 0 });
+  // The shared order loader includes MP settings and refund details for administrators.
+  // Do NOT return those fields to the organizer.
+  const visible = orders.map((order) => ({
+    id: order.id,
+    tournamentId: order.tournamentId,
+    payerName: order.payerName,
+    payerEmail: order.payerEmail,
+    currency: order.currency,
+    totalAmountMinor: order.totalAmountMinor,
+    amountPaidMinor: order.amountPaidMinor,
+    amountRefundedMinor: order.amountRefundedMinor,
+    status: order.status,
+    selectedMethod: order.selectedMethod,
+    paidAt: order.paidAt,
+    items: order.items.map((item) => ({ id: item.id, label: item.label, amountMinor: item.amountMinor })),
+    attempts: order.attempts.map((attempt) => ({
+      id: attempt.id, method: attempt.method, status: attempt.status,
+      amountMinor: attempt.amountMinor, proofId: attempt.proofId,
+      proofName: attempt.proofName, submittedAt: attempt.submittedAt,
+    })),
+  }));
+  return json({ ok: true, orders: visible, summary });
+}
+
 async function adminPayments(tournamentId: string, request: Request, env: Env, access: AccessHelpers) {
   const allowed = await requireAdmin(tournamentId, request, env, access);
   if ("response" in allowed) return allowed.response;
@@ -1293,7 +1334,8 @@ async function proofFile(proofId: string, request: Request, env: Env, access: Ac
   if (!proof) return json({ ok: false, code: "PAYMENT_PROOF_NOT_FOUND" }, { status: 404 });
   const owns = proof.payerUserId === user.id;
   const admin = owns ? false : await access.isOrgAdmin(user.id, proof.organizerOrganizationId, env, request);
-  if (!owns && !admin) return json({ ok: false, code: "FORBIDDEN" }, { status: 403 });
+  const organizer = owns || admin ? false : await hasTournamentOrganizerAccess(env, user.id, proof.tournamentId, "finance");
+  if (!owns && !admin && !organizer) return json({ ok: false, code: "FORBIDDEN" }, { status: 403 });
   const object = await env.HUAU_ASSETS.get(proof.objectKey);
   if (!object) return json({ ok: false, code: "PAYMENT_PROOF_MISSING" }, { status: 404 });
   return new Response(object.body, {
@@ -1585,6 +1627,11 @@ export async function handlePaymentApi(request: Request, env: Env, access: Acces
   if (cancelCheckout && request.method === "POST") return cancelMercadoPagoCheckout(decodeURIComponent(cancelCheckout[1]!), request, env, access);
   const proofRead = url.pathname.match(/^\/api\/payment-proofs\/([^/]+)$/);
   if (proofRead && request.method === "GET") return proofFile(decodeURIComponent(proofRead[1]!), request, env, access);
+
+  const organizerPaymentsRoute = url.pathname.match(/^\/api\/organizer\/tournaments\/([^/]+)\/payments$/);
+  if (organizerPaymentsRoute && request.method === "GET") {
+    return organizerPayments(decodeURIComponent(organizerPaymentsRoute[1]!), request, env, access);
+  }
 
   const admin = url.pathname.match(/^\/api\/admin\/tournaments\/([^/]+)\/payments$/);
   if (admin && request.method === "GET") return adminPayments(decodeURIComponent(admin[1]!), request, env, access);
