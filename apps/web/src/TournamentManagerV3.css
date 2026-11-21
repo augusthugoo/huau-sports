@@ -2,7 +2,7 @@
    A light, complete admin skin derived from LandingV2's Montserrat / paper / ink system.
    All selectors are explicitly scoped. TV fullscreen and token operator do not use .huau-console-v3.
 */
-@import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&display=swap");
+/* Montserrat self-hosted by styles.css */
 .huau-console-v3{--h3-paper:#f2efe8;--h3-surface:#fffefa;--h3-ink:#11110f;--h3-muted:#706b63;--h3-border:#d8d1c5;--h3-soft:#e8e2d8;min-height:100vh;background:var(--h3-paper);color:var(--h3-ink);font-family:Montserrat,Inter,ui-sans-serif,system-ui,sans-serif;font-weight:400;color-scheme:light;-webkit-font-smoothing:antialiased}
 .huau-console-v3 *,.huau-console-v3 *::before,.huau-console-v3 *::after{box-sizing:border-box}
 .huau-console-v3 button,.huau-console-v3 input,.huau-console-v3 select,.huau-console-v3 textarea{font-family:inherit}

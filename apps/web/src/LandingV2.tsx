@@ -131,10 +131,10 @@ export function Landing({
     image: journeyImages[index] ?? defaultLandingV2AssetUrls.journey1,
   }));
 
-  // Avoid a visible system-font -> Montserrat swap on the first language gate.
+  // Wait for the shared local font on every public landing visit.
   // Loading the font explicitly works even while the gate is held behind the splash.
   useEffect(() => {
-    if (!showLanguageGate) return;
+    // This also covers returning visitors who bypass the language gate.
     let active = true;
     let settled = false;
     const finish = (state: "ready" | "fallback") => {
@@ -144,7 +144,7 @@ export function Landing({
     };
     // Never block access indefinitely if the font host is unavailable.
     // If it times out, keep the stable fallback for this visit (no late swap).
-    const deadline = window.setTimeout(() => finish("fallback"), 3500);
+    const deadline = window.setTimeout(() => finish("fallback"), 7000);
     if (document.fonts?.load) {
       void document.fonts.load("400 56px Montserrat", "Elegí tu idioma. Español English")
         .then((faces) => finish(faces.length ? "ready" : "fallback"), () => finish("fallback"));
@@ -155,7 +155,7 @@ export function Landing({
       active = false;
       window.clearTimeout(deadline);
     };
-  }, [showLanguageGate]);
+  }, []);
 
   useEffect(() => {
     void (async () => {
@@ -441,9 +441,9 @@ export function Landing({
 
   const metricsVisible = Boolean((data?.metrics?.players ?? 0) || (data?.metrics?.matches ?? 0));
 
-  if (authenticationPending || !landingLoadSettled || !data || (showLanguageGate && languageFontState === "loading")) {
+  if (authenticationPending || !landingLoadSettled || !data || languageFontState === "loading") {
     return (
-      <main className="landing-v2 lv2-boot" aria-busy={authenticationPending || !landingLoadSettled || (showLanguageGate && languageFontState === "loading")}>
+      <main className="landing-v2 lv2-boot" aria-busy={authenticationPending || !landingLoadSettled || languageFontState === "loading"}>
         <div className="lv2-boot-screen">
           <img src="/huau-logo.png" alt="HUAU" />
           {landingLoadSettled && !data && (

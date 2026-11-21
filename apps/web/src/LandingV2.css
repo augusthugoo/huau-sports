@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&display=swap");
+/* Montserrat self-hosted by styles.css */
 .landing-v2{--lv2-ink:#090909;--lv2-paper:#f2efe8;--lv2-paper-2:#e7e2d7;--lv2-line:rgba(9,9,9,.14);--lv2-header:82px;--lv2-ease:cubic-bezier(.22,.75,.18,1);min-height:100vh;overflow-x:clip;background:var(--lv2-paper);color:var(--lv2-ink);font-family:Montserrat,Inter,ui-sans-serif,system-ui,sans-serif;font-weight:400;-webkit-font-smoothing:antialiased}
 .landing-v2 *{box-sizing:border-box}.landing-v2 button,.landing-v2 input,.landing-v2 select,.landing-v2 textarea{font:inherit}.landing-v2 button{cursor:pointer}.landing-v2 img,.landing-v2 video{display:block;max-width:100%}.landing-v2.is-language-open>*:not(.lv2-language-gate){pointer-events:none}
 .lv2-shell{width:min(1420px,calc(100% - 8.4vw));margin:0 auto}.lv2-arrow-icon{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
