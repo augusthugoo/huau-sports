@@ -18,6 +18,7 @@ import { handleTournamentDayApi } from "./tournament-day";
 import { handleTournamentDayPublicApi } from "./tournament-day-public";
 import { handleLandingApi } from "./landing";
 import { handlePlatformUsersApi } from "./platform-users";
+import { handleTournamentOrganizerApi } from "./tournament-organizer";
 
 const json = (body: unknown, init: ResponseInit = {}) =>
   new Response(JSON.stringify(body), {
@@ -596,6 +597,12 @@ export default {
       isPlatformAdmin,
     });
     if (platformUsersResponse) return platformUsersResponse;
+
+    const tournamentOrganizerResponse = await handleTournamentOrganizerApi(request, env, url, {
+      requireUser,
+      isPlatformAdmin,
+    });
+    if (tournamentOrganizerResponse) return tournamentOrganizerResponse;
 
     const tournamentDayResponse = await handleTournamentDayApi(request, env, url, {
       requireUser,

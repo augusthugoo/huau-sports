@@ -308,6 +308,42 @@ export const tournaments = sqliteTable(
   ],
 );
 
+// Tournament-scoped organizer: ONE active/reserved email per tournament.
+// Access is verified against Better Auth email_verified, never org_admin.
+export const tournamentOrganizers = sqliteTable(
+  "tournament_organizers",
+  {
+    tournamentId: text("tournament_id").primaryKey().references(() => tournaments.id, { onDelete: "cascade" }),
+    organizerEmail: text("organizer_email").notNull(),
+    organizerUserId: text("organizer_user_id").references(() => user.id, { onDelete: "set null" }),
+    dayEnabled: integer("day_enabled", { mode: "boolean" }).notNull().default(false),
+    status: text("status", { enum: ["active", "revoked"] }).notNull().default("active"),
+    assignedByUserId: text("assigned_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    index("tournament_organizers_email_status_idx").on(table.organizerEmail, table.status),
+    index("tournament_organizers_user_status_idx").on(table.organizerUserId, table.status),
+  ],
+);
+
+export const tournamentOrganizerAudit = sqliteTable(
+  "tournament_organizer_audit",
+  {
+    id: text("id").primaryKey(),
+    tournamentId: text("tournament_id").notNull().references(() => tournaments.id, { onDelete: "cascade" }),
+    actorUserId: text("actor_user_id").references(() => user.id, { onDelete: "set null" }),
+    action: text("action", {
+      enum: ["assigned", "reassigned", "refreshed", "reactivated", "revoked", "day_enabled", "day_disabled"],
+    }).notNull(),
+    oldEmail: text("old_email"),
+    newEmail: text("new_email"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [index("tournament_organizer_audit_tournament_idx").on(table.tournamentId, table.createdAt)],
+);
+
 export const tournamentCategories = sqliteTable(
   "tournament_categories",
   {
