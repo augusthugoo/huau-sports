@@ -9,6 +9,7 @@ type Props = {
   tournamentId: string;
   locale: Locale;
   go: (path: string) => void;
+  platformAdmin: boolean;
 };
 
 type CoreResponse = {
@@ -59,7 +60,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return payload;
 }
 
-export function TournamentHub({ organizationId, tournamentId, locale, go }: Props) {
+export function TournamentHub({ organizationId, tournamentId, locale, go, platformAdmin }: Props) {
   const [core, setCore] = useState<CoreResponse | null>(null);
   const [dayState, setDayState] = useState<DayStateResponse | null>(null);
   const [hasLocalSession, setHasLocalSession] = useState(false);
@@ -173,6 +174,7 @@ export function TournamentHub({ organizationId, tournamentId, locale, go }: Prop
 
   return (
     <TournamentManagerHome
+      platformAdmin={platformAdmin}
       locale={locale}
       go={go}
       organizationId={organizationId}

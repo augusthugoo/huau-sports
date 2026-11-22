@@ -1,5 +1,6 @@
 import type { Locale } from "./i18n";
 import { managerUrl } from "./TournamentManagerNav";
+import { TournamentOrganizerAssignment } from "./TournamentOrganizerAssignment";
 
 const tr = (locale: Locale, es: string, en: string) => locale === "es" ? es : en;
 type Go = (path: string) => void;
@@ -7,10 +8,10 @@ type DayState = { hasOperatorAccess: boolean; hasPublishedSnapshot: boolean; pub
 export type LocalManagerSummary = { dirty: boolean; updatedAt: number; structureRevision: number; liveRevision: number; structureDirty: number; liveDirty: number };
 
 export function TournamentManagerHome({
-  locale, go, organizationId, tournamentId, tournament, categoriesCount, playerCount, hasLocalSession,
+  locale, go, organizationId, tournamentId, platformAdmin, tournament, categoriesCount, playerCount, hasLocalSession,
   localStatus, localReadFailed, dayState, dayStateReadFailed, operatorLink, busy, error, notice, onCreateAccess, onRevokeAccess,
 }: {
-  locale: Locale; go: Go; organizationId: string; tournamentId: string;
+  locale: Locale; go: Go; organizationId: string; tournamentId: string; platformAdmin?: boolean;
   tournament: { name: string; slug: string; sport: string; status: string; startAt: number; endAt: number | null; courtCount: number; workingRevision: number };
   categoriesCount: number; playerCount: number; hasLocalSession: boolean; localStatus: LocalManagerSummary | null; localReadFailed: boolean;
   dayState: DayState | null; dayStateReadFailed: boolean; operatorLink: string; busy: string; error: string; notice: string;
@@ -48,6 +49,7 @@ export function TournamentManagerHome({
         </div>
         <p className="h3-status-note">{tr(locale,"Estructura pública y resultados públicos se publican de forma independiente desde Publicación y cierre.","Public structure and live results are published separately from Publish & closeout.")}</p>
       </section>
+      {platformAdmin && <TournamentOrganizerAssignment tournamentId={tournamentId} locale={locale} />}
       <details className="h3-operator"><summary>{tr(locale,"Acceso operativo compartido", "Shared operator access")} <span>+</span></summary>
         <div className="h3-operator-content"><p>{tr(locale,"Este enlace da acceso a la operación de Tournament Day. No habilita pagos ni equivale a la futura cuenta limitada del organizador.","This link grants Tournament Day operation, not payment access or a future organizer account.")}</p>
           {operatorLink ? <label>{tr(locale,"Enlace generado","Generated link")}<input readOnly value={operatorLink} onFocus={(e) => e.currentTarget.select()} /></label> : null}

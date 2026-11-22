@@ -5,6 +5,7 @@ import { detectLocale, t } from "./i18n";
 import type { Locale } from "./i18n";
 import { TournamentParityWorkspace } from "./TournamentParityWorkspace";
 import { TournamentHub } from "./TournamentHub";
+import { TournamentOrganizerConsole } from "./TournamentOrganizerConsole";
 import { TournamentDayWorkspace } from "./TournamentDayWorkspace";
 import { MyTournamentRegistrations } from "./TournamentRegistration";
 import { MyTournamentPayments } from "./TournamentPayments";
@@ -216,6 +217,13 @@ export function App() {
 
   if (path === "/app/registrations") return <Shell locale={locale} go={go} me={me}><div className="player-area-v3"><MyTournamentPayments locale={locale}/><MyTournamentRegistrations locale={locale} go={go} onProfileSaved={refreshMe} /></div></Shell>;
 
+  if (path === "/organizer") return <Shell locale={locale} go={go} me={me}><TournamentOrganizerConsole locale={locale} go={go} /></Shell>;
+  const organizerTournamentRoute = path.match(/^\/organizer\/tournaments\/([^/]+)$/);
+  if (organizerTournamentRoute) {
+    const tournamentId = decodeURIComponent(organizerTournamentRoute[1]!);
+    return <Shell locale={locale} go={go} me={me}><TournamentOrganizerConsole key={tournamentId} locale={locale} go={go} tournamentId={tournamentId} /></Shell>;
+  }
+
   const tournamentManage = path.match(/^\/admin\/organizations\/([^/]+)\/tournaments\/([^/]+)\/manage$/);
   if (tournamentManage) {
     return <Shell locale={locale} go={go} me={me}><TournamentParityWorkspace organizationId={decodeURIComponent(tournamentManage[1]!)} tournamentId={decodeURIComponent(tournamentManage[2]!)} locale={locale} go={go} mode="admin" /></Shell>;
@@ -228,7 +236,7 @@ export function App() {
   }
   const tournamentHub = path.match(/^\/admin\/organizations\/([^/]+)\/tournaments\/([^/]+)$/);
   if (tournamentHub) {
-    return <Shell locale={locale} go={go} me={me}><TournamentHub organizationId={decodeURIComponent(tournamentHub[1]!)} tournamentId={decodeURIComponent(tournamentHub[2]!)} locale={locale} go={go} /></Shell>;
+    return <Shell locale={locale} go={go} me={me}><TournamentHub organizationId={decodeURIComponent(tournamentHub[1]!)} tournamentId={decodeURIComponent(tournamentHub[2]!)} locale={locale} go={go} platformAdmin={Boolean(me?.platformAdmin)} /></Shell>;
   }
   const tournamentsRoute = path.match(/^\/admin\/organizations\/([^/]+)\/tournaments$/);
   if (tournamentsRoute) {
@@ -250,7 +258,7 @@ function HuauBrand({ onClick, center = false }: { onClick?: () => void; center?:
 
 function Shell({ children, locale, go, me }: { children: React.ReactNode; locale: Locale; go: (path: string) => void; me?: Me | null }) {
   return (
-    <div className={`app-shell${/^\/(admin|platform)(\/|$)/.test(window.location.pathname) ? " huau-console-v3" : ""}`}>
+    <div className={`app-shell${/^\/(admin|platform|organizer)(\/|$)/.test(window.location.pathname) ? " huau-console-v3" : ""}`}>
       <PlayerPublicHeader
         locale={locale}
         go={go}
@@ -501,6 +509,14 @@ function MyHuau({locale,setLocale,go,me,loading,refreshMe}:{locale:Locale;setLoc
   const [profileBusy,setProfileBusy]=useState(false);
   const [profileMessage,setProfileMessage]=useState("");
   const [profileEditing,setProfileEditing]=useState(false);
+  const [hasOrganizerTournaments,setHasOrganizerTournaments]=useState(false);
+  useEffect(()=>{
+    let active=true;
+    void api<{ok:true;tournaments:Array<{id:string}>}>("/api/me/organizer-tournaments")
+      .then((data)=>{if(active)setHasOrganizerTournaments(data.tournaments.length>0);})
+      .catch(()=>{if(active)setHasOrganizerTournaments(false);});
+    return ()=>{active=false;};
+  },[]);
 
   void setLocale;
 
@@ -597,6 +613,9 @@ function MyHuau({locale,setLocale,go,me,loading,refreshMe}:{locale:Locale;setLoc
             <button className="light" onClick={()=>go("/app/registrations")}>
               {copy(locale,"Mis inscripciones","My registrations")}
             </button>
+            {hasOrganizerTournaments && <button className="ghost" onClick={()=>go("/organizer")}>
+              {copy(locale,"Mis torneos como organizador","My organizer tournaments")}
+            </button>}
             <button className="ghost" onClick={()=>setProfileEditing(value=>!value)}>
               {profileEditing
                 ? copy(locale,"Cerrar edición","Close editing")

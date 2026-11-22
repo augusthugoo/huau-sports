@@ -1,0 +1,32 @@
+/* HUAU Organizer C — uses the existing authenticated Tournament Manager V3 light tokens. */
+.huau-console-v3 .organizer-console { max-width:1360px; }
+.huau-console-v3 .organizer-console .organizer-heading { display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:16px; }
+.huau-console-v3 .organizer-console .organizer-heading h1 { font-size:clamp(2rem,4vw,3.4rem);margin-bottom:8px; }
+.huau-console-v3 .organizer-console .organizer-public-link { display:inline-flex;align-items:center;justify-content:center;text-decoration:none;white-space:normal;max-width:100%;padding:10px 18px;border:1px solid var(--h3-border);border-radius:999px;background:var(--h3-surface);color:var(--h3-ink);font-size:12px;font-weight:600; }
+.huau-console-v3 .organizer-console .organizer-stack { display:grid;gap:18px; }
+.huau-console-v3 .organizer-console .organizer-section-head { display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap; }
+.huau-console-v3 .organizer-console .organizer-section-head h2 { font-size:clamp(1.5rem,2.3vw,2.2rem);font-weight:400;letter-spacing:-.04em;margin:0 0 5px; }
+.huau-console-v3 .organizer-console .organizer-filter-row { display:flex;gap:12px;flex-wrap:wrap; }
+.huau-console-v3 .organizer-console .organizer-filter-row label { display:grid;gap:6px;flex:1 1 200px;min-width:0; }
+.huau-console-v3 .organizer-console .organizer-card-stack { display:grid;gap:12px;min-width:0; }
+.huau-console-v3 .organizer-console .organizer-person-card { display:grid;gap:13px;min-width:0; }
+.huau-console-v3 .organizer-console .organizer-person-card .payment-order-head { align-items:flex-start;min-width:0; }
+.huau-console-v3 .organizer-console .organizer-person-card .payment-order-head>div { min-width:0;overflow-wrap:anywhere; }
+.huau-console-v3 .organizer-console .organizer-person-card .payment-order-head>div:first-child { flex:1 1 auto; }
+.huau-console-v3 .organizer-console .organizer-person-card .payment-order-head>div:last-child { align-items:flex-end;text-align:right; }
+.huau-console-v3 .organizer-console .organizer-person-card .payment-order-head strong { font-size:15px;color:var(--h3-ink); }
+.huau-console-v3 .organizer-console .organizer-card-actions { display:flex;gap:8px;align-items:center;flex-wrap:wrap; }
+.huau-console-v3 .organizer-console .organizer-inline-form { display:grid;gap:12px;background:var(--h3-paper);border:1px solid var(--h3-border);border-radius:10px;padding:16px; }
+.huau-console-v3 .organizer-console .organizer-inline-form label { display:grid;gap:6px; }
+.huau-console-v3 .organizer-console .organizer-proof { display:grid;gap:10px;border-top:1px solid var(--h3-border);padding-top:12px;overflow-wrap:anywhere; }
+.huau-console-v3 .organizer-console .organizer-proof>span { font-size:12px;color:var(--h3-muted); }
+.huau-console-v3 .organizer-console .organizer-kpis { grid-template-columns:repeat(4,minmax(0,1fr)); }
+.huau-console-v3 .organizer-console .organizer-kpis>div { background:var(--h3-surface)!important;color:var(--h3-ink)!important;border:1px solid var(--h3-border)!important;border-radius:10px;min-width:0;overflow-wrap:anywhere; }
+.huau-console-v3 .organizer-console .organizer-kpis :is(span,strong) { color:var(--h3-ink); }
+.huau-console-v3 .organizer-console .payment-status { border-color:var(--h3-border);background:var(--h3-paper);color:var(--h3-ink); }
+.huau-console-v3 .organizer-console .tournament-card { width:100%;padding:20px;display:flex;align-items:center;justify-content:space-between;gap:20px;text-align:left;background:var(--h3-surface);color:var(--h3-ink);border:1px solid var(--h3-border);border-radius:10px;cursor:pointer; }
+.huau-console-v3 .organizer-console .tournament-card h3 { color:var(--h3-ink);font-size:20px;font-weight:500; }
+.huau-console-v3 .organizer-console .tournament-card p { color:var(--h3-muted); }
+.huau-console-v3 .organizer-console .organizer-public-link:hover,.huau-console-v3 .organizer-console .tournament-card:hover { border-color:var(--h3-ink); }
+@media(max-width:760px){.huau-console-v3 .organizer-console .organizer-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.huau-console-v3 .organizer-console .organizer-person-card .payment-order-head{flex-wrap:wrap}.huau-console-v3 .organizer-console .organizer-person-card .payment-order-head>div:last-child{align-items:flex-start;text-align:left}}
+@media(max-width:480px){.huau-console-v3 .organizer-console .organizer-kpis{grid-template-columns:1fr}.huau-console-v3 .organizer-console .organizer-filter-row{display:grid}.huau-console-v3 .organizer-console .tournament-card{display:grid}.huau-console-v3 .organizer-console .organizer-card-actions>*{flex:1 1 auto}}
