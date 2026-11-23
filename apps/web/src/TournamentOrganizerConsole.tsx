@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import type { Locale } from "./i18n";
+import { TournamentOrganizerDay } from "./TournamentOrganizerDay";
 import "./TournamentOrganizerConsole.css";
 
 export type OrganizerTournament = {
@@ -54,7 +55,7 @@ export function TournamentOrganizerConsole({ locale, go, tournamentId }: {
   locale: Locale; go: (path: string) => void; tournamentId?: string;
 }) {
   const [tournaments, setTournaments] = useState<OrganizerTournament[] | null>(null);
-  const [section, setSection] = useState<"registrations" | "payments" | "published">("registrations");
+  const [section, setSection] = useState<"registrations" | "payments" | "published" | "day">(() => new URLSearchParams(window.location.search).get("view") === "tv" ? "day" : "registrations");
   const [registrations, setRegistrations] = useState<RegistrationResponse | null>(null);
   const [payments, setPayments] = useState<PaymentsResponse | null>(null);
   const [listError, setListError] = useState("");
@@ -147,13 +148,14 @@ export function TournamentOrganizerConsole({ locale, go, tournamentId }: {
   if (!tournaments) return <main className="dashboard organizer-console"><section className="panel">{tr(locale, "Comprobando acceso…", "Checking access…")}</section></main>;
   if (!selected) return <main className="dashboard organizer-console"><section className="panel"><h2>{tr(locale, "Torneo no asignado", "Tournament not assigned")}</h2><p>{tr(locale, "Este torneo no figura entre tus asignaciones activas.", "This tournament is not among your active assignments.")}</p><button className="ghost" onClick={() => go("/organizer")}>{tr(locale, "Volver a mis torneos", "Back to my tournaments")}</button></section></main>;
 
+  if (new URLSearchParams(window.location.search).get("view") === "tv" && selected.canOperateDay) return <TournamentOrganizerDay locale={locale} tournamentId={selected.id} />;
   const submitted = payments?.orders.filter((order) => order.attempts.some((attempt) => attempt.status === "submitted")) ?? [];
   return <main className="dashboard organizer-console">
     <button className="section-back" onClick={() => go("/organizer")}>← {tr(locale, "Mis torneos", "My tournaments")}</button>
     <section className="dashboard-head organizer-heading"><div><div className="eyebrow">HUAU / {selected.organizationName}</div><h1>{selected.name}</h1><p>{date(selected.startAt, locale)} · {selected.status.replaceAll("_", " ")}</p></div><a href={`/tournaments/${encodeURIComponent(selected.slug)}`} target="_blank" rel="noreferrer" className="ghost organizer-public-link">{tr(locale, "Ver página pública", "View public page")}</a></section>
     <div className="admin-module-strip" role="tablist" aria-label={tr(locale, "Secciones del organizador", "Organizer sections")}>
-      {(["registrations", "payments", "published"] as const).map((tab) => <button type="button" role="tab" aria-selected={section === tab} className={section === tab ? "active" : ""} key={tab} onClick={() => { setSection(tab); setError(""); setNotice(""); }}>
-        {tab === "registrations" ? tr(locale, "Inscripciones", "Registrations") : tab === "payments" ? tr(locale, "Pagos y comprobantes", "Payments & proofs") : tr(locale, "Información publicada", "Published information")}
+      {(["registrations", "payments", "published", ...(selected.canOperateDay ? ["day" as const] : [])] as const).map((tab) => <button type="button" role="tab" aria-selected={section === tab} className={section === tab ? "active" : ""} key={tab} onClick={() => { setSection(tab); setError(""); setNotice(""); }}>
+        {tab === "registrations" ? tr(locale, "Inscripciones", "Registrations") : tab === "payments" ? tr(locale, "Pagos y comprobantes", "Payments & proofs") : tab === "published" ? tr(locale, "Información publicada", "Published information") : tr(locale, "Día de torneo", "Tournament day")}
       </button>)}
     </div>
     {notice && <p className="notice-box" role="status">{notice}</p>}
@@ -183,6 +185,7 @@ export function TournamentOrganizerConsole({ locale, go, tournamentId }: {
         {manualOrderId === order.id && <form className="organizer-inline-form" onSubmit={(event) => { event.preventDefault(); void mutate(order.id, `/api/organizer/payment-orders/${encodeURIComponent(order.id)}/mark-paid`, { method: manualMethod, note: manualNote.trim() }); }}><label>{tr(locale, "Medio recibido", "Received method")}<select value={manualMethod} onChange={(event) => setManualMethod(event.target.value as "cash" | "bank_transfer")}><option value="bank_transfer">{tr(locale, "Transferencia", "Bank transfer")}</option><option value="cash">{tr(locale, "Efectivo", "Cash")}</option></select></label><label>{tr(locale, "Observación (opcional)", "Note (optional)")}<input value={manualNote} onChange={(event) => setManualNote(event.target.value)} /></label><div className="organizer-card-actions"><button className="light small" disabled={!!busy}>{tr(locale, "Confirmar cobro", "Confirm payment")}</button><button type="button" className="ghost small" onClick={() => setManualOrderId("")}>{tr(locale, "Cancelar", "Cancel")}</button></div></form>}
       </article>)}</div>
     </section>}
+    {section === "day" && selected.canOperateDay && <TournamentOrganizerDay locale={locale} tournamentId={selected.id} />}
     {section === "published" && <section className="organizer-stack"><article className="panel"><div className="eyebrow">HUAU / PUBLIC</div><h2>{tr(locale, "Grupos, cuadros y cronograma", "Groups, brackets & schedule")}</h2><p>{tr(locale, "Ves la misma información publicada que los jugadores. No podés cambiar grupos, formatos ni cronogramas desde este panel.", "You see the same published information as players. Groups, formats and schedules cannot be edited here.")}</p><a className="ghost organizer-public-link" href={`/tournaments/${encodeURIComponent(selected.slug)}`} target="_blank" rel="noreferrer">{tr(locale, "Abrir vista pública", "Open public view")}</a></article><article className="panel"><h2>{tr(locale, "Día de torneo", "Tournament day")}</h2><p>{selected.canOperateDay ? tr(locale, "HUAU habilitó tu permiso de jornada. La carga segura de resultados y WO se conectará en el Lote D.", "HUAU enabled your day permission. Safe result and walkover entry will be connected in Lot D.") : tr(locale, "La carga de resultados todavía no está habilitada para esta cuenta.", "Result entry is not yet enabled for this account.")}</p></article></section>}
   </main>;
 }

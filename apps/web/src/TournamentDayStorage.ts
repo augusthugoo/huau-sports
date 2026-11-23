@@ -2,7 +2,7 @@ export type TournamentDaySession<TSnapshot = unknown> = {
   schemaVersion: 1;
   storageKey: string;
   tournamentId: string;
-  source: "admin" | "operator";
+  source: "admin" | "operator" | "organizer";
   dirty: boolean;
   updatedAt: number;
   publishedRevision: number;

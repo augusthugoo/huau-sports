@@ -333,3 +333,13 @@ export async function handleTournamentDayPublicApi(request: Request, env: Env, u
 
   return null;
 }
+
+/** For the authenticated Organizer Day service: publish only trusted server-built models. */
+export async function publishTrustedDayModel(env: Env, tournamentId: string, kind: "structure" | "live", model: unknown): Promise<Response> {
+  const tournament = await env.HUAU_DB.prepare(
+    `SELECT id,name,slug,sport,start_at as startAt,end_at as endAt,public_live as publicLive
+       FROM tournaments WHERE id=?`,
+  ).bind(tournamentId).first<{id:string;name:string;slug:string;sport:string;startAt:number;endAt:number|null;publicLive:number}>();
+  if (!tournament) return json({ok:false,code:"TOURNAMENT_NOT_FOUND"},{status:404});
+  return publishModel(env,tournament,kind,model);
+}

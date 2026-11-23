@@ -7,6 +7,11 @@ import {
 import { tournamentDayWorkspaceBundleForAdmin } from "./tournament-admin";
 import { tournamentDayTeamBundleForAdmin } from "./team-admin";
 import { dayOwnsPlayerCategory, dayOwnsTeamRoster } from "./tournament-day-ownership";
+import { hasTournamentOrganizerAccess } from "./tournament-organizer";
+import { cloneDay } from "../TournamentDayEngine";
+import { applyOrganizerResultOperations } from "../TournamentOrganizerDayOps";
+import { initializeReformSnapshot, buildPublicStructure, buildPublicLive, type TournamentDayReformSnapshot } from "../TournamentDayReformEngine";
+import { publishTrustedDayModel } from "./tournament-day-public";
 
 type CurrentUser = { id: string; name: string; email: string };
 type AccessHelpers = {
@@ -2028,6 +2033,86 @@ async function publishAdmin(
   });
 }
 
+/** Scoped organizer read & write boundary. Only result operations cross into the canonical snapshot. */
+async function organizerDayAuthorize(request: Request, env: Env, tournamentId: string, access: AccessHelpers) {
+  const user = await access.requireUser(request, env);
+  if (!user) return { response: json({ ok: false, code: "UNAUTHENTICATED" }, { status: 401 }) } as const;
+  if (!(await hasTournamentOrganizerAccess(env, user.id, tournamentId, "day"))) {
+    return { response: json({ ok: false, code: "FORBIDDEN" }, { status: 403 }) } as const;
+  }
+  return { user } as const;
+}
+async function organizerDayRead(request: Request, env: Env, tournamentId: string, mode: "state" | "bootstrap", access: AccessHelpers) {
+  const permit = await organizerDayAuthorize(request, env, tournamentId, access);
+  if ("response" in permit) return permit.response;
+  const state = await dayState(env, tournamentId);
+  if (mode === "state") return json({
+    ok: true, userId: permit.user.id, publishedRevision: Number(state?.publishedRevision ?? 0),
+    hasPublishedSnapshot: Boolean(state?.snapshotR2Key), publishedAt: state?.publishedAt ?? null,
+  });
+  if (!state?.snapshotR2Key) return json({ok:false,code:"TOURNAMENT_DAY_NOT_PUBLISHED"},{status:409});
+  try {
+    const bundle = await publishedSnapshotBundle(env, state);
+    // Do not expose private contact data via the sport operational snapshot.
+    bundle.snapshot.workspace.participants.players = bundle.snapshot.workspace.participants.players.map((player) => {
+      const copy = { ...player };
+      for (const key of ["contact", "email", "phone", "phoneNumber", "notes", "payment", "proof", "proofR2Key"]) delete copy[key];
+      return copy;
+    });
+    return json({ok:true,...bundle});
+  } catch (error) {
+    return json({ ok:false, code:error instanceof Error?error.message:"TOURNAMENT_DAY_SNAPSHOT_LOAD_FAILED" },{status:409});
+  }
+}
+async function organizerDayPublish(request: Request, env: Env, tournamentId: string, access: AccessHelpers) {
+  const permit = await organizerDayAuthorize(request, env, tournamentId, access);
+  if ("response" in permit) return permit.response;
+  const body = await request.json().catch(() => null) as { basePublishedRevision?: unknown; operations?: unknown } | null;
+  if (!body || !Number.isInteger(body.basePublishedRevision) || !Array.isArray(body.operations)) {
+    return json({ok:false,code:"ORGANIZER_DAY_INVALID_REQUEST"},{status:400});
+  }
+  const state = await dayState(env, tournamentId);
+  if (!state?.snapshotR2Key) return json({ok:false,code:"TOURNAMENT_DAY_NOT_PUBLISHED"},{status:409});
+  if (state.publishedRevision !== body.basePublishedRevision) {
+    return json({ok:false,code:"TOURNAMENT_DAY_PUBLISH_CONFLICT",serverPublishedRevision:state.publishedRevision},{status:409});
+  }
+  try {
+    const remote = await publishedSnapshotBundle(env, state);
+    const trustedSnapshot = applyOrganizerResultOperations(remote.snapshot, body.operations);
+    // Existing CAS handles a second operator publishing after the preceding check.
+    return publishWithOptionalFinalSync(env,{tournamentId,snapshot:trustedSnapshot,
+      actorUserId:permit.user.id,finalized:false,basePublishedRevision:state.publishedRevision});
+  } catch (error) {
+    return json({ok:false,code:error instanceof Error?error.message:"ORGANIZER_DAY_INVALID_OPERATIONS"},{status:409});
+  }
+}
+async function organizerDayPublishPublic(request: Request, env: Env, tournamentId: string, access: AccessHelpers) {
+  const permit = await organizerDayAuthorize(request, env, tournamentId, access);
+  if ("response" in permit) return permit.response;
+  const body = await request.json().catch(() => null) as {basePublishedRevision?:unknown}|null;
+  if (!body || !Number.isInteger(body.basePublishedRevision)) return json({ok:false,code:"ORGANIZER_DAY_INVALID_REQUEST"},{status:400});
+  const state = await dayState(env,tournamentId);
+  if (!state?.snapshotR2Key) return json({ok:false,code:"TOURNAMENT_DAY_NOT_PUBLISHED"},{status:409});
+  if (state.publishedRevision !== body.basePublishedRevision) return json({ok:false,code:"TOURNAMENT_DAY_PUBLISH_CONFLICT",serverPublishedRevision:state.publishedRevision},{status:409});
+  try {
+    const remote = await publishedSnapshotBundle(env,state);
+    const snapshot = initializeReformSnapshot(cloneDay(remote.snapshot) as TournamentDayReformSnapshot);
+    // The model is generated ONLY from server-owned checkpoint, never from arbitrary client JSON.
+    const structure = buildPublicStructure(snapshot);
+    const live = buildPublicLive(snapshot);
+    const newer = await dayState(env,tournamentId);
+    if (newer?.publishedRevision !== state.publishedRevision) return json({ok:false,code:"TOURNAMENT_DAY_PUBLISH_CONFLICT"},{status:409});
+    const structureResult = await publishTrustedDayModel(env,tournamentId,"structure",structure);
+    if (!structureResult.ok) return structureResult;
+    // A second model write is deliberate. If it fails, return error rather than claiming publication.
+    const liveResult = await publishTrustedDayModel(env,tournamentId,"live",live);
+    if (!liveResult.ok) return liveResult;
+    return json({ok:true,publishedRevision:state.publishedRevision,publishedAt:Date.now()});
+  } catch (error) {
+    return json({ok:false,code:error instanceof Error?error.message:"ORGANIZER_DAY_PUBLIC_FAILED"},{status:409});
+  }
+}
+
 async function operatorBootstrap(env: Env, token: string) {
   const state = await dayStateByToken(env, token);
   if (!state) {
@@ -2102,6 +2187,15 @@ export async function handleTournamentDayApi(
   url: URL,
   access: AccessHelpers,
 ): Promise<Response | null> {
+  const organizer = url.pathname.match(/^\/api\/organizer\/tournaments\/([^/]+)\/day-(state|bootstrap|publish|public)$/);
+  if (organizer) {
+    const id = decodeURIComponent(organizer[1]!);
+    const action = organizer[2]!;
+    if ((action==="state" || action==="bootstrap") && request.method==="GET") return organizerDayRead(request,env,id,action,access);
+    if (action==="publish" && request.method==="PUT") return organizerDayPublish(request,env,id,access);
+    if (action==="public" && request.method==="PUT") return organizerDayPublishPublic(request,env,id,access);
+    return json({ok:false,code:"METHOD_NOT_ALLOWED"},{status:405});
+  }
   const operator = url.pathname.match(
     /^\/api\/operate\/([^/]+)\/(bootstrap|state|publish)$/,
   );
