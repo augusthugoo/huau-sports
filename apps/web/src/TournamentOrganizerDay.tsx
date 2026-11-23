@@ -14,7 +14,7 @@ import "./TournamentDay.css";
 import "./TournamentDayEpic.css";
 import "./TournamentOrganizerDay.css";
 
-type Tab = "participants" | "groups" | "schedule" | "results" | "tv";
+type Tab = "participants" | "groups" | "schedule" | "results";
 type OrganizerSession = TournamentDaySession<TournamentDaySnapshot> & { baseSnapshot?: TournamentDaySnapshot; pendingOps?: OrganizerResultOperation[] };
 type PublishResponse = { ok: true; revision: number; publishedAt: number };
 type DayState = { ok: true; userId: string; publishedRevision: number; hasPublishedSnapshot: boolean; publishedAt: number | null };
@@ -36,7 +36,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 /** Scoped organizer console; each result is local until an explicit publish. */
 export function TournamentOrganizerDay({ locale, tournamentId }: { locale: Locale; tournamentId: string }) {
   const tvOnly = new URLSearchParams(window.location.search).get("view") === "tv";
-  const [tab, setTab] = useState<Tab>(tvOnly ? "tv" : "participants");
+  const [tab, setTab] = useState<Tab>("participants");
   const [session, setSession] = useState<OrganizerSession | null>(null);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
@@ -214,7 +214,7 @@ export function TournamentOrganizerDay({ locale, tournamentId }: { locale: Local
       <button className="ghost small" disabled={busy} onClick={() => void recover()}>{tr(locale,"Recuperar último checkpoint","Recover last checkpoint")}</button>
     </div>
     <div className="admin-module-strip" role="tablist" aria-label={tr(locale,"Vistas deportivas","Sport views")}>
-      {(["participants","groups","schedule","results","tv"] as const).map((key) => <button key={key} type="button" role="tab" aria-selected={tab===key} className={tab===key?"active":""} onClick={() => setTab(key)}>{key==="participants"?tr(locale,"Participantes","Participants"):key==="groups"?tr(locale,"Grupos y cuadros","Groups & brackets"):key==="schedule"?tr(locale,"Cronograma","Schedule"):key==="results"?tr(locale,"Resultados","Results"):"TV"}</button>)}
+      {(["participants","groups","schedule","results"] as const).map((key) => <button key={key} type="button" role="tab" aria-selected={tab===key} className={tab===key?"active":""} onClick={() => setTab(key)}>{key==="participants"?tr(locale,"Participantes","Participants"):key==="groups"?tr(locale,"Grupos y cuadros","Groups & brackets"):key==="schedule"?tr(locale,"Cronograma","Schedule"):tr(locale,"Resultados","Results")}</button>)}
     </div>
     {tab === "participants" && <div className="organizer-day-stack">
       <div className="organizer-day-tools"><label>{tr(locale,"Buscar nombre","Search name")}<input type="search" value={search} onChange={(e)=>setSearch(e.target.value)}/></label><label>{tr(locale,"Categoría","Category")}<select value={categoryFilter} onChange={(e)=>setCategoryFilter(e.target.value)}><option value="">{tr(locale,"Todas","All")}</option>{categories.map((c)=><option key={text(c.id)} value={text(c.id)}>{text(c.name)}</option>)}</select></label></div>
@@ -242,7 +242,6 @@ export function TournamentOrganizerDay({ locale, tournamentId }: { locale: Local
         renderTeamRubber={(category, encounter, match) => <OrganizerTeamForm key={text(match.id)} category={category} encounter={encounter} match={match} locale={locale} disabled={busy} onSave={submitResult} />}
       />
     </div>}
-    {tab === "tv" && <EpicTournamentDayTV snapshot={snapshot} locale={locale} embedded />}
     <p className="muted organizer-day-footer">{tr(locale,"Checkpoint compartido","Shared checkpoint")}: {session.publishedRevision} · {tr(locale,"Guardado en este navegador","Saved in this browser")}: {new Date(session.updatedAt).toLocaleString(locale==="es"?"es-UY":"en-US")}. {tr(locale,"Los resultados se guardan localmente. La estructura no se puede editar.","Results are local until published. Structure cannot be edited.")}</p>
   </section>;
 }

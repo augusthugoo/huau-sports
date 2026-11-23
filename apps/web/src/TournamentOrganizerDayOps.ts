@@ -58,7 +58,7 @@ export function applyOrganizerResultOperations(base: TournamentDaySnapshot, valu
     if (op.kind === "standard") {
       const competition = (next.workspace.standard.competitions as any[]).find((c) => String(c.categoryId) === op.categoryId);
       const target = competition?.encounters?.find((m: any) => String(m.id) === op.encounterId);
-      if (!target || !target.entryA || !target.entryB || ["bye", "skipped", "pending"].includes(String(target.status))) {
+      if (!target || !target.entryA || !target.entryB || ["bye", "skipped"].includes(String(target.status))) {
         throw new Error("ORGANIZER_DAY_MATCH_NOT_READY");
       }
       // No destructive cascade; completed finals are protected by the existing engine.
