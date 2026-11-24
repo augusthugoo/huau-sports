@@ -15,7 +15,7 @@ type Registration = {
   entryType: "individual" | "pair" | "team"; members?: Array<{ name: string }>;
   status: string; finalAmountMinor: number; baseAmountMinor: number;
   discountMinor: number; paidAmountMinor?: number; refundedAmountMinor?: number;
-  currency: string | null; covered?: boolean;
+  currency: string | null; covered?: boolean; isManual?: boolean;
 };
 type Attempt = { id: string; method: string; status: string; amountMinor: number; proofId: string | null; proofName: string | null };
 type Order = { id: string; payerName: string; payerEmail: string | null; currency: string;
@@ -31,8 +31,8 @@ type ListResponse = { ok: true; tournaments: OrganizerTournament[] };
 const tr = (locale: Locale, es: string, en: string) => locale === "es" ? es : en;
 export const formatOrganizerMoney = (minor: number, currency: string | null) =>
   `${new Intl.NumberFormat("es-UY", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(minor / 100)} ${currency || "UYU"}`;
-export const canOfferOrganizerCourtesy = (registration: Pick<Registration, "entryType" | "status" | "finalAmountMinor" | "paidAmountMinor" | "refundedAmountMinor" | "covered">) =>
-  registration.entryType !== "team" && !registration.covered &&
+export const canOfferOrganizerCourtesy = (registration: Pick<Registration, "entryType" | "status" | "finalAmountMinor" | "paidAmountMinor" | "refundedAmountMinor" | "covered" | "isManual">) =>
+  registration.entryType !== "team" && !registration.covered && !registration.isManual &&
   !["cancelled", "rejected"].includes(registration.status) &&
   registration.finalAmountMinor > 0 && registration.status !== "confirmed" &&
   (registration.paidAmountMinor ?? 0) === 0 && (registration.refundedAmountMinor ?? 0) === 0;
@@ -166,7 +166,7 @@ export function TournamentOrganizerConsole({ locale, go, tournamentId }: {
       {!registrations && !error && <article className="panel">{tr(locale, "Cargando inscripciones…", "Loading registrations…")}</article>}
       {registrations && activeRegistrations.length === 0 && <article className="panel"><p>{tr(locale, "No hay inscripciones para este filtro.", "No registrations match this filter.")}</p></article>}
       <div className="organizer-card-stack">{activeRegistrations.map((registration) => <article className="panel organizer-person-card" key={registration.id}>
-        <div className="payment-order-head"><div><span className="eyebrow">#{registration.registrationNumber} · {registration.categoryName}</span><strong>{registrationName(registration)}</strong><span>{registration.userName} · {registration.userEmail}</span></div><div><span className={`payment-status status-${registration.status}`}>{registration.status.replaceAll("_", " ")}</span><strong>{money(registration.finalAmountMinor, registration.currency)}</strong></div></div>
+        <div className="payment-order-head"><div><span className="eyebrow">{registration.isManual ? tr(locale,"Manual","Manual") : `#${registration.registrationNumber}`} · {registration.categoryName}</span><strong>{registrationName(registration)}</strong><span>{registration.userName} · {registration.userEmail}</span></div><div><span className={`payment-status status-${registration.status}`}>{registration.status.replaceAll("_", " ")}</span><strong>{money(registration.finalAmountMinor, registration.currency)}</strong></div></div>
         {registration.members && registration.members.length > 0 && <p className="muted">{registration.members.map((member) => member.name).join(" / ")}</p>}
         <div className="organizer-card-actions">{canOfferOrganizerCourtesy(registration) && <button className="ghost small" disabled={!!busy} onClick={() => { setCourtesyId(registration.id); setCourtesyReason(""); }}>{tr(locale, "Exonerar por cortesía", "Grant courtesy")}</button>}</div>
         {courtesyId === registration.id && <form className="organizer-inline-form" onSubmit={(event: FormEvent<HTMLFormElement>) => { event.preventDefault(); void mutate(registration.id, `/api/organizer/registrations/${encodeURIComponent(registration.id)}/courtesy`, { kind: "courtesy", note: courtesyReason.trim() }); }}><label>{tr(locale, "Motivo de la cortesía", "Courtesy reason")}<textarea required minLength={3} value={courtesyReason} onChange={(event) => setCourtesyReason(event.target.value)} placeholder={tr(locale, "Ej.: invitación de la organización", "E.g. organizer invitation")}/></label><div className="organizer-card-actions"><button type="submit" className="light small" disabled={!!busy || courtesyReason.trim().length < 3}>{tr(locale, "Confirmar cortesía", "Confirm courtesy")}</button><button type="button" className="ghost small" onClick={() => setCourtesyId("")}>{tr(locale, "Cancelar", "Cancel")}</button></div></form>}

@@ -14,6 +14,7 @@ import {
 } from "@huau/core";
 import { sendTransactionalEmailOnce } from "./email";
 import { hasTournamentOrganizerAccess } from "./tournament-organizer";
+import { assistedCandidates, assistedRegistrationViews, createAssistedRequest, handleAssistedAdminApi } from "./assisted-manual";
 
 type CurrentUser = { id: string; name: string; email: string };
 type AccessHelpers = {
@@ -1127,6 +1128,19 @@ async function buildPublicParticipantsSnapshot(
     }>(),
   ]);
 
+  // Include tournament-only assisted entrants, including free pair/team players.
+  // Existing competitive entries already contain the others; deduplicate by person ID.
+  const assistedPeople = await env.HUAU_DB.prepare(
+    `SELECT pc.category_id as categoryId,tc.name as categoryName,tc.entry_type as entryType,
+            pp.display_name as name,pp.organization_person_id as personId
+       FROM tournament_player_categories pc
+       JOIN tournament_player_profiles pp ON pp.id=pc.player_profile_id
+       JOIN organization_people op ON op.id=pp.organization_person_id
+       JOIN tournament_categories tc ON tc.id=pc.category_id
+      WHERE pp.tournament_id=? AND pp.player_status='confirmed' AND op.user_id IS NULL
+      ORDER BY tc.sort_order,pp.display_name`,
+  ).bind(tournamentId).all<{ categoryId:string; categoryName:string; entryType:"individual"|"pair"|"team"; name:string; personId:string }>();
+
   type InternalEntry = PublicParticipantEntry & {
     identityKeys: Set<string>;
   };
@@ -1220,6 +1234,22 @@ async function buildPublicParticipantsSnapshot(
             : null,
       waitlisted: row.status === "waitlisted",
       identityKeys: new Set([identity]),
+    });
+  }
+
+  for (const row of assistedPeople.results) {
+    const category = ensureCategory(row.categoryId,row.categoryName,row.entryType);
+    const key = `person:${row.personId}`;
+    if (category.participantIdentities.has(key)) continue;
+    category.participantIdentities.add(key);
+    globalPlayers.add(key);
+    category.entriesByKey.set(`assisted:${row.categoryId}:${row.personId}`, {
+      entryType: row.entryType,
+      label: null,
+      members: [row.name],
+      seeking: row.entryType === "pair" ? "partner" : row.entryType === "team" ? "team" : null,
+      waitlisted: false,
+      identityKeys: new Set([key]),
     });
   }
 
@@ -1804,8 +1834,6 @@ async function registrationCandidates(registrationId: string, request: Request, 
     invitationStatus: string | null;
   }>();
 
-  if (!candidates.results.length) return json({ ok: true, candidates: [] });
-
   let filtered = candidates.results;
 
   if (category.entryType === "pair" && category.competitionGender === "mixed") {
@@ -1876,15 +1904,16 @@ async function registrationCandidates(registrationId: string, request: Request, 
     }
   }
 
+  const manualCandidates = await assistedCandidates(env,source.categoryId,category.entryType as "pair"|"team",source.userId,source.id,source.entryId);
   return json({
     ok: true,
-    candidates: filtered.map(({ hasProfile, ...candidate }) => {
-      void hasProfile;
-      return {
-        ...candidate,
-        paymentReady: candidate.finalAmountMinor === 0 || candidate.status === "confirmed",
-      };
-    }),
+    candidates: [
+      ...filtered.map(({ hasProfile, ...candidate }) => {
+        void hasProfile;
+        return { ...candidate, paymentReady: candidate.finalAmountMinor === 0 || candidate.status === "confirmed" };
+      }),
+      ...manualCandidates,
+    ],
   });
 }
 
@@ -1899,6 +1928,9 @@ async function createMatchInvitation(registrationId: string, request: Request, e
   if (tournament.structureLocked || category.structureLocked) return json({ ok: false, code: "COMPETITION_STRUCTURE_LOCKED" }, { status: 409 });
   const body: { targetRegistrationId?: string } = await readJson<{ targetRegistrationId?: string }>(request).catch(() => ({}));
   const targetId = String(body.targetRegistrationId ?? "");
+  if (targetId.startsWith("manual:")) {
+    return createAssistedRequest(env,source,category,user,targetId.slice("manual:".length));
+  }
   const target = targetId ? await registrationById(env, targetId) : null;
   if (!target || target.categoryId !== source.categoryId || target.tournamentId !== source.tournamentId || target.userId === source.userId || target.entryId || ["cancelled", "rejected", "waitlisted"].includes(target.status)) {
     return json({ ok: false, code: "CANDIDATE_NOT_AVAILABLE" }, { status: 409 });
@@ -2511,7 +2543,8 @@ async function adminRegistrations(tournamentId: string, request: Request, env: E
       WHERE tr.tournament_id=? ORDER BY tc.sort_order,tr.created_at`,
   ).bind(tournamentId).all<RegistrationViewerRow & { priceScope: string; baseAmountMinor: number; discountMinor: number; userName: string; userEmail: string }>();
   const detailed = await registrationDetailsBulk(env, rows.results);
-  return json({ ok: true, registrations: detailed, publicUrl: `/tournaments/${allowed.tournament.slug}` });
+  const assisted = await assistedRegistrationViews(env,tournamentId);
+  return json({ ok: true, registrations: [...detailed,...assisted], publicUrl: `/tournaments/${allowed.tournament.slug}` });
 }
 
 async function adminCancelRegistration(registrationId: string, request: Request, env: Env, access: AccessHelpers) {
@@ -2642,6 +2675,8 @@ async function adminAdjustment(registrationId: string, request: Request, env: En
 
 export async function handleRegistrationApi(request: Request, env: Env, access: AccessHelpers): Promise<Response | null> {
   const url = new URL(request.url);
+  const assistedAction = await handleAssistedAdminApi(request,env,access,recalcCompetitiveEntry);
+  if (assistedAction) return assistedAction;
   const pubHero = url.pathname.match(/^\/api\/public\/tournaments\/([^/]+)\/hero$/);
   if (pubHero && request.method === "GET") return publicTournamentHero(decodeURIComponent(pubHero[1]!), env);
 

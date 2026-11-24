@@ -3561,7 +3561,7 @@ export async function handleTournamentAdminApi(
     const tournamentId = decodeURIComponent(tournamentPlayers[1]!);
     const accessResult = await tournamentForAccess(tournamentId,request,env,access);
     if (accessResult instanceof Response) return accessResult;
-    const body = await readJson<{sourceUserId?:string;displayName?:string;club?:string;contact?:string;sportGender?:string;duprSingles?:number;duprDoubles?:number;paymentStatus?:string;playerStatus?:string;notes?:string;assignments?:PlayerAssignmentInput[];confirmImpact?:boolean}>(request);
+    const body = await readJson<{sourceUserId?:string;displayName?:string;manualAge?:number;club?:string;contact?:string;sportGender?:string;duprSingles?:number;duprDoubles?:number;paymentStatus?:string;playerStatus?:string;notes?:string;assignments?:PlayerAssignmentInput[];confirmImpact?:boolean}>(request);
     const sourceUserId = body.sourceUserId?.trim() || null;
     const sourceIdentity = sourceUserId ? await sourceUserIdentityForTournament(env,accessResult.tournament,sourceUserId) : null;
     if (sourceUserId && !sourceIdentity) return json({ok:false,code:"SOURCE_USER_NOT_ACTIVE_IN_TOURNAMENT"},{status:409});
@@ -3575,6 +3575,28 @@ export async function handleTournamentAdminApi(
     if (duplicate) return json({ok:false,code:"DUPLICATE_PLAYER"},{status:409});
     let assignments = (body.assignments ?? []).filter((value) => value.categoryId);
     if (sourceUserId) assignments = await restorePartnerLinksForSourceAssignments(env,tournamentId,sourceUserId,assignments);
+    if (!sourceUserId) {
+      const age = Number(body.manualAge);
+      if (!Number.isInteger(age) || age < 1 || age > 110) return json({ok:false,code:"MANUAL_AGE_REQUIRED"},{status:400});
+      if (!assignments.length) return json({ok:false,code:"MANUAL_CATEGORY_REQUIRED"},{status:400});
+      const seen = new Set<string>();
+      for (const a of assignments) {
+        if (seen.has(a.categoryId)) return json({ok:false,code:"DUPLICATE_CATEGORY"},{status:409});
+        seen.add(a.categoryId);
+        const c = await env.HUAU_DB.prepare(`SELECT tournament_id as tournamentId,entry_type as entryType,competition_gender as gender,min_age as minAge,max_age as maxAge,max_entries as maxEntries,registration_status as registrationStatus,structure_locked as structureLocked FROM tournament_categories WHERE id=?`).bind(a.categoryId).first<{tournamentId:string;entryType:string;gender:string|null;minAge:number|null;maxAge:number|null;maxEntries:number|null;registrationStatus:string;structureLocked:number}>();
+        if (!c || c.tournamentId !== tournamentId) return json({ok:false,code:"CATEGORY_NOT_FOUND"},{status:404});
+        if (c.structureLocked) return json({ok:false,code:"COMPETITION_STRUCTURE_LOCKED"},{status:409});
+        if (c.registrationStatus === "closed") return json({ok:false,code:"CATEGORY_REGISTRATION_CLOSED"},{status:409});
+        if ((c.minAge !== null && age < c.minAge) || (c.maxAge !== null && age > c.maxAge)) return json({ok:false,code:"AGE_NOT_ELIGIBLE"},{status:409});
+        if ((c.gender === "male" || c.gender === "female") && normalizedSportGender(body.sportGender) !== c.gender) return json({ok:false,code:"GENDER_NOT_ELIGIBLE"},{status:409});
+        if (c.entryType === "individual" && c.maxEntries !== null) {
+          const occupied = await env.HUAU_DB.prepare(`SELECT COUNT(*) as count FROM tournament_entries WHERE category_id=? AND status NOT IN ('withdrawn','rejected','waitlisted')`).bind(a.categoryId).first<{count:number}>();
+          if (Number(occupied?.count??0) >= c.maxEntries) return json({ok:false,code:"CATEGORY_CAPACITY_REACHED"},{status:409});
+        }
+      }
+      const existing = await env.HUAU_DB.prepare(`SELECT 1 AS used FROM tournament_registrations tr JOIN user u ON u.id=tr.user_id LEFT JOIN user_profiles up ON up.user_id=u.id WHERE tr.tournament_id=? AND tr.status NOT IN ('cancelled','rejected') AND (LOWER(TRIM(COALESCE(up.first_name,'')||' '||COALESCE(up.last_name,'')))=LOWER(?) OR LOWER(u.name)=LOWER(?)) LIMIT 1`).bind(tournamentId,displayName,displayName).first();
+      if (existing) return json({ok:false,code:"PLAYER_ALREADY_REGISTERED_ONLINE"},{status:409});
+    }
     const affectedIds = [...new Set(assignments.map((value)=>value.categoryId))];
     const locked = await lockedCategoriesAmong(env,affectedIds);
     if (locked.length && !body.confirmImpact) return json({ok:false,code:"STRUCTURE_CHANGE_CONFIRM_REQUIRED",impact:"Agregar este jugador modifica categorías ya sorteadas. HUAU guardará snapshots e invalidará sólo esas categorías."},{status:409});
@@ -3588,9 +3610,11 @@ export async function handleTournamentAdminApi(
       `INSERT INTO tournament_player_profiles (id,tournament_id,organization_person_id,display_name,club,contact,dupr_singles,dupr_doubles,payment_status,player_status,notes,sort_order,created_at,updated_at,version)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`,
     ).bind(profileId,tournamentId,personId,displayName,body.club?.trim()??"",contact,Number(body.duprSingles??0),Number(body.duprDoubles??0),normalizedPaymentStatus(body.paymentStatus),normalizedPlayerStatus(body.playerStatus),body.notes?.trim()??"",sort?.nextSort??0,stamp,stamp).run();
+    if (!sourceUserId) await env.HUAU_DB.prepare(`UPDATE tournament_player_profiles SET manual_age=? WHERE id=?`).bind(Number(body.manualAge),profileId).run();
     try { await replacePlayerAssignments(env,profileId,assignments); } catch(error) { await env.HUAU_DB.prepare(`DELETE FROM tournament_player_profiles WHERE id=?`).bind(profileId).run(); return json({ok:false,code:error instanceof Error?error.message:"PLAYER_ASSIGNMENT_FAILED"},{status:409}); }
     await Promise.all(affectedIds.map((categoryId)=>syncDerivedEntriesForCategory(env,categoryId,accessResult.user.id)));
     await env.HUAU_DB.prepare(`UPDATE tournaments SET working_revision=working_revision+1,updated_at=? WHERE id=?`).bind(stamp,tournamentId).run();
+    await env.HUAU_ASSETS.delete(`public/tournaments/${tournamentId}/participants.json`).catch(()=>undefined);
     return json({ok:true,player:{id:profileId,displayName}},{status:201});
   }
 
@@ -3617,6 +3641,8 @@ export async function handleTournamentAdminApi(
       ).bind(profileId).first<{count:number}>();
       if (Number(financialHistory?.count ?? 0) > 0) return json({ok:false,code:"PLAYER_HAS_PAYMENT_HISTORY",message:"Este jugador ya tiene actividad financiera. Conservá su ficha para mantener la auditoría y gestioná el cobro/devolución desde Pagos."},{status:409});
       if (locked.length) await snapshotAndInvalidateCategories(env,accessResult.tournament,accessResult.user,locked,"Before deleting tournament player");
+      const grouped = await env.HUAU_DB.prepare(`SELECT 1 FROM entry_members em JOIN tournament_entries e ON e.id=em.entry_id WHERE em.organization_person_id=? AND em.status IN ('accepted','manual') AND e.entry_type IN ('pair','team') AND e.status NOT IN ('withdrawn','rejected') LIMIT 1`).bind(current.organizationPersonId).first();
+      if (grouped) return json({ok:false,code:"MANUAL_GROUP_REMOVE_FIRST",message:"Primero desvinculá al jugador del equipo o pareja."},{status:409});
       if (teamCategoryIds.length) await removePersonFromTeamRosters(env,current.tournamentId,current.organizationPersonId);
       await env.HUAU_DB.batch([
         env.HUAU_DB.prepare(`DELETE FROM payment_orders WHERE payer_profile_id=? AND status IN ('draft','awaiting_payment','cancelled')`).bind(profileId),
@@ -3624,10 +3650,13 @@ export async function handleTournamentAdminApi(
       ]);
       await Promise.all(affectedIds.map((categoryId)=>syncDerivedEntriesForCategory(env,categoryId,accessResult.user.id)));
       await env.HUAU_DB.prepare(`UPDATE tournaments SET working_revision=working_revision+1,updated_at=? WHERE id=?`).bind(unixNow(),current.tournamentId).run();
+      await env.HUAU_ASSETS.delete(`public/tournaments/${current.tournamentId}/participants.json`).catch(()=>undefined);
       return json({ok:true});
     }
     const body = await readJson<{displayName?:string;club?:string;contact?:string;sportGender?:string;duprSingles?:number;duprDoubles?:number;paymentStatus?:string;playerStatus?:string;notes?:string;assignments?:PlayerAssignmentInput[];confirmImpact?:boolean}>(request);
     const nextAssignments = body.assignments ?? previousAssignments.map((row)=>({categoryId:row.categoryId,partnerProfileId:row.partnerProfileId}));
+    const groupedManual = await env.HUAU_DB.prepare(`SELECT 1 FROM entry_members em JOIN tournament_entries e ON e.id=em.entry_id JOIN organization_people op ON op.id=em.organization_person_id WHERE em.organization_person_id=? AND op.user_id IS NULL AND e.entry_type IN ('pair','team') AND e.status NOT IN ('withdrawn','rejected') AND em.status IN ('accepted','manual') LIMIT 1`).bind(current.organizationPersonId).first();
+    if (groupedManual && !sameStringSet(previousAssignments.map(row=>row.categoryId),nextAssignments.map(row=>row.categoryId))) return json({ok:false,code:"MANUAL_GROUP_EDIT_LOCKED",message:"No cambies categorías de una persona ya incorporada a pareja/equipo sin desvincularla."},{status:409});
     const nextSportGender = normalizedSportGender(body.sportGender ?? current.sportGender);
     const genderChanged = nextSportGender !== current.sportGender;
     const teamCategoryIds = genderChanged ? await teamCategoryIdsForPerson(env,current.tournamentId,current.organizationPersonId) : [];
@@ -3652,6 +3681,7 @@ export async function handleTournamentAdminApi(
     }
     await refreshDerivedDisplaysForCategories(env,affectedIds,accessResult.user.id);
     await env.HUAU_DB.prepare(`UPDATE tournaments SET working_revision=working_revision+1,updated_at=? WHERE id=?`).bind(stamp,current.tournamentId).run();
+    await env.HUAU_ASSETS.delete(`public/tournaments/${current.tournamentId}/participants.json`).catch(()=>undefined);
     return json({ok:true});
   }
 

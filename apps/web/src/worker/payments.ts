@@ -571,6 +571,11 @@ async function syncManualProfileOrder(env: Env, tournament: TournamentRow, profi
     if (category.entryType === "team") priorTeamCount += 1;
     if (await linkedOnlineRegistration(env, category.linkedUserId, category.categoryId)) continue;
     if (await coveredManualCategory(env, profileId, category.categoryId)) continue;
+    // A manual member of a team_full entry is covered by the captain; do not double-charge.
+    if (category.entryType === "team") {
+      const fullTeam = await env.HUAU_DB.prepare(`SELECT 1 as covered FROM tournament_player_profiles pp JOIN entry_members em ON em.organization_person_id=pp.organization_person_id AND em.status IN ('accepted','manual') JOIN tournament_entries e ON e.id=em.entry_id AND e.category_id=? AND e.team_payment_mode='team_full' AND e.status NOT IN ('withdrawn','rejected') WHERE pp.id=? LIMIT 1`).bind(category.categoryId,profileId).first();
+      if (fullTeam) continue;
+    }
     if (price > 0) items.push({ playerProfileId: profileId, categoryId: category.categoryId, label: category.categoryName, amountMinor: price });
   }
   const first = rows.results[0]!;
