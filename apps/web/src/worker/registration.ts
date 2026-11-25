@@ -2673,10 +2673,211 @@ async function adminAdjustment(registrationId: string, request: Request, env: En
   return json({ ok: true });
 }
 
+/** D.2 — Administrative grouping for existing online registrations.
+ * No account creation, no new registration and no price recalculation at current tariffs.
+ * Only organization administrators may use this endpoint.
+ */
+async function adminOnlineGrouping(
+  tournamentId: string,
+  request: Request,
+  env: Env,
+  access: AccessHelpers,
+): Promise<Response> {
+  const allowed = await adminAccess(tournamentId, request, env, access);
+  if ("response" in allowed) return allowed.response;
+  const { user: actor, tournament } = allowed;
+  if (request.method !== "POST") return json({ ok: false, code: "METHOD_NOT_ALLOWED" }, { status: 405 });
+  const body = await readJson<{
+    action?: string;
+    sourceRegistrationId?: string;
+    targetRegistrationId?: string;
+    categoryId?: string;
+    entryId?: string;
+    teamName?: string;
+  }>(request).catch(() => null);
+  if (!body) return json({ ok: false, code: "INVALID_BODY" }, { status: 400 });
+  const action = String(body.action ?? "");
+  const source = await registrationById(env, String(body.sourceRegistrationId ?? ""));
+  if (!source || source.tournamentId !== tournamentId || source.categoryId !== body.categoryId) {
+    return json({ ok: false, code: "SOURCE_REGISTRATION_NOT_FOUND" }, { status: 404 });
+  }
+  const category = await categoryById(env, source.categoryId);
+  if (!category || category.tournamentId !== tournamentId || category.entryType === "individual") {
+    return json({ ok: false, code: "GROUPING_CATEGORY_INVALID" }, { status: 409 });
+  }
+  if (tournament.structureLocked || category.structureLocked) {
+    return json({ ok: false, code: "COMPETITION_STRUCTURE_LOCKED" }, { status: 409 });
+  }
+  if (["cancelled", "rejected", "waitlisted"].includes(source.status)) {
+    return json({ ok: false, code: "SOURCE_REGISTRATION_NOT_ACTIVE" }, { status: 409 });
+  }
+  if (action === "pair_online") {
+    if (category.entryType !== "pair" || source.entryId) {
+      return json({ ok: false, code: "PAIR_NOT_AVAILABLE" }, { status: 409 });
+    }
+    const target = await registrationById(env, String(body.targetRegistrationId ?? ""));
+    if (!target || target.id === source.id || target.userId === source.userId || target.tournamentId !== tournamentId || target.categoryId !== category.id || target.entryId || ["cancelled", "rejected", "waitlisted"].includes(target.status)) {
+      return json({ ok: false, code: "ONLINE_PARTNER_NOT_FREE" }, { status: 409 });
+    }
+    if (!(await pairCompatibility(env, category, source.userId, target.userId))) {
+      return json({ ok: false, code: "PAIR_NOT_COMPATIBLE" }, { status: 409 });
+    }
+    const capacity = await acquireCategoryDecision(env, category);
+    if (capacity.decision === "closed") return json({ ok: false, code: "CATEGORY_REGISTRATION_CLOSED" }, { status: 409 });
+    const [a, b] = await Promise.all([userById(env, source.userId), userById(env, target.userId)]);
+    if (!a || !b) return json({ ok: false, code: "USER_NOT_FOUND" }, { status: 409 });
+    const [first, second] = await Promise.all([
+      ensureIdentity(env, tournament, a),
+      ensureIdentity(env, tournament, b),
+    ]);
+    const existing = await env.HUAU_DB.prepare(
+      `SELECT 1 AS used FROM entry_members em JOIN tournament_entries te ON te.id=em.entry_id
+       WHERE te.category_id=? AND te.status NOT IN ('withdrawn','rejected') AND em.status IN ('accepted','manual')
+       AND em.organization_person_id IN (?,?) LIMIT 1`,
+    ).bind(category.id, first.personId, second.personId).first<{ used: number }>();
+    if (existing) return json({ ok: false, code: "PAIR_ALREADY_LINKED" }, { status: 409 });
+    const entryId = uuid();
+    const stamp = now();
+    await env.HUAU_DB.batch([
+      env.HUAU_DB.prepare(
+        `INSERT INTO tournament_entries
+          (id,category_id,entry_type,display_name,captain_user_id,status,waitlist_position,seed_rating,created_by_user_id,created_by_admin,source_kind,source_key,created_at,updated_at,version,team_payment_mode)
+          VALUES (?,?,'pair',?,NULL,?,?,NULL,?,1,'admin_online_pair',?,?,?,1,NULL)`,
+      ).bind(entryId, category.id, `${a.name} / ${b.name}`, capacity.decision === "waitlist" ? "waitlisted" : "inviting", capacity.waitlistPosition, actor.id, source.id, stamp, stamp),
+      env.HUAU_DB.prepare(
+        `INSERT INTO entry_members (id,entry_id,organization_person_id,member_role,roster_slot,status,invited_user_id,accepted_at,created_at,updated_at)
+         VALUES (?,?,?,'player','1','accepted',?,?,?,?)`,
+      ).bind(uuid(), entryId, first.personId, a.id, stamp, stamp, stamp),
+      env.HUAU_DB.prepare(
+        `INSERT INTO entry_members (id,entry_id,organization_person_id,member_role,roster_slot,status,invited_user_id,accepted_at,created_at,updated_at)
+         VALUES (?,?,?,'player','2','accepted',?,?,?,?)`,
+      ).bind(uuid(), entryId, second.personId, b.id, stamp, stamp, stamp),
+      env.HUAU_DB.prepare(
+        `UPDATE tournament_registrations SET entry_id=?,waitlist_position=?,status=CASE WHEN ?='waitlist' THEN 'waitlisted' ELSE status END,updated_at=?,version=version+1
+         WHERE id IN (?,?) AND entry_id IS NULL`,
+      ).bind(entryId, capacity.waitlistPosition, capacity.decision, stamp, source.id, target.id),
+      env.HUAU_DB.prepare(
+        `UPDATE registration_match_invitations SET status='cancelled',updated_at=?
+         WHERE status='pending' AND (inviter_registration_id IN (?,?) OR invitee_registration_id IN (?,?))`,
+      ).bind(stamp, source.id, target.id, source.id, target.id),
+    ]);
+    await syncLegacyAssignment(env, first.playerProfileId, category.id, second.playerProfileId);
+    await syncLegacyAssignment(env, second.playerProfileId, category.id, first.playerProfileId);
+    await recalcCompetitiveEntry(env, entryId);
+    await invalidatePublicParticipantsSnapshot(env, tournamentId);
+    return json({ ok: true, entryId, action });
+  }
+
+  if (category.entryType !== "team") return json({ ok: false, code: "TEAM_CATEGORY_REQUIRED" }, { status: 409 });
+  if (action === "create_team") {
+    if (source.entryId) return json({ ok: false, code: "ALREADY_ASSIGNED_TO_TEAM" }, { status: 409 });
+    const teamName = String(body.teamName ?? "").trim();
+    if (teamName.length < 2 || teamName.length > 90) return json({ ok: false, code: "TEAM_NAME_INVALID" }, { status: 400 });
+    const capacity = await acquireCategoryDecision(env, category);
+    if (capacity.decision === "closed") return json({ ok: false, code: "CATEGORY_REGISTRATION_CLOSED" }, { status: 409 });
+    const captain = await userById(env, source.userId);
+    if (!captain) return json({ ok: false, code: "USER_NOT_FOUND" }, { status: 409 });
+    const identity = await ensureIdentity(env, tournament, captain);
+    const alreadyMember = await env.HUAU_DB.prepare(
+      `SELECT 1 as used FROM entry_members em JOIN tournament_entries e ON e.id=em.entry_id
+       WHERE e.category_id=? AND e.status NOT IN ('withdrawn','rejected') AND em.status IN ('accepted','manual') AND em.organization_person_id=? LIMIT 1`,
+    ).bind(category.id, identity.personId).first<{ used: number }>();
+    if (alreadyMember) return json({ ok: false, code: "PLAYER_ALREADY_IN_TEAM" }, { status: 409 });
+    const entryId = uuid();
+    const stamp = now();
+    await env.HUAU_DB.batch([
+      env.HUAU_DB.prepare(
+        `INSERT INTO tournament_entries
+        (id,category_id,entry_type,display_name,captain_user_id,status,waitlist_position,seed_rating,created_by_user_id,created_by_admin,source_kind,source_key,created_at,updated_at,version,team_payment_mode)
+        VALUES (?,?,'team',?,?,?,?,NULL,?,1,'online_registration',?,?,?,1,'individual')`,
+      ).bind(entryId, category.id, teamName, captain.id, capacity.decision === "waitlist" ? "waitlisted" : "inviting", capacity.waitlistPosition, actor.id, source.id, stamp, stamp),
+      env.HUAU_DB.prepare(
+        `INSERT INTO entry_members (id,entry_id,organization_person_id,member_role,roster_slot,status,invited_user_id,accepted_at,created_at,updated_at)
+         VALUES (?,?,?,'captain','1','accepted',?,?,?,?)`,
+      ).bind(uuid(), entryId, identity.personId, captain.id, stamp, stamp, stamp),
+      env.HUAU_DB.prepare(
+        `UPDATE tournament_registrations SET entry_id=?,waitlist_position=?,status=CASE WHEN ?='waitlist' THEN 'waitlisted' ELSE status END,updated_at=?,version=version+1 WHERE id=? AND entry_id IS NULL`,
+      ).bind(entryId, capacity.waitlistPosition, capacity.decision, stamp, source.id),
+      env.HUAU_DB.prepare(`UPDATE registration_match_invitations SET status='cancelled',updated_at=? WHERE status='pending' AND invitee_registration_id=?`).bind(stamp, source.id),
+    ]);
+    await recalcPersonalRegistration(env, source.id);
+    await recalcCompetitiveEntry(env, entryId);
+    await invalidatePublicParticipantsSnapshot(env, tournamentId);
+    return json({ ok: true, entryId, action });
+  }
+  if (action !== "join_team") return json({ ok: false, code: "GROUPING_ACTION_INVALID" }, { status: 400 });
+  if (source.entryId) return json({ ok: false, code: "ALREADY_ASSIGNED_TO_TEAM" }, { status: 409 });
+  const entryId = String(body.entryId ?? "");
+  const team = await env.HUAU_DB.prepare(
+    `SELECT id,category_id as categoryId,entry_type as entryType,team_payment_mode as teamPaymentMode,captain_user_id as captainUserId,status
+     FROM tournament_entries WHERE id=?`,
+  ).bind(entryId).first<{ id: string;categoryId: string;entryType: string;teamPaymentMode: string | null;captainUserId: string | null;status: string }>();
+  if (!team || team.categoryId !== category.id || team.entryType !== "team" || ["withdrawn", "rejected", "waitlisted"].includes(team.status)) {
+    return json({ ok: false, code: "TEAM_NOT_AVAILABLE" }, { status: 409 });
+  }
+  const roster = await registrationRosterMeta(env, category);
+  const current = await env.HUAU_DB.prepare(
+    `SELECT COUNT(*) as total FROM entry_members WHERE entry_id=? AND status IN ('accepted','manual')`,
+  ).bind(entryId).first<{ total: number }>();
+  if (roster.max !== null && Number(current?.total ?? 0) >= roster.max) {
+    return json({ ok: false, code: "TEAM_ROSTER_FULL" }, { status: 409 });
+  }
+  const violation = await teamCandidateHardViolation(env, category, entryId, source.userId);
+  if (violation) return json({ ok: false, code: violation }, { status: 409 });
+  const member = await userById(env, source.userId);
+  if (!member) return json({ ok: false, code: "USER_NOT_FOUND" }, { status: 409 });
+  const identity = await ensureIdentity(env, tournament, member);
+  const used = await env.HUAU_DB.prepare(
+    `SELECT 1 AS used FROM entry_members em JOIN tournament_entries e ON e.id=em.entry_id
+     WHERE e.category_id=? AND e.status NOT IN ('withdrawn','rejected') AND em.status IN ('accepted','manual') AND em.organization_person_id=? LIMIT 1`,
+  ).bind(category.id, identity.personId).first<{ used: number }>();
+  if (used) return json({ ok: false, code: "PLAYER_ALREADY_IN_TEAM" }, { status: 409 });
+  let coveredBy: string | null = null;
+  if (team.teamPaymentMode === "team_full") {
+    // Do not silently change a payment already collected from this member.
+    const financial = await env.HUAU_DB.prepare(
+      `SELECT po.status,po.amount_paid_minor as paid,po.amount_refunded_minor as refunded
+       FROM payment_order_items poi JOIN payment_orders po ON po.id=poi.order_id
+       WHERE poi.registration_id=? AND po.status IN ('pending_review','paid','partially_refunded','refunded') LIMIT 1`,
+    ).bind(source.id).first<{ status: string; paid: number; refunded: number }>();
+    if (Math.max(0, source.paidAmountMinor - source.refundedAmountMinor) > 0 ||
+        financial?.status === "pending_review" ||
+        (financial && Math.max(0, financial.paid - financial.refunded) > 0)) {
+      return json({ ok: false, code: "PAID_MEMBER_REQUIRES_FINANCIAL_REVIEW" }, { status: 409 });
+    }
+    if (!team.captainUserId) return json({ ok: false, code: "TEAM_CAPTAIN_REQUIRED" }, { status: 409 });
+    const captainRegistration = await env.HUAU_DB.prepare(
+      `SELECT id FROM tournament_registrations WHERE category_id=? AND entry_id=? AND user_id=? AND status NOT IN ('cancelled','rejected') LIMIT 1`,
+    ).bind(category.id, team.id, team.captainUserId).first<{ id: string }>();
+    if (!captainRegistration) return json({ ok: false, code: "TEAM_CAPTAIN_REGISTRATION_MISSING" }, { status: 409 });
+    coveredBy = captainRegistration.id;
+  }
+  const stamp = now();
+  await env.HUAU_DB.batch([
+    env.HUAU_DB.prepare(
+      `INSERT INTO entry_members (id,entry_id,organization_person_id,member_role,roster_slot,status,invited_user_id,accepted_at,created_at,updated_at)
+       VALUES (?,?,?,'player',NULL,'accepted',?,?,?,?)`,
+    ).bind(uuid(), team.id, identity.personId, member.id, stamp, stamp, stamp),
+    env.HUAU_DB.prepare(
+      `UPDATE tournament_registrations SET entry_id=?,covered_by_registration_id=?,updated_at=?,version=version+1
+       WHERE id=? AND entry_id IS NULL`,
+    ).bind(team.id, coveredBy, stamp, source.id),
+    env.HUAU_DB.prepare(
+      `UPDATE registration_match_invitations SET status='cancelled',updated_at=? WHERE status='pending' AND (inviter_registration_id=? OR invitee_registration_id=?)`,
+    ).bind(stamp, source.id, source.id),
+  ]);
+  await recalcPersonalRegistration(env, source.id);
+  await recalcCompetitiveEntry(env, team.id);
+  await invalidatePublicParticipantsSnapshot(env, tournamentId);
+  return json({ ok: true, entryId: team.id, action });
+}
+
 export async function handleRegistrationApi(request: Request, env: Env, access: AccessHelpers): Promise<Response | null> {
   const url = new URL(request.url);
   const assistedAction = await handleAssistedAdminApi(request,env,access,recalcCompetitiveEntry);
   if (assistedAction) return assistedAction;
+  const onlineGrouping = url.pathname.match(/^\/api\/admin\/tournaments\/([^/]+)\/online-grouping$/);
+  if (onlineGrouping) return adminOnlineGrouping(decodeURIComponent(onlineGrouping[1]!), request, env, access);
   const pubHero = url.pathname.match(/^\/api\/public\/tournaments\/([^/]+)\/hero$/);
   if (pubHero && request.method === "GET") return publicTournamentHero(decodeURIComponent(pubHero[1]!), env);
 

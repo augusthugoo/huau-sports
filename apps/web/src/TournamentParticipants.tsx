@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { Locale } from "./i18n";
 import { ManualGroupingPanel } from "./ManualGroupingPanel";
+import { OnlineGroupingPanel } from "./OnlineGroupingPanel";
 
 type Category = {
   id: string;
@@ -401,6 +402,7 @@ function ParticipantCard({ participant, locale, tournamentId, categories, player
         </section>
 
         {participant.player && !participant.userId && <ManualGroupingPanel tournamentId={tournamentId} profileId={participant.player.id} categories={categories} assignments={playerCategories} locale={locale} onChange={refreshAfterAssisted}/>}
+        {participant.userId && <OnlineGroupingPanel tournamentId={tournamentId} registrations={currentRegistrations} locale={locale} onChange={refreshAfterAssisted}/>}
         <section className="participant-subpanel participant-payment-summary"><div className="participant-subpanel-title"><div><span className="eyebrow">PAYMENT</span><h3>{tr(locale,"Situación de pago","Payment status")}</h3></div><button className="ghost small" onClick={openPayments}>{tr(locale,"Abrir Pagos","Open Payments")}</button></div>
           {participant.orders.length ? <><div className="participant-payment-numbers"><div><span>{tr(locale,"Total","Total")}</span><strong>{money(total, participant.orders[0]?.currency ?? "UYU")}</strong></div><div><span>{tr(locale,"Cobrado neto","Net paid")}</span><strong>{money(paid, participant.orders[0]?.currency ?? "UYU")}</strong></div></div><div className="participant-order-list">{participant.orders.map((order) => <div key={order.id}><span className={`participant-order-status ${paymentTone([order])}`}>{paymentLabel([order], locale)}</span><strong>{money(order.totalAmountMinor, order.currency)}</strong><small>{order.items.map((item) => item.label).join(" · ")}</small></div>)}</div></> : <p className="muted">{tr(locale,"No hay orden de cobro para esta persona. Puede ser un torneo gratuito o una ficha sin conceptos facturables.","There is no payment order for this person. The tournament may be free or the profile may have no billable items.")}</p>}
         </section>
