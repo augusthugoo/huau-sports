@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { actualTeamPlayerIds } from "./TeamResultParticipants";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { Locale } from "./i18n";
@@ -9,14 +10,12 @@ import {
   generateLocalStandardStructure,
   generateLocalTeamStructure,
   saveLocalStandardFormat,
-  saveLocalTeamLineup,
   setLocalTeamFormat,
   startLocalLiveDraw,
 } from "./TournamentDayEngine";
 import type {
   StandardStandingCriterion,
   TeamFormat,
-  TeamLineupAssignment,
 } from "@huau/core";
 import {
   ensureDayLocalMeta,
@@ -97,18 +96,6 @@ function rubberDisplayCode(rubber: any) {
   if (candidate && !/^custom[-_:]/i.test(candidate) && !/^r?\d{8,}$/i.test(candidate)) return candidate;
   const order = Math.max(1, Number(rubber?.order ?? rubber?.rubberOrder ?? 1) || 1);
   return `R${order}`;
-}
-
-function lineupPersonIds(lineup: any, rubberKey: string) {
-  const rows = Array.isArray(lineup?.assignments) ? lineup.assignments : [];
-  const nested = rows.find(
-    (row: any) => String(row?.rubberKey) === rubberKey && Array.isArray(row?.personIds),
-  );
-  if (nested) return nested.personIds.map((personId: unknown) => String(personId));
-  return rows
-    .filter((row: any) => String(row?.rubberKey) === rubberKey && row?.personId)
-    .sort((a: any, b: any) => Number(a?.position ?? 0) - Number(b?.position ?? 0))
-    .map((row: any) => String(row.personId));
 }
 
 function seedingMethodFor(snapshot: TournamentDayReformSnapshot, category: any) {
@@ -860,105 +847,6 @@ function teamEncounterScore(category: any, encounter: any) {
   return { a, b };
 }
 
-function latestLockedLineup(category: any, encounter: any, entryId: string) {
-  const currentIndex = (category.encounters ?? []).findIndex((row: any) => String(row.id) === String(encounter.id));
-  const before = currentIndex >= 0 ? (category.encounters ?? []).slice(0, currentIndex) : category.encounters ?? [];
-  for (let index = before.length - 1; index >= 0; index -= 1) {
-    const lineup = (before[index]?.lineups ?? []).find(
-      (row: any) => String(row.entryId) === String(entryId) && String(row.status) === "locked",
-    );
-    if (lineup) return lineup;
-  }
-  return null;
-}
-
-function rubberEligible(rubber: any, member: any) {
-  const gender = String(rubber.gender ?? "open");
-  if (gender === "male") return member.sportGender === "male";
-  if (gender === "female") return member.sportGender === "female";
-  return true;
-}
-
-function genderBadge(locale: Locale, gender: string) {
-  if (gender === "male") return tr(locale, "M", "M");
-  if (gender === "female") return tr(locale, "F", "F");
-  return "—";
-}
-
-function EpicLineupSide({
-  locale,
-  category,
-  encounter,
-  entryId,
-  mutate,
-}: {
-  locale: Locale;
-  category: any;
-  encounter: any;
-  entryId: string;
-  mutate: EpicDayMutate;
-}) {
-  const entry = category.entries.find((row: any) => String(row.id) === String(entryId));
-  const existing = (encounter.lineups ?? []).find((row: any) => String(row.entryId) === String(entryId));
-  const suggested = existing ?? latestLockedLineup(category, encounter, entryId);
-  const checked = new Set(
-    (category.format?.encounter?.rubbers ?? []).flatMap((rubber: any) =>
-      lineupPersonIds(suggested, String(rubber.key)).map((personId: string) => `${rubber.key}:${personId}`),
-    ),
-  );
-  const fromBase = !existing && Boolean(suggested);
-
-  const save = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const assignments: TeamLineupAssignment[] = (category.format?.encounter?.rubbers ?? []).map((rubber: any) => ({
-      rubberKey: String(rubber.key),
-      personIds: (entry?.roster ?? [])
-        .filter((member: any) => data.get(`${rubber.key}:${member.personId}`) === "on")
-        .map((member: any) => String(member.personId)),
-    }));
-    await mutate(
-      (next) => saveLocalTeamLineup(next, String(category.id), String(encounter.id), String(entryId), assignments),
-      tr(locale, "Alineación bloqueada. Queda sugerida para las próximas series.", "Lineup locked. It will be suggested for future encounters."),
-      "structure",
-    );
-  };
-
-  if (!entry) return null;
-  return (
-    <form className="epic-lineup-side" onSubmit={save} key={`${encounter.id}:${entryId}:${existing?.lockedAt ?? suggested?.lockedAt ?? "base"}`}>
-      <header>
-        <div><strong>{entry.displayName}</strong><small>{entry.roster?.length ?? 0} {tr(locale,"jugadores","players")}</small></div>
-        {existing?.status === "locked" ? <span className="epic-status-ok">✓ {tr(locale,"Bloqueada","Locked")}</span> : fromBase ? <span className="epic-badge">{tr(locale,"Base sugerida","Suggested base")}</span> : <span className="epic-status-muted">{tr(locale,"Sin bloquear","Unlocked")}</span>}
-      </header>
-      {(category.format?.encounter?.rubbers ?? []).map((rubber: any) => (
-        <div className="epic-lineup-rubber" key={rubber.key}>
-          <div className="epic-rubber-title"><strong>{rubberDisplayCode(rubber)}</strong><span>{rubber.label}</span><em>{rubber.gender}</em></div>
-          <div className="epic-player-choice-grid">
-            {(entry.roster ?? []).map((member: any) => {
-              const eligible = rubberEligible(rubber, member);
-              return (
-                <label className={`epic-player-choice ${eligible ? "" : "disabled"}`} key={member.personId} title={!eligible ? tr(locale,"No elegible para este rubber","Not eligible for this rubber") : ""}>
-                  <input
-                    type="checkbox"
-                    name={`${rubber.key}:${member.personId}`}
-                    defaultChecked={eligible && checked.has(`${rubber.key}:${member.personId}`)}
-                    disabled={!eligible}
-                  />
-                  <span className={`epic-gender ${member.sportGender}`}>{genderBadge(locale, member.sportGender)}</span>
-                  <strong>{member.name}</strong>
-                  {member.role === "captain" ? <small>C</small> : null}
-                </label>
-              );
-            })}
-          </div>
-        </div>
-      ))}
-      <button className="light full">{existing ? tr(locale,"Rebloquear alineación","Relock lineup") : tr(locale,"Bloquear alineación","Lock lineup")}</button>
-    </form>
-  );
-}
-
 function TeamRoundView({ locale, category, groupId, mutate }: { locale: Locale; category: any; groupId: string; mutate: EpicDayMutate }) {
   const groupRows = (category.groups ?? []).filter((row: any) => String(row.id) === groupId);
   const encounters = (category.encounters ?? []).filter((row: any) => String(row.groupId) === groupId && row.stage === "group");
@@ -992,10 +880,7 @@ function TeamRoundView({ locale, category, groupId, mutate }: { locale: Locale; 
                       <div><strong>{encounter.sideA}</strong><span>vs</span><strong>{encounter.sideB}</strong></div>
                       <div className="epic-encounter-score"><b>{score.a} — {score.b}</b><span>{encounter.status}</span></div>
                     </summary>
-                    <div className="epic-lineup-sides">
-                      {encounter.entryAId ? <EpicLineupSide locale={locale} category={category} encounter={encounter} entryId={String(encounter.entryAId)} mutate={mutate} /> : null}
-                      {encounter.entryBId ? <EpicLineupSide locale={locale} category={category} encounter={encounter} entryId={String(encounter.entryBId)} mutate={mutate} /> : null}
-                    </div>
+                    <p className="muted">{tr(locale,"Los jugadores se registran al cargar cada resultado.","Players are recorded when each result is entered.")}</p>
                   </details>
                 );
               })}
@@ -2145,10 +2030,10 @@ export function EpicSchedulePolicyPanel({ locale, snapshot, mutate }: { locale: 
 }
 
 function teamTvLineupNames(category: any, encounter: any, entryId: string, rubberKey: string) {
-  const lineup = (encounter.lineups ?? []).find((row: any) => String(row.entryId) === String(entryId));
+  const match = (encounter.matches ?? []).find((row: any)=>String(row.rubberKey)===rubberKey);
   const entry = (category.entries ?? []).find((row: any) => String(row.id) === String(entryId));
   const knownRoster = [...(entry?.roster ?? []), ...(entry?.rosterHistory ?? [])];
-  const names = lineupPersonIds(lineup, String(rubberKey)).map((personId: string) =>
+  const names = actualTeamPlayerIds(encounter, match, String(encounter.entryAId) === entryId ? "A" : "B").map((personId: string) =>
     knownRoster.find((member: any) => String(member.personId) === String(personId))?.name ?? personId,
   );
   return names.join(" / ") || "—";

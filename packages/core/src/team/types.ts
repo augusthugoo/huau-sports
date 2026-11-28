@@ -119,6 +119,17 @@ export type TeamValidationResult = {
   issues: TeamValidationIssue[];
 };
 
+/** Actual participants of a played Team rubber; never a planned lineup. */
+export type TeamResultParticipants = {
+  sideAPlayerIds: string[];
+  sideBPlayerIds: string[];
+};
+
+/** The match identity is carried by the caller's route/operation envelope. */
+export type TeamResultInput = TeamResultParticipants & {
+  sets: Array<{ scoreA: number; scoreB: number }>;
+};
+
 export type TeamRubberResult = {
   rubberKey: string;
   winnerSide: TeamSide;

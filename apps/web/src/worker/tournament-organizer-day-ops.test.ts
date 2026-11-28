@@ -60,7 +60,7 @@ describe("Organizer Day result operation authorization", () => {
   });
 
   it("normalizes team result sets and disallows arbitrary permissions", () => {
-    const result=validateOrganizerResultOperations([{kind:"team",categoryId:"c",encounterId:"e",matchId:"m",sets:[{scoreA:11,scoreB:5}],permissions:["admin"]}]);
-    expect(result).toEqual([{kind:"team",categoryId:"c",encounterId:"e",matchId:"m",sets:[{scoreA:11,scoreB:5}]}]);
+    const result=validateOrganizerResultOperations([{kind:"team",categoryId:"c",encounterId:"e",matchId:"m",sets:[{scoreA:11,scoreB:5}],sideAPlayerIds:["a"],sideBPlayerIds:["b"],permissions:["admin"]}]);
+    expect(result).toEqual([{kind:"team",categoryId:"c",encounterId:"e",matchId:"m",sets:[{scoreA:11,scoreB:5}],sideAPlayerIds:["a"],sideBPlayerIds:["b"]}]);
   });
 });

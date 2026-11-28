@@ -1,4 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { TeamResultPlayerFields } from "./TeamResultPlayerFields";
+import { teamResultParticipantsFromForm } from "./TeamResultParticipants";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 import type { Locale } from "./i18n";
@@ -16,7 +18,6 @@ import {
   generateLocalTeamStructure,
   localDateTimeToUnix,
   saveLocalStandardFormat,
-  saveLocalTeamLineup,
   startLocalLiveDraw,
   setLocalStandardResult,
   setLocalTeamFormat,
@@ -36,13 +37,14 @@ import {
   tournamentDayChannelName,
   type TournamentDaySession,
 } from "./TournamentDayStorage";
-import type { TeamFormat, TeamLineupAssignment, TeamRosterMember } from "@huau/core";
+import type { TeamFormat, TeamRosterMember } from "@huau/core";
 import {
   activeDayParticipantCount,
   applySafeAdminMerge,
   buildPublicLive,
   buildPublicStructure,
   createNationalCircuitQaFixture,
+  createSeniorTeamQaFixture,
   initializeReformSnapshot,
   isDayQaFixture,
   markLiveDirty,
@@ -199,7 +201,7 @@ export function TournamentDayWorkspace(props: Props) {
   const channelRef = useRef<BroadcastChannel | null>(null);
   const sessionRef = useRef<TournamentDaySession<TournamentDaySnapshot> | null>(null);
   const persistenceQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const storageKey = storageKeyFor(props);
+  const storageKey = storageKeyFor(props) + (new URLSearchParams(window.location.search).get("qa") === "1" ? ":qa" : "");
   const tvOnly = new URLSearchParams(window.location.search).get("view") === "tv";
   const qaMode = new URLSearchParams(window.location.search).get("qa") === "1";
 
@@ -694,6 +696,11 @@ export function TournamentDayWorkspace(props: Props) {
     ), "structure");
   };
 
+  const loadSeniorTeamQaFixture = async () => {
+    if (!qaMode || !window.confirm(tr(locale,"QA privado Team: reemplaza solo la copia de prueba de este navegador. ¿Continuar?","Private Team QA: replace this browser's test copy. Continue?"))) return;
+    await mutate(next => Object.assign(next, createSeniorTeamQaFixture(next)), tr(locale,"QA Team cargado: 75 jugadores / 15 equipos. Configurá formatos, grupos y cronograma.","Team QA loaded: 75 players / 15 teams. Configure formats, groups and schedule."), "structure");
+  };
+
   if (loading) {
     return <main className="td-day"><div className="td-loading">{tr(locale, "Preparando Tournament Day…", "Preparing Tournament Day…")}</div></main>;
   }
@@ -765,8 +772,8 @@ export function TournamentDayWorkspace(props: Props) {
             {qaFixtureActive
               ? tr(
                   locale,
-                  "QA CIRCUITO · publicación bloqueada",
-                  "CIRCUIT QA · publishing blocked",
+                  "QA PRIVADO · publicación bloqueada",
+                  "PRIVATE QA · publishing blocked",
                 )
               : session.dirty
                 ? tr(locale, "LOCAL · cambios sin publicar", "LOCAL · unpublished changes")
@@ -914,7 +921,7 @@ export function TournamentDayWorkspace(props: Props) {
           onReloadPublished={() => reloadSource("published")}
           {...(!operatorToken ? { onReloadAdmin: () => reloadSource("d1") } : {})}
           mutate={mutate}
-          {...(qaMode ? { onLoadQaFixture: loadQaFixture } : {})}
+          {...(qaMode ? { onLoadQaFixture: loadQaFixture, onLoadSeniorTeamQaFixture: loadSeniorTeamQaFixture } : {})}
         />
         </section>
       ) : null}
@@ -1697,19 +1704,6 @@ function DayTeam({
         {category.groups.length ? <div className="td-group-grid">{[...new Set(category.groups.map((row: any) => row.id))].map((groupId: unknown) => { const rows = category.groups.filter((row: any) => row.id === groupId); return <div key={String(groupId)}><strong>{tr(locale, "Grupo", "Group")} {rows[0]?.name}</strong>{rows.map((row: any, index: number) => <span key={row.entryId}>{index + 1}. {row.entryName}</span>)}</div>; })}</div> : null}
       </article>
 
-      {category.encounters.length ? (
-        <article className="panel">
-          <div className="eyebrow">LINEUPS</div>
-          <h2>{tr(locale, "Alineaciones locales", "Local lineups")}</h2>
-          <p className="muted">{tr(locale, "Bloqueá ambas alineaciones antes de cargar un rubber. Todo queda sólo en este navegador hasta publicar.", "Lock both lineups before entering a rubber. Everything stays in this browser until published.")}</p>
-          <div className="td-lineup-list">
-            {category.encounters.filter((encounter: any) => encounter.status !== "bye").map((encounter: any) => (
-              <LocalLineupEncounter key={encounter.id} locale={locale} category={category} encounter={encounter} mutate={mutate} />
-            ))}
-          </div>
-        </article>
-      ) : null}
-
       {category.standings.length ? (
         <article className="panel wide">
           <div className="eyebrow">STANDINGS</div>
@@ -1763,58 +1757,6 @@ function LocalRosterEditor({
         </div>
         <button className="light small">{tr(locale, "Guardar roster local", "Save local roster")}</button>
       </form>
-    </details>
-  );
-}
-
-function LocalLineupEncounter({
-  locale,
-  category,
-  encounter,
-  mutate,
-}: {
-  locale: Locale;
-  category: any;
-  encounter: any;
-  mutate: (fn: (snapshot: TournamentDaySnapshot) => void, message?: string) => Promise<void>;
-}) {
-  const side = (entryId: string, label: string) => {
-    const entry = category.entries.find((candidate: any) => candidate.id === entryId);
-    const existing = encounter.lineups.find((lineup: any) => lineup.entryId === entryId);
-    const checked = new Set((existing?.assignments ?? []).map((assignment: any) => `${assignment.rubberKey}:${assignment.personId}`));
-    const save = async (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault();
-      const data = new FormData(event.currentTarget);
-      const assignments: TeamLineupAssignment[] = category.format.encounter.rubbers.map((rubber: any) => ({
-        rubberKey: rubber.key,
-        personIds: entry.roster
-          .filter((member: any) => data.get(`${rubber.key}:${member.personId}`) === "on")
-          .map((member: any) => member.personId),
-      }));
-      await mutate((next) => {
-        saveLocalTeamLineup(next, category.id, encounter.id, entryId, assignments);
-      }, tr(locale, `Alineación ${label} bloqueada localmente.`, `${label} lineup locked locally.`));
-    };
-    return (
-      <form onSubmit={save} className="td-lineup-side">
-        <h4>{label}</h4>
-        {category.format.encounter.rubbers.map((rubber: any) => (
-          <div key={rubber.key} className="td-lineup-rubber">
-            <strong>{rubber.label}</strong>
-            <div>{entry?.roster.map((member: any) => <label className="check compact-check" key={member.personId}><input type="checkbox" name={`${rubber.key}:${member.personId}`} defaultChecked={checked.has(`${rubber.key}:${member.personId}`)} /><span>{member.name}</span></label>)}</div>
-          </div>
-        ))}
-        <button className="light small">{existing?.status === "locked" ? tr(locale, "Rebloquear local", "Relock locally") : tr(locale, "Bloquear local", "Lock locally")}</button>
-      </form>
-    );
-  };
-  return (
-    <details className="td-lineup-encounter">
-      <summary><strong>{encounter.sideA} vs {encounter.sideB}</strong><span>{encounter.roundLabel ?? encounter.stage}</span></summary>
-      <div className="td-lineup-sides">
-        {encounter.entryAId ? side(encounter.entryAId, encounter.sideA) : null}
-        {encounter.entryBId ? side(encounter.entryBId, encounter.sideB) : null}
-      </div>
     </details>
   );
 }
@@ -2004,8 +1946,7 @@ function TeamResultCard({
   match: any;
   mutate: (fn: (snapshot: TournamentDaySnapshot) => void, message?: string) => Promise<void>;
 }) {
-  const bothLocked = new Set(encounter.lineups.filter((lineup: any) => lineup.status === "locked").map((lineup: any) => lineup.entryId));
-  const ready = bothLocked.has(encounter.entryAId) && bothLocked.has(encounter.entryBId);
+  const ready = Boolean(encounter.entryAId && encounter.entryBId);
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -2016,12 +1957,14 @@ function TeamResultCard({
         encounter.id,
         match.id,
         setsFromForm(data, "score", Number(match.bestOf)),
+        teamResultParticipantsFromForm(data),
       );
     }, tr(locale, "Rubber Team guardado localmente.", "Team rubber saved locally."));
   };
   return (
     <form className={`td-result-card ${match.status === "finished" ? "done" : ""}`} onSubmit={save}>
-      <div><span>{category.name} · {match.rubberKey} · {match.status}</span><strong>{encounter.sideA} <em>vs</em> {encounter.sideB}</strong>{match.scheduleStart ? <small>{dt(Number(match.scheduleStart))} · {match.courtLabel ?? "—"}</small> : null}<small>{ready ? tr(locale, "Lineups bloqueadas", "Lineups locked") : tr(locale, "Faltan lineups bloqueadas", "Locked lineups required")}</small></div>
+      <div><span>{category.name} · {match.rubberKey} · {match.status}</span><strong>{encounter.sideA} <em>vs</em> {encounter.sideB}</strong>{match.scheduleStart ? <small>{dt(Number(match.scheduleStart))} · {match.courtLabel ?? "—"}</small> : null}</div>
+      <TeamResultPlayerFields locale={locale} category={category} encounter={encounter} match={match} />
       <ScoreInputs prefix="score" bestOf={Number(match.bestOf)} sets={match.sets} />
       <button className={match.status === "finished" ? "ghost small" : "light small"} disabled={!ready || match.status === "skipped" || match.status === "pending"}>{match.status === "finished" ? tr(locale, "Corregir local", "Correct locally") : tr(locale, "Guardar local", "Save locally")}</button>
     </form>

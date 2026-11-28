@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { actualTeamPlayerIds } from "./TeamResultParticipants";
 import {
   buildCompetitionFromGroups,
   generateFinalPhase,
@@ -67,7 +68,7 @@ export type DayLocalMeta = {
   localParticipantIds: string[];
   localTeamIds: string[];
   qaFixture?: {
-    kind: "national_circuit_105";
+    kind: "national_circuit_105" | "senior_team_75";
     createdAt: number;
   } | null;
   schedule: {
@@ -2336,12 +2337,8 @@ function publicTeamLineupNames(
   rubberKey: string,
 ) {
   if (!entryId) return [];
-  const lineup = (encounter.lineups ?? []).find((row: any) => String(row.entryId) === String(entryId));
-  const assignments = Array.isArray(lineup?.assignments) ? lineup.assignments : [];
-  const nested = assignments.find((row: any) => String(row.rubberKey) === rubberKey && Array.isArray(row.personIds));
-  const personIds = nested
-    ? nested.personIds.map((personId: unknown) => String(personId))
-    : assignments.filter((row: any) => String(row.rubberKey) === rubberKey && row.personId).sort((a: any,b: any)=>Number(a.position??0)-Number(b.position??0)).map((row: any)=>String(row.personId));
+  const match = (encounter.matches ?? []).find((row: any) => String(row.rubberKey) === rubberKey);
+  const personIds = actualTeamPlayerIds(encounter, match, String(encounter.entryAId) === String(entryId) ? "A" : "B");
   const entry = (category.entries ?? []).find((row: any) => String(row.id) === String(entryId));
   const knownRoster = [...(entry?.roster ?? []), ...(entry?.rosterHistory ?? [])];
   const profiles = snapshot.team.profiles as any[];
@@ -2576,6 +2573,60 @@ export function createQaFixture(base: TournamentDayReformSnapshot) {
 
 
 
+
+/** Local-only senior Team QA; formats remain editable and no groups/results are generated. */
+export function createSeniorTeamQaFixture(base: TournamentDayReformSnapshot) {
+  const snapshot = cloneDay(base) as TournamentDayReformSnapshot;
+  snapshot.workspace.core.categories = [];
+  snapshot.workspace.participants.players = [];
+  snapshot.workspace.participants.playerCategories = [];
+  for (const key of ["entries","groups","matches","drawSessions","standings","crossGroup","categoryProgress","competitions"]) snapshot.workspace.standard[key] = [];
+  snapshot.workspace.schedule.schedule = [];
+  snapshot.team.profiles = [];
+  snapshot.team.categories = [];
+  snapshot.workspace.core.summary = { ...(snapshot.workspace.core.summary ?? {}), completedStandardMatches: 0 };
+  snapshot.workspace.core.tournament.courtCount = 4;
+  snapshot.workspace.core.settings.dailyStart = "08:00";
+  snapshot.workspace.core.settings.dailyEnd = "23:00";
+  delete snapshot.localMeta;
+  initializeReformSnapshot(snapshot);
+  const meta = ensureDayLocalMeta(snapshot);
+  meta.qaFixture = { kind: "senior_team_75", createdAt: Date.now() };
+  const rawStart = Number(snapshot.workspace.core.tournament.startAt ?? Date.now());
+  const day = new Date(rawStart < 1e10 ? rawStart*1000 : rawStart).toISOString().slice(0,10);
+  const names = [["Costa Sur","Ceibos","Rambla","Delta","Monteverde"], ["Atlántico","Laguna","Brava","Arenas","Solís","Cordón"], ["Ombú","Punta Norte","Sierra","Bahía"]];
+  const ages = [40,50,60];
+  let cursor = 0;
+  for (const [index,teams] of names.entries()) {
+    const age = ages[index]!;
+    const id = `qa-senior-${age}`;
+    const name = `Equipos +${age}`;
+    snapshot.workspace.core.categories.push({id,name,entryType:"team",competitionGender:"mixed",registrationStatus:"closed",scheduledDate:day,sortOrder:index,entryCount:teams.length,structureLocked:0});
+    const category = {id,name,scheduledDate:day,format:teamFormatPreset("senior_cup_2026"),competitionStatus:null,entries:[] as any[],groups:[],encounters:[],standings:[],structureLocked:0};
+    snapshot.team.categories.push(category);
+    for (const [teamIndex,teamName] of teams.entries()) {
+      const teamId = `local-team:${id}:${teamIndex+1}`;
+      const roster = Array.from({length:5},(_,memberIndex)=>{
+        cursor++;
+        const profileId = `local-player:qa-senior-${cursor}`;
+        const personId = `local-person:qa-senior-${cursor}`;
+        const sportGender = memberIndex===4 ? (teamIndex%2===0?"male":"female") : (memberIndex%2===0?"male":"female");
+        const displayName = `QA ${age} · ${teamName} · ${sportGender==="male"?"M":"F"}${memberIndex+1}`;
+        const duprSingles = Number((3.2+(cursor%12)*0.07).toFixed(3));
+        const duprDoubles = Number((3.2+(cursor%15)*0.06).toFixed(3));
+        snapshot.workspace.participants.players.push({id:profileId,organizationPersonId:personId,displayName,sportGender,club:"HUAU QA",contact:"",duprSingles,duprDoubles,paymentStatus:"paid",playerStatus:"confirmed",source:"qa"});
+        snapshot.team.profiles.push({id:profileId,personId,displayName,sportGender,duprSingles,duprDoubles});
+        snapshot.workspace.participants.playerCategories.push({playerProfileId:profileId,categoryId:id,partnerProfileId:null,source:"qa"});
+        meta.localParticipantIds.push(profileId);
+        return {personId,name:displayName,sportGender,role:memberIndex===0?"captain":memberIndex===4?"substitute":"player"};
+      });
+      category.entries.push({id:teamId,categoryId:id,displayName:teamName,status:"confirmed",roster,seedRating:3.5,seedOrder:teamIndex+1});
+      meta.localTeamIds.push(teamId);
+    }
+  }
+  markStructureDirty(snapshot,75);
+  return snapshot;
+}
 
 export function createNationalCircuitQaFixture(
   base: TournamentDayReformSnapshot,

@@ -8,6 +8,8 @@ import {
 import {
   advanceLocalLiveDraw,
   generateLocalStandardStructure,
+  generateLocalTeamStructure,
+  setLocalTeamResult,
   setLocalStandardResult,
   startLocalLiveDraw,
   syncStandardCompetition,
@@ -19,6 +21,7 @@ import {
   clearDayCategoryResults,
   createNationalCircuitQaFixture,
   createQaFixture,
+  createSeniorTeamQaFixture,
   ensureDayLocalMeta,
   isDayQaFixture,
   previewAdminMerge,
@@ -1531,5 +1534,90 @@ describe("Tournament Day schedule closeout regressions", () => {
     expect(final).toBeTruthy();
     expect(dateKey(final!.startAt)).toBe("2027-01-11");
     expect(final!.courtLabel).toBe("Cancha 3");
+  });
+});
+
+describe("Senior Team QA — actual results V2", () => {
+  function setup() {
+    const qa = createSeniorTeamQaFixture(snapshot());
+    const cats = qa.team.categories as any[];
+    for (const [i,category] of cats.entries()) generateLocalTeamStructure(qa, category.id, i===1?2:1);
+    return {qa,cats};
+  }
+  function participants(category:any,encounter:any,match:any) {
+    const side = (id:string) => {
+      const roster = category.entries.find((e:any)=>e.id===id).roster as any[];
+      if (match.competitionGender==="mixed") return [roster.find(m=>m.sportGender==="male").personId,roster.find(m=>m.sportGender==="female").personId];
+      return roster.filter(m=>m.sportGender===match.competitionGender||match.competitionGender==="open").slice(0,match.mode==="singles"?1:2).map(m=>m.personId);
+    };
+    return {sideAPlayerIds:side(encounter.entryAId),sideBPlayerIds:side(encounter.entryBId)};
+  }
+  it("isolates 75 players and 15 teams, with 5/6/4 teams and editable competition",()=>{
+    const base = snapshot(); const qa=createSeniorTeamQaFixture(base);
+    expect(isDayQaFixture(qa)).toBe(true);
+    expect(qa.workspace.participants.players).toHaveLength(75);
+    expect(qa.team.categories.map((c:any)=>c.entries.length)).toEqual([5,6,4]);
+    expect(qa.team.categories.every((c:any)=>c.encounters.length===0)).toBe(true);
+    const ids=qa.team.categories.flatMap((c:any)=>c.entries.flatMap((e:any)=>e.roster.map((m:any)=>m.personId)));
+    expect(new Set(ids).size).toBe(75);
+    expect(base.workspace.core.categories[0].id).toBe("c1");
+    expect(buildPublicLive(qa).qaFixture).toBe(true);
+  });
+  it("records participants and score without lineups, rejects outsiders and preserves actual names on reload",()=>{
+    const {qa,cats}=setup();
+    const category=cats[0];const encounter=category.encounters[0];const match=encounter.matches[0];
+    expect(encounter.lineups).toEqual([]);
+    const actual=participants(category,encounter,match);
+    expect(()=>setLocalTeamResult(qa,category.id,encounter.id,match.id,[{scoreA:15,scoreB:9}],{...actual,sideAPlayerIds:["outsider"]})).toThrow();
+    expect(match.resultStatus).toBeFalsy();
+    setLocalTeamResult(qa,category.id,encounter.id,match.id,[{scoreA:15,scoreB:9}],actual);
+    expect(match.participants).toEqual(actual);
+    expect(encounter.lineups).toEqual([]);
+    const live=buildPublicLive(JSON.parse(JSON.stringify(qa)));
+    const row=live.results.team.find((r:any)=>r.encounterId===encounter.id)!.rubbers.find((m:any)=>m.id===match.id)!;
+    expect(row.lineupA).toHaveLength(2);
+    expect(row.lineupB).toHaveLength(2);
+    expect(row.lineupA[0]).toContain("QA");
+  });
+  it("simulates all three categories, 2 groups of 3, conditional mixed and finals without any prior lineup",()=>{
+    const {qa,cats}=setup();
+    expect(cats.map(c=>c.encounters.length)).toEqual([10,6,6]);
+    const groups=new Map<string,number>();
+    for(const row of cats[1].groups)groups.set(row.id,(groups.get(row.id)??0)+1);
+    expect([...groups.values()].sort()).toEqual([3,3]);
+    let played=0, skipped=0, tied=0;
+    for(const category of cats){
+      let loop=0;
+      const pendingFinalIds = new Map<string,string[]>();
+      while(loop++<200){
+        for (const e of category.encounters) {
+          if (e.stage === "group" || e.status !== "pending" || !e.matches.length) continue;
+          pendingFinalIds.set(e.id, e.matches.map((m:any)=>m.id));
+        }
+        for (const e of category.encounters) {
+          if (e.status !== "ready" || !pendingFinalIds.has(e.id)) continue;
+          expect(e.matches.map((m:any)=>m.id)).toEqual(pendingFinalIds.get(e.id));
+          expect(e.matches.filter((m:any)=>m.status==="ready")).toHaveLength(1);
+          pendingFinalIds.delete(e.id);
+        }
+        const encounter=category.encounters.find((e:any)=>e.matches.some((m:any)=>m.status==="ready"&&!m.resultStatus));
+        if(!encounter)break;
+        const match=encounter.matches.find((m:any)=>m.status==="ready"&&!m.resultStatus);
+        expect(encounter.lineups).toEqual([]);
+        const i=category.encounters.indexOf(encounter);
+        const aWins=i%2===0?Number(match.rubberOrder)%2===1:true;
+        const actual=participants(category,encounter,match);
+        setLocalTeamResult(qa,category.id,encounter.id,match.id,[{scoreA:aWins?15:9,scoreB:aWins?9:15}],actual);
+        expect(match.participants).toEqual(actual);played++;
+        if(match.rubberKey==="xd")tied++;
+      }
+      expect(loop).toBeLessThan(200);
+      const unfinished = category.encounters.filter((e:any)=>!["finished","bye"].includes(e.status)).map((e:any)=>({stage:e.stage,status:e.status,sideA:e.sideA,sideB:e.sideB,rubbers:e.matches.map((m:any)=>({key:m.rubberKey,status:m.status}))}));
+      expect(unfinished, `${category.name}: unfinished encounters`).toEqual([]);
+      for(const e of category.encounters)for(const m of e.matches)if(m.status==="skipped"){skipped++;expect(m.resultStatus).toBeFalsy();expect(m.participants).toBeUndefined();}
+      expect(category.standings.length).toBeGreaterThan(0);
+    }
+    expect(played).toBeGreaterThanOrEqual(88);
+    expect(skipped).toBeGreaterThan(0);expect(tied).toBeGreaterThan(0);
   });
 });

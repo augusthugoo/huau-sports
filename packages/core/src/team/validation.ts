@@ -200,6 +200,54 @@ function validateGenderForRubber(
   }
 }
 
+/** Validate only the rubber that was actually played, not the entire encounter. */
+export function validateTeamResultParticipants(
+  rubber: TeamRubberDefinition,
+  rosterA: TeamRosterMember[],
+  rosterB: TeamRosterMember[],
+  input: unknown,
+): TeamValidationResult {
+  const issues: TeamValidationIssue[] = [];
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    pushIssue(issues, "TEAM_RESULT_PARTICIPANTS_REQUIRED", "participants", "Actual participants are required.");
+    return result(issues);
+  }
+  const raw = input as Record<string, unknown>;
+  const used = new Set<string>();
+  const validateSide = (path: "sideAPlayerIds" | "sideBPlayerIds", roster: TeamRosterMember[]) => {
+    const ids = raw[path];
+    if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string" || id.trim().length === 0)) {
+      pushIssue(issues, "TEAM_RESULT_PARTICIPANTS_INVALID", path, "Participant IDs must be non-empty strings.");
+      return;
+    }
+    if (ids.length !== expectedParticipants(rubber)) {
+      pushIssue(issues, "TEAM_RESULT_PARTICIPANT_COUNT", path, `${rubber.label} requires exactly ${expectedParticipants(rubber)} player(s) per side.`);
+    }
+    const rosterById = new Map(roster.map((member) => [member.personId, member] as const));
+    const members: TeamRosterMember[] = [];
+    for (const [index, id] of (ids as string[]).entries()) {
+      if (used.has(id)) {
+        pushIssue(issues, "TEAM_RESULT_PERSON_DUPLICATE", `${path}.${index}`, "A person cannot occupy two positions in the same match.");
+      }
+      used.add(id);
+      const member = rosterById.get(id);
+      if (!member) {
+        pushIssue(issues, "TEAM_RESULT_PERSON_OUTSIDE_ROSTER", `${path}.${index}`, "Participant must belong to the correct team roster.");
+      } else {
+        members.push(member);
+      }
+    }
+    if (members.length === ids.length) {
+      const genderIssues: TeamValidationIssue[] = [];
+      validateGenderForRubber(genderIssues, rubber, members, path);
+      issues.push(...genderIssues.map((issue) => ({ ...issue, code: issue.code.replace(/^LINEUP_/, "TEAM_RESULT_") })));
+    }
+  };
+  validateSide("sideAPlayerIds", rosterA);
+  validateSide("sideBPlayerIds", rosterB);
+  return result(issues);
+}
+
 export function validateTeamLineup(
   format: TeamFormat,
   roster: TeamRosterMember[],

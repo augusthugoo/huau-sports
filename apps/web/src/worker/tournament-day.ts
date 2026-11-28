@@ -1,3 +1,4 @@
+import { actualTeamPlayerIds } from "../TeamResultParticipants";
 import {
   normalizeStandardFormat,
   parseTeamFormat,
@@ -1666,26 +1667,12 @@ async function syncFinalizedSnapshot(
           scopedEntityKey(sourceCategoryId, stringValue(match.id)),
         );
         if (!mappedMatchId) continue;
-        const rubberKey = stringValue(match.rubberKey);
         for (const side of ["A", "B"] as const) {
-          const sourceEntryId = side === "A" ? sourceEntryA : sourceEntryB;
-          if (!sourceEntryId) continue;
-          const lineup = rows(encounter.lineups).find(
-            (candidate) =>
-              stringValue(candidate.entryId) === sourceEntryId &&
-              stringValue(candidate.status) === "locked",
-          );
-          if (!lineup) continue;
-          const assignments = rows(lineup.assignments)
-            .filter((assignment) => stringValue(assignment.rubberKey) === rubberKey)
-            .sort((a, b) => numberValue(a.position) - numberValue(b.position));
-          for (let position = 0; position < assignments.length; position += 1) {
-            const sourcePersonId = stringValue(
-              assignments[position]!.personId ??
-                assignments[position]!.organizationPersonId,
-            );
+          const ids = actualTeamPlayerIds(encounter,match,side);
+          for (let position = 0; position < ids.length; position += 1) {
+            const sourcePersonId = ids[position]!;
             const mappedPersonId = personMap.get(sourcePersonId);
-            if (!mappedPersonId) continue;
+            if (!mappedPersonId) { if (match.participants) throw new Error("TEAM_RESULT_PERSON_MAPPING_MISSING"); continue; }
             structureStatements.push(
               env.HUAU_DB.prepare(
                 `INSERT OR IGNORE INTO match_side_members

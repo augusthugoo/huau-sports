@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, expect, it } from "vitest";
-import { saveLocalTeamLineup, updateLocalTeamRoster, type TournamentDaySnapshot } from "./TournamentDayEngine";
+import { saveLocalTeamLineup, setLocalTeamResult, updateLocalTeamRoster, type TournamentDaySnapshot } from "./TournamentDayEngine";
 import {
   buildPublicLive,
   buildPublicStructure,
@@ -139,6 +139,11 @@ describe("epic Tournament Day corrections", () => {
         })),
       );
     }
+    const before = buildPublicLive(qa).results.team.find((row: any) => row.encounterId === encounter.id)!;
+    expect(before.rubbers[0]!.lineupA).toEqual([]);
+    const first = encounter.matches[0];
+    const ids = (entry: any) => entry.roster.filter((member: any) => member.sportGender === "male").slice(0,2).map((member: any) => member.personId);
+    setLocalTeamResult(qa, category.id, encounter.id, first.id, [{scoreA:15,scoreB:9}], {sideAPlayerIds:ids(entryA),sideBPlayerIds:ids(entryB)});
     category.format.encounter.rubbers[0].displayCode = "MASC";
     const live = buildPublicLive(qa);
     const published = live.results.team.find((row: any) => row.encounterId === encounter.id);

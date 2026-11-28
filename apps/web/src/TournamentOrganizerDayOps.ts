@@ -1,11 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /** Only these audited result commands may cross the Organizer Day write boundary. */
+import type { TeamResultParticipants } from "@huau/core";
 import { cloneDay, setLocalStandardResult, setLocalTeamResult, type StandardResultInput, type TournamentDaySnapshot } from "./TournamentDayEngine";
 import { initializeReformSnapshot, markLiveDirty, type TournamentDayReformSnapshot } from "./TournamentDayReformEngine";
 
 export type OrganizerResultOperation =
   | { kind: "standard"; categoryId: string; encounterId: string; result: StandardResultInput }
-  | { kind: "team"; categoryId: string; encounterId: string; matchId: string; sets: Array<{ scoreA: number; scoreB: number }> };
+  | ({ kind: "team"; categoryId: string; encounterId: string; matchId: string; sets: Array<{ scoreA: number; scoreB: number }> } & TeamResultParticipants);
 
 const isId = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 300;
 const isScore = (value: unknown): value is number => Number.isInteger(value) && Number(value) >= 0 && Number(value) <= 999;
@@ -41,8 +42,11 @@ export function validateOrganizerResultOperations(value: unknown): OrganizerResu
       seen.add(key); operations.push(op);
     } else if (raw.kind === "team" && isId(raw.matchId)) {
       validateSets(raw.sets);
+      if (![raw.sideAPlayerIds,raw.sideBPlayerIds].every(ids=>Array.isArray(ids) && ids.length>=1 && ids.length<=2 && ids.every(isId))) {
+        throw new Error("ORGANIZER_DAY_INVALID_PARTICIPANTS");
+      }
       const op: OrganizerResultOperation = { kind: "team", categoryId: raw.categoryId, encounterId: raw.encounterId,
-        matchId: raw.matchId, sets: raw.sets.map((s: any) => ({ scoreA: s.scoreA, scoreB: s.scoreB })) };
+        matchId: raw.matchId, sets: raw.sets.map((s: any) => ({ scoreA: s.scoreA, scoreB: s.scoreB })), sideAPlayerIds: [...raw.sideAPlayerIds], sideBPlayerIds: [...raw.sideBPlayerIds] };
       const key = organizerResultKey(op);
       if (seen.has(key)) throw new Error("ORGANIZER_DAY_DUPLICATE_RESULT");
       seen.add(key); operations.push(op);
@@ -70,7 +74,7 @@ export function applyOrganizerResultOperations(base: TournamentDaySnapshot, valu
       if (!match || ["bye", "skipped", "pending"].includes(String(match.status))) {
         throw new Error("ORGANIZER_DAY_MATCH_NOT_READY");
       }
-      setLocalTeamResult(next, op.categoryId, op.encounterId, op.matchId, op.sets);
+      setLocalTeamResult(next, op.categoryId, op.encounterId, op.matchId, op.sets, {sideAPlayerIds:op.sideAPlayerIds,sideBPlayerIds:op.sideBPlayerIds});
     }
     markLiveDirty(next);
   }

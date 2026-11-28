@@ -7,6 +7,8 @@ import {
   parseTeamFormat,
   scoreTeamEncounter,
   validateTeamLineup,
+  validateTeamResultParticipants,
+  type TeamResultInput,
   validateTeamLineupMutation,
   validateTeamRoster,
   type TeamEntry,
@@ -598,7 +600,9 @@ async function progressTeamFinalPhase(env: Env, competitionId: string) {
           ? sourceEntry(byId.get(encounter.sourceLoserBId), true)
           : encounter.entryBId;
       const participantChanged = desiredA !== encounter.entryAId || desiredB !== encounter.entryBId;
-      const nextStatus = desiredA && desiredB ? "ready" : "pending";
+      const nextStatus = desiredA && desiredB
+        ? (!participantChanged && encounter.status === "in_progress" ? "in_progress" : "ready")
+        : "pending";
       if (!participantChanged && encounter.status === nextStatus) continue;
       changed = true;
       if (participantChanged) {
@@ -1200,7 +1204,7 @@ async function saveTeamMatchResult(
   const accessResult = await tournamentForAccess(match.tournamentId, request, env, access);
   if (accessResult instanceof Response) return accessResult;
 
-  const body = await readJson<{ sets?: ResultSetInput[] }>(request);
+  const body = await readJson<TeamResultInput>(request);
   let outcome: { winnerSide: "A" | "B"; pointsA: number; pointsB: number };
   try {
     outcome = setWinner(body.sets ?? [], match.bestOf, match.pointTarget, match.scoringMode);
@@ -1211,9 +1215,6 @@ async function saveTeamMatchResult(
   const [guards, previousEncounterResults] = await Promise.all([
     env.HUAU_DB.prepare(
       `SELECT
-         (SELECT COUNT(DISTINCT tl.entry_id)
-            FROM team_encounter_lineups tl
-           WHERE tl.encounter_id=? AND tl.status='locked' AND tl.entry_id IN (?,?)) as lockedCount,
          EXISTS(
            SELECT 1 FROM matches lm JOIN match_results lmr ON lmr.match_id=lm.id
             WHERE lm.encounter_id=? AND lm.rubber_order>? AND lmr.result_status IN ('final','corrected')
@@ -1231,14 +1232,11 @@ async function saveTeamMatchResult(
     )
       .bind(
         match.encounterId,
-        match.entryAId,
-        match.entryBId,
-        match.encounterId,
         match.rubberOrder,
         matchId,
         match.categoryId,
       )
-      .first<{ lockedCount: number; laterResult: number; existingResult: number; previousResultCount: number }>(),
+      .first<{ laterResult: number; existingResult: number; previousResultCount: number }>(),
     env.HUAU_DB.prepare(
       `SELECT m.id as matchId,m.rubber_key as rubberKey,m.winner_side as winnerSide,
               mr.score_a as pointsA,mr.score_b as pointsB
@@ -1249,10 +1247,6 @@ async function saveTeamMatchResult(
       .bind(match.encounterId)
       .all<{ matchId: string; rubberKey: string; winnerSide: "A" | "B"; pointsA: number; pointsB: number }>(),
   ]);
-
-  if (Number(guards?.lockedCount ?? 0) < 2) {
-    return json({ ok: false, code: "TEAM_MATCH_LINEUPS_NOT_LOCKED" }, { status: 409 });
-  }
 
   const existingResult = Boolean(Number(guards?.existingResult ?? 0));
   const laterResult = Boolean(Number(guards?.laterResult ?? 0));
@@ -1290,6 +1284,12 @@ async function saveTeamMatchResult(
     return json({ ok: false, code: "TEAM_FORMAT_NOT_FOUND" }, { status: 409 });
   }
 
+  const definition = format.encounter.rubbers.find(rubber => rubber.key === match.rubberKey);
+  if (!definition || !match.entryAId || !match.entryBId) return json({ok:false,code:"TEAM_MATCH_NOT_READY"},{status:409});
+  const [rosterA,rosterB] = await Promise.all([loadRoster(env,match.entryAId),loadRoster(env,match.entryBId)]);
+  const validation = validateTeamResultParticipants(definition,rosterA,rosterB,body);
+  if (!validation.valid) return json({ok:false,code:validation.issues[0]?.code ?? "TEAM_RESULT_PARTICIPANTS_INVALID"},{status:400});
+
   const scoringResults: TeamRubberResult[] = previousEncounterResults.results
     .filter((row) => row.matchId !== match.id)
     .map((row) => ({
@@ -1321,22 +1321,8 @@ async function saveTeamMatchResult(
   const stamp = unixNow();
   const statements: D1PreparedStatement[] = [
     env.HUAU_DB.prepare(`DELETE FROM match_side_members WHERE match_id=?`).bind(matchId),
-    env.HUAU_DB.prepare(
-      `INSERT INTO match_side_members (match_id,side,organization_person_id,position)
-       SELECT ?,'A',tla.organization_person_id,tla.position
-         FROM team_encounter_lineups tl
-         JOIN team_lineup_assignments tla ON tla.lineup_id=tl.id
-        WHERE tl.encounter_id=? AND tl.entry_id=? AND tl.status='locked' AND tla.rubber_key=?
-        ORDER BY tla.position`,
-    ).bind(matchId, match.encounterId, match.entryAId, match.rubberKey),
-    env.HUAU_DB.prepare(
-      `INSERT INTO match_side_members (match_id,side,organization_person_id,position)
-       SELECT ?,'B',tla.organization_person_id,tla.position
-         FROM team_encounter_lineups tl
-         JOIN team_lineup_assignments tla ON tla.lineup_id=tl.id
-        WHERE tl.encounter_id=? AND tl.entry_id=? AND tl.status='locked' AND tla.rubber_key=?
-        ORDER BY tla.position`,
-    ).bind(matchId, match.encounterId, match.entryBId, match.rubberKey),
+    ...(["A","B"] as const).flatMap(side => (side === "A" ? body.sideAPlayerIds : body.sideBPlayerIds).map((id, index) =>
+      env.HUAU_DB.prepare(`INSERT INTO match_side_members (match_id,side,organization_person_id,position) VALUES (?,?,?,?)`).bind(matchId,side,id,index+1))),
     env.HUAU_DB.prepare(`DELETE FROM match_sets WHERE match_id=?`).bind(matchId),
     env.HUAU_DB.prepare(
       `INSERT INTO match_results (match_id,score_a,score_b,winner_side,result_status,entered_by_user_id,entered_at,corrected_at,updated_at)
@@ -1517,7 +1503,7 @@ async function teamDetail(
 ): Promise<Response> {
   const accessResult = await tournamentForAccess(tournamentId, request, env, access);
   if (accessResult instanceof Response) return accessResult;
-  const [categories, profiles, entries, members, groups, encounters, matches, lineups, assignments, sets] = await Promise.all([
+  const [categories, profiles, entries, members, groups, encounters, matches, lineups, assignments, sets, sideMembers] = await Promise.all([
     env.HUAU_DB.prepare(
       `SELECT tc.id,tc.name,tc.scheduled_date as scheduledDate,tc.structure_locked as structureLocked,tc.format_version_id as formatVersionId,
               c.status as competitionStatus,f.config_json as configJson,
@@ -1587,6 +1573,12 @@ async function teamDetail(
          FROM match_sets s JOIN matches m ON m.id=s.match_id JOIN competition_encounters ce ON ce.id=m.encounter_id JOIN competitions c ON c.id=ce.competition_id
          JOIN tournament_categories tc ON tc.id=c.category_id WHERE tc.tournament_id=? AND tc.entry_type='team' ORDER BY s.match_id,s.set_number`,
     ).bind(tournamentId).all(),
+    env.HUAU_DB.prepare(
+      `SELECT msm.match_id as matchId,msm.side,msm.organization_person_id as personId,msm.position
+       FROM match_side_members msm JOIN matches m ON m.id=msm.match_id JOIN competition_encounters ce ON ce.id=m.encounter_id
+       JOIN competitions c ON c.id=ce.competition_id JOIN tournament_categories tc ON tc.id=c.category_id
+       WHERE tc.tournament_id=? AND tc.entry_type='team' ORDER BY msm.match_id,msm.side,msm.position`,
+    ).bind(tournamentId).all<{matchId:string;side:"A"|"B";personId:string;position:number}>(),
   ]);
 
   const categoryRows = categories.results as Array<{ id: string; name: string; scheduledDate: string | null; structureLocked: number; formatVersionId: string | null; competitionStatus: string | null; configJson: string | null; entryCount: number }>;
@@ -1623,6 +1615,10 @@ async function teamDetail(
       ...encounter,
       matches: matchRows.filter((match) => match.encounterId === encounter.id).map((match) => ({
         ...match,
+        ...(sideMembers.results.some(row=>row.matchId===match.id) ? {participants:{
+          sideAPlayerIds:sideMembers.results.filter(row=>row.matchId===match.id&&row.side==="A").map(row=>row.personId),
+          sideBPlayerIds:sideMembers.results.filter(row=>row.matchId===match.id&&row.side==="B").map(row=>row.personId),
+        }} : {}),
         sets: setRows.filter((set) => set.matchId === match.id),
       })),
       lineups: lineupRows.filter((lineup) => lineup.encounterId === encounter.id).map((lineup) => ({

@@ -19,6 +19,8 @@ import {
   normalizeStandardFormat,
   scoreTeamEncounter,
   validateTeamLineup,
+  validateTeamResultParticipants,
+  type TeamResultParticipants,
   validateTeamRoster,
   withEncounterResult,
   type Competition,
@@ -1548,7 +1550,10 @@ export function progressLocalTeamFinals(category: any) {
           encounter.sourceLoserAId ||
           encounter.sourceLoserBId,
       );
-      let nextStatus = desiredA && desiredB ? "ready" : "pending";
+      const sameParticipants = desiredA === encounter.entryAId && desiredB === encounter.entryBId;
+      let nextStatus = desiredA && desiredB
+        ? (sameParticipants && encounter.status === "in_progress" ? "in_progress" : "ready")
+        : "pending";
       let winnerEntryId = encounter.winnerEntryId ?? null;
       if (!hasSources && Boolean(desiredA) !== Boolean(desiredB)) {
         nextStatus = "bye";
@@ -1571,7 +1576,16 @@ export function progressLocalTeamFinals(category: any) {
         if (participantsChanged) encounter.lineups = [];
         if (nextStatus === "ready" && (!encounter.matches || !encounter.matches.length)) {
           encounter.matches = makeTeamMatches(category, encounter.id, true);
+        } else if (nextStatus === "ready" && !encounter.matches.some((match: any) => Boolean(match.resultStatus))) {
+          // Pending final rubbers already have stable IDs (including schedule bindings).
+          // Activate them in place when the two qualifiers resolve.
+          const first = [...encounter.matches].sort((a: any, b: any) => Number(a.rubberOrder) - Number(b.rubberOrder))[0];
+          for (const match of encounter.matches) match.status = match === first ? "ready" : "pending";
         }
+        changed = true;
+      } else if (nextStatus === "ready" && encounter.matches?.length && encounter.matches.every((match: any) => match.status === "pending" && !match.resultStatus)) {
+        const first = [...encounter.matches].sort((a: any, b: any) => Number(a.rubberOrder) - Number(b.rubberOrder))[0];
+        first.status = "ready";
         changed = true;
       }
     }
@@ -1737,6 +1751,7 @@ export function setLocalTeamResult(
   encounterId: string,
   matchId: string,
   sets: TeamSetInput[],
+  participants: TeamResultParticipants,
 ) {
   const category = teamCategory(snapshot, categoryId);
   if (!category?.format) throw new Error("TEAM_FORMAT_NOT_FOUND");
@@ -1744,6 +1759,15 @@ export function setLocalTeamResult(
   if (!encounter) throw new Error("TEAM_ENCOUNTER_NOT_FOUND");
   const match = encounter.matches.find((candidate: any) => candidate.id === matchId);
   if (!match) throw new Error("TEAM_MATCH_NOT_FOUND");
+
+  if (!encounter.entryAId || !encounter.entryBId || (!match.resultStatus && match.status !== "ready")) throw new Error("TEAM_MATCH_NOT_READY");
+  const definition = (category.format as TeamFormat).encounter.rubbers.find(rubber => rubber.key === match.rubberKey);
+  if (!definition) throw new Error("TEAM_FORMAT_NOT_FOUND");
+  const rosterA = category.entries.find((entry: any) => entry.id === encounter.entryAId)?.roster ?? [];
+  const rosterB = category.entries.find((entry: any) => entry.id === encounter.entryBId)?.roster ?? [];
+  const validation = validateTeamResultParticipants(definition, rosterA, rosterB, participants);
+  if (!validation.valid) throw new Error(validation.issues.map(issue => issue.code).join(","));
+  const outcome = validateTeamSets(match, definition.scoringMode, sets);
 
   if (match.resultStatus && encounter.stage === "group") {
     const finalEncounters = category.encounters.filter((candidate: any) => candidate.stage !== "group");
@@ -1784,15 +1808,6 @@ export function setLocalTeamResult(
     if (hasDownstreamResult) throw new Error("TEAM_RESULT_HAS_DOWNSTREAM_ENCOUNTER");
   }
 
-  const locked = new Set(
-    encounter.lineups
-      .filter((lineup: any) => lineup.status === "locked")
-      .map((lineup: any) => lineup.entryId),
-  );
-  if (!locked.has(encounter.entryAId) || !locked.has(encounter.entryBId)) {
-    throw new Error("TEAM_MATCH_LINEUPS_NOT_LOCKED");
-  }
-
   const laterResult = encounter.matches.some(
     (candidate: any) =>
       Number(candidate.rubberOrder) > Number(match.rubberOrder) &&
@@ -1800,11 +1815,7 @@ export function setLocalTeamResult(
   );
   if (match.resultStatus && laterResult) throw new Error("TEAM_RESULT_HAS_DOWNSTREAM_RUBBER");
 
-  const definition = category.format.encounter.rubbers.find(
-    (rubber: any) => rubber.key === match.rubberKey,
-  );
-  const outcome = validateTeamSets(match, definition?.scoringMode ?? null, sets);
-
+  match.participants = cloneDay(participants);
   match.sets = sets.map((set, index) => ({
     setNumber: index + 1,
     scoreA: set.scoreA,

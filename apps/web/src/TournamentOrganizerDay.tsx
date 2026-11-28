@@ -1,4 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { TeamResultPlayerFields } from "./TeamResultPlayerFields";
+import { teamResultParticipantsFromForm } from "./TeamResultParticipants";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { Locale } from "./i18n";
@@ -289,19 +291,19 @@ function OrganizerStandardForm({ match, locale, disabled, onSave }: { match: any
 function OrganizerTeamForm({ category, encounter, match, locale, disabled, onSave }: { category:any; encounter:any; match:any; locale:Locale; disabled:boolean; onSave:(op:OrganizerResultOperation)=>Promise<void> }) {
   const [error,setError]=useState("");
   const bestOf=Number(match.bestOf)===3?3:1;
-  const locked = new Set(rows(encounter.lineups).filter((row)=>row.status==="locked").map((row)=>text(row.entryId)));
-  const ready = locked.has(text(encounter.entryAId)) && locked.has(text(encounter.entryBId)) && !["pending","skipped"].includes(text(match.status));
+  const ready = Boolean(encounter.entryAId && encounter.entryBId) && !["pending","skipped","bye"].includes(text(match.status));
   const save=(event:FormEvent<HTMLFormElement>)=>{
     event.preventDefault();setError("");
     try { const sets=scoreInput(new FormData(event.currentTarget),"score",bestOf);
-      void onSave({kind:"team",categoryId:text(category.id),encounterId:text(encounter.id),matchId:text(match.id),sets});
+      void onSave({kind:"team",categoryId:text(category.id),encounterId:text(encounter.id),matchId:text(match.id),sets,...teamResultParticipantsFromForm(new FormData(event.currentTarget))});
     } catch(e){setError(e instanceof Error?e.message:"RESULT_INVALID_SET");}
   };
   return <form className="panel organizer-day-result-form" onSubmit={save}>
     <div><small>{text(category.name)} · {text(encounter.roundLabel ?? encounter.stage)} · {text(match.rubberKey)}</small><strong>{text(encounter.sideA)} <em>vs</em> {text(encounter.sideB)}</strong></div>
+    <TeamResultPlayerFields locale={locale} category={category} encounter={encounter} match={match}/>
     <OrganizerScoreFields key={`${text(match.id)}:${text(match.scoreA)}:${text(match.scoreB)}:${JSON.stringify(rows(match.sets))}`} bestOf={bestOf} sets={rows(match.sets)}/>
     {error && <p className="h3-error">{error}</p>}
     <button disabled={disabled || !ready} className="light small">{match.resultStatus?tr(locale,"Corregir local","Correct locally"):tr(locale,"Guardar local","Save locally")}</button>
-    {!ready && <small className="muted">{tr(locale,"Las alineaciones deben estar bloqueadas por el administrador.","Lineups must be locked by the administrator.")}</small>}
+    {!ready && <small className="muted">{tr(locale,"Partido aún no habilitado.","Match not ready yet.")}</small>}
   </form>;
 }
